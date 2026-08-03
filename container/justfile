@@ -1,0 +1,41 @@
+set shell := ["zsh", "-eu", "-o", "pipefail", "-c"]
+
+workspace := parent_directory(justfile_directory())
+dockerfile := justfile_directory() / "Dockerfile"
+image := "minemu-dev"
+
+# build docker image
+build:
+  docker build \
+    --file "{{ dockerfile }}" \
+    --tag "{{ image }}" \
+    "{{ workspace }}"
+
+# rebuild docker image ignore cache
+rebuild:
+  docker build \
+    --file "{{ dockerfile }}" \
+    --no-cache \
+    --tag "{{ image }}" \
+    "{{ workspace }}"
+
+# run workspace tests in container
+test:
+  docker run --rm \
+    --volume "{{ workspace }}:/workspace" \
+    --workdir /workspace \
+    "{{ image }}" \
+    just ci
+
+# ssh into container
+shell:
+  docker run --rm \
+    --interactive \
+    --tty \
+    --volume "{{ workspace }}:/workspace" \
+    --workdir /workspace \
+    "{{ image }}"
+
+# delete the docker image
+clean:
+  docker image rm "{{ image }}"

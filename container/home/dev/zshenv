@@ -1,0 +1,4 @@
+export LANG="en_US.UTF-8"
+
+export CARGO_HOME="$HOME/.cargo"
+export CARGO_TARGET_DIR="$CARGO_HOME/targets"

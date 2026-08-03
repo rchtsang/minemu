@@ -1,0 +1,21 @@
+set shell := ["zsh", "-eu", "-o", "pipefail", "-c"]
+
+workspace := parent_directory(justfile_directory())
+arm := justfile_directory() / "arm"
+
+# build arm fixtures
+build:
+  make -C "{{ arm }}"
+
+# test arm fixtures
+test fixture=(arm / "build" / "minimal.elf"): build
+  MINEMU_ARM_FIXTURE="{{ fixture }}" \
+  MINEMU_ARM_FIXTURE_DIR="{{ parent_directory(fixture) }}" \
+  cargo test \
+    --manifest-path "{{ workspace }}/Cargo.toml" \
+    --workspace
+
+# clean arm fixtures
+clean:
+  make -C "{{ arm }}" clean
+

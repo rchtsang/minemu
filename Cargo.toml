@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/minemu-platform",
+  "crates/minemu-core",
+  "crates/minemu-unicorn",
+  "crates/minemu-image",
+  "crates/minemu-runtime",
+  "crates/minemu",
+]
+
+[workspace.package]
+edition = "2024"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/rchtsang/minemu"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+

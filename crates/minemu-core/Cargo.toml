@@ -1,0 +1,8 @@
+[package]
+name = "minemu-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+minemu-platform = { path = "../minemu-platform" }
+

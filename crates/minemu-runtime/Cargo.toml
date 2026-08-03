@@ -1,0 +1,9 @@
+[package]
+name = "minemu-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+minemu-core = { path = "../minemu-core" }
+minemu-unicorn = { path = "../minemu-unicorn" }
+

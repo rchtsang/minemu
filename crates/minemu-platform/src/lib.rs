@@ -1,14 +1,32 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! Backend-independent definitions for the `minemu` platform ABI.
+//!
+//! The normative ABI is documented in `docs/dev/emulator.md`. This crate owns
+//! the Rust representation and validation of that contract; it intentionally
+//! has no Unicorn, filesystem, or host-runtime dependency.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod access;
+mod address;
+mod error;
+mod exception;
+mod image;
+mod mmap;
+mod mmio;
+mod mmu;
+pub mod peripherals;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use access::{Access, Permissions};
+pub use address::{PhysicalAddress, PhysicalRange, VirtualAddress};
+pub use error::{PlatformError, Result};
+pub use exception::{CpuMode, ExceptionKind, ExceptionRequest};
+pub use image::{
+    ABI_VERSION, BOOT_INFO_MAGIC, BOOT_INFO_SIZE, BootInfo, IMAGE_HEADER_SIZE, IMAGE_MAGIC,
+    ImageHeader, KERNEL_SEGMENT_SIZE, KernelSegment, MODULE_RECORD_SIZE, MODULE_SEGMENT_SIZE,
+    ModuleRecord, ModuleSegment,
+};
+pub use mmap::{MemRegion, PAGE_SIZE, direct_map_physical, direct_map_virtual};
+pub use mmio::{MmioRegister, MmioTransaction, MmioWidth, decode_mmio};
+pub use mmu::{
+    Cp15Operation, FaultCause, FaultStatus, PTE_ACCESSED, PTE_DIRTY, PTE_EXECUTABLE, PTE_READABLE,
+    PTE_SOFTWARE_MASK, PTE_USER, PTE_VALID, PTE_WRITABLE, PageDirectoryEntry, PageTableEntry,
+    is_mmu_target_page, validate_page_table_page,
+};

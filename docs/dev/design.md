@@ -82,6 +82,7 @@ The project should begin as a small Cargo workspace.
 The primary Rust dependencies are `unicorn-engine`, `object`, `ratatui`,
 `crossterm`, `clap`, `serde`, and an error library such as `thiserror`.
 
+
 The `object` crate reads ELF files for `minemu image`. The image format emitted
 by the tool is a stable course ABI and must be versioned independently from
 Rust implementation details.

@@ -79,18 +79,18 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## 1. Implement `minemu-platform`
 
-- [ ] Define checked physical/virtual address and range types.
-- [ ] Define the memory map, MMIO register offsets, access permissions, IRQ
+- [x] Define checked physical/virtual address and range types.
+- [x] Define the memory map, MMIO register offsets, access permissions, IRQ
   IDs, fault codes, and device status/error values.
-- [ ] Define typed MMIO transactions with width, alignment, direction, address,
+- [x] Define typed MMIO transactions with width, alignment, direction, address,
   and value.
-- [ ] Define PTE/PDE parsing and validation, including RAM-only page-table
+- [x] Define PTE/PDE parsing and validation, including RAM-only page-table
   backing, Accessed/Dirty updates, software metadata preservation, and
   reserved-bit rejection.
-- [ ] Define backend-neutral CP15 operation and exception request types.
-- [ ] Define stable, explicit little-endian image-header, segment, module, and
+- [x] Define backend-neutral CP15 operation and exception request types.
+- [x] Define stable, explicit little-endian image-header, segment, module, and
   boot-info records. Never serialize Rust structs directly.
-- [ ] Add ABI unit tests for encoding, decoding, overflow, malformed ranges,
+- [x] Add ABI unit tests for encoding, decoding, overflow, malformed ranges,
   page-table validation, and all fault-status combinations.
 
 ## 2. Implement `minemu-core`

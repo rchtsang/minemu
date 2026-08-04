@@ -21,6 +21,7 @@ name = "minemu-core"
 version = "0.1.0"
 dependencies = [
  "minemu-platform",
+ "thiserror",
 ]
 
 [[package]]

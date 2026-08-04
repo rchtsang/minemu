@@ -2,6 +2,15 @@ use crate::{PhysicalAddress, PhysicalRange, PlatformError, Result, VirtualAddres
 
 /// Size of an MMU page and implemented MMIO page.
 pub const PAGE_SIZE: u32 = 4096;
+/// Physical boot-ROM base address and size.
+pub const BOOT_ROM_BASE: u32 = 0x0000_0000;
+pub const BOOT_ROM_SIZE: u32 = 64 * 1024;
+/// Physical system-ROM base address and size.
+pub const SYSTEM_ROM_BASE: u32 = 0x0800_0000;
+pub const SYSTEM_ROM_SIZE: u32 = 16 * 1024 * 1024;
+/// Physical RAM base address and size.
+pub const RAM_BASE: u32 = 0x4000_0000;
+pub const RAM_SIZE: u32 = 64 * 1024 * 1024;
 
 /// A classified physical memory region.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,8 +31,8 @@ impl MemRegion {
     /// Returns this region's fixed physical range.
     pub const fn range(self) -> PhysicalRange {
         let (base, size) = match self {
-            Self::BootRom => (0x0000_0000, 64 * 1024),
-            Self::SystemRom => (0x0800_0000, 16 * 1024 * 1024),
+            Self::BootRom => (BOOT_ROM_BASE, BOOT_ROM_SIZE),
+            Self::SystemRom => (SYSTEM_ROM_BASE, SYSTEM_ROM_SIZE),
             Self::InterruptController => (0x1000_0000, PAGE_SIZE),
             Self::SysTick => (0x1000_1000, PAGE_SIZE),
             Self::Dma => (0x1000_2000, PAGE_SIZE),
@@ -31,7 +40,7 @@ impl MemRegion {
             Self::Uart0 => (0x1000_4000, PAGE_SIZE),
             Self::Uart1 => (0x1000_5000, PAGE_SIZE),
             Self::Trace => (0x1000_f000, PAGE_SIZE),
-            Self::Ram => (0x4000_0000, 64 * 1024 * 1024),
+            Self::Ram => (RAM_BASE, RAM_SIZE),
         };
         PhysicalRange::from_known_valid(PhysicalAddress::new(base), size)
     }

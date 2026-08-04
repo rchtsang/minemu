@@ -95,30 +95,30 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## 2. Implement `minemu-core`
 
-- [ ] Implement physical memory/ROM lifecycle and a typed MMIO bus with
+- [x] Implement physical memory/ROM lifecycle and a typed MMIO bus with
   centralized width, alignment, direction, and access validation.
-- [ ] Implement UART0/UART1 state, bounded RX/TX histories, RX-ready status,
+- [x] Implement UART0/UART1 state, bounded RX/TX histories, RX-ready status,
   and independently configurable RX interrupt behavior.
-- [ ] Implement SysTick state and exact virtual deadline scheduling.
-- [ ] Implement interrupt-controller state with deterministic priority,
+- [x] Implement SysTick state and exact virtual deadline scheduling.
+- [x] Implement interrupt-controller state with deterministic priority,
   pending, enable, claim, EOI, source acknowledgement, and configurable source
   priorities.
-- [ ] Implement block-device command state, physical-RAM-only DMA validation,
+- [x] Implement block-device command state, physical-RAM-only DMA validation,
   deterministic completion, guest-visible errors, write-back media, dirty
   sector tracking, and flush/retry state.
-- [ ] Implement deterministic MMIO RNG at `0x1000_3000`:
-  - [ ] `SEED` is read/write, `DATA` advances and returns the next `u32`, and
+- [x] Implement deterministic MMIO RNG at `0x1000_3000`:
+  - [x] `SEED` is read/write, `DATA` advances and returns the next `u32`, and
     `STATE` exposes current state for inspection.
-  - [ ] Use a specified `xorshift32` transition and a documented nonzero
+  - [x] Use a specified `xorshift32` transition and a documented nonzero
     default/zero-seed policy.
-  - [ ] Do not emit an event for every RNG read.
-- [ ] Implement trace EVENT writes with retired-instruction timestamps and
+  - [x] Do not emit an event for every RNG read.
+- [x] Implement trace EVENT writes with retired-instruction timestamps and
   bounded event-history behavior without affecting guest correctness.
-- [ ] Implement the MMU walker through a narrow physical-memory interface.
-- [ ] Implement exception planning and fault records without Unicorn callbacks.
-- [ ] Implement the virtual scheduler, bounded event history, small status
+- [x] Implement the MMU walker through a narrow physical-memory interface.
+- [x] Implement exception planning and fault records without Unicorn callbacks.
+- [x] Implement the virtual scheduler, bounded event history, small status
   projection, and on-demand inspection response types.
-- [ ] Unit-test every device state machine independently of Unicorn.
+- [x] Unit-test every device state machine independently of Unicorn.
 
 ## 3. Implement `minemu-unicorn`
 

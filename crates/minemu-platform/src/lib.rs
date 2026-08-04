@@ -12,6 +12,8 @@ mod image;
 mod mmap;
 mod mmio;
 mod mmu;
+mod observability;
+mod peripheral;
 pub mod peripherals;
 
 pub use access::{Access, Permissions};
@@ -23,10 +25,19 @@ pub use image::{
     ImageHeader, KERNEL_SEGMENT_SIZE, KernelSegment, MODULE_RECORD_SIZE, MODULE_SEGMENT_SIZE,
     ModuleRecord, ModuleSegment,
 };
-pub use mmap::{MemRegion, PAGE_SIZE, direct_map_physical, direct_map_virtual};
+pub use mmap::{
+    BOOT_ROM_BASE, BOOT_ROM_SIZE, MemRegion, PAGE_SIZE, RAM_BASE, RAM_SIZE, SYSTEM_ROM_BASE,
+    SYSTEM_ROM_SIZE, direct_map_physical, direct_map_virtual,
+};
 pub use mmio::{MmioRegister, MmioTransaction, MmioWidth, decode_mmio};
 pub use mmu::{
     Cp15Operation, FaultCause, FaultStatus, PTE_ACCESSED, PTE_DIRTY, PTE_EXECUTABLE, PTE_READABLE,
     PTE_SOFTWARE_MASK, PTE_USER, PTE_VALID, PTE_WRITABLE, PageDirectoryEntry, PageTableEntry,
     is_mmu_target_page, validate_page_table_page,
 };
+pub use observability::{
+    BlockInspection, InspectionRequest, InspectionResponse, InterruptInspection, MmuInspection,
+    ObservableEvent, PeripheralsInspection, RngInspection, SysTickInspection, TraceInspectionEvent,
+    UartInspection,
+};
+pub use peripheral::Peripheral;

@@ -12,11 +12,11 @@ observable through a TUI that supports print-style debugging.
 
 ## Key Decisions
 
-### Unicorn-Based Teaching SoC
+### Unicorn-Based Platform
 
 Unicorn executes ARM instructions. `minemu` supplies the system-emulation
 layer: physical memory, ROM, MMIO devices, timer, interrupt controller,
-exception adapter, teaching MMU, image loading, and observability.
+exception adapter, MMU, image loading, and observability.
 
 QEMU is intentionally not the primary backend. Its real GIC, PL011, virtio,
 and ARM platform conventions would consume course time without supporting the
@@ -28,9 +28,10 @@ The CPU retains ARMv7-A concepts that matter to OS work: user versus privileged
 modes, exception modes, banked registers, traps, IRQs, and protected virtual
 memory. Features unrelated to the course are omitted.
 
-The MMU is deliberately custom rather than ARM short-descriptor paging. This
-keeps multilevel paging and replacement policy central without requiring
-students to learn CP15, domains, or ARM descriptor-specific details.
+The MMU is deliberately custom rather than ARM short-descriptor paging. CP15
+is its privileged control interface, while the page-table format and
+permissions remain platform-defined. This keeps multilevel paging and
+replacement policy central without requiring ARM VMSA descriptor details.
 
 ### ROM, RAM, and Process Creation
 
@@ -70,9 +71,13 @@ The project should begin as a small Cargo workspace.
 
 | Component | Responsibility |
 |---|---|
-| `minemu-core` | Machine state, Unicorn integration, exception adapter, MMU, devices, image loader, virtual time, events, snapshots |
-| `minemu` | CLI, emulator service, Ratatui/Crossterm TUI, headless test runner |
-| `platform/` | Student headers, linker scripts, startup and vector assembly, minimal runtime, starter projects, image-format definitions |
+| `minemu-platform` | Stable ABI definitions: memory map, MMIO, CP15, MMU, faults, and image records |
+| `minemu-core` | Backend-neutral device state, MMU policy, exception plans, virtual time, and observability projections |
+| `minemu-unicorn` | Unicorn CPU, memory, hook, and virtual-TLB adapter |
+| `minemu-image` | Versioned system-ROM image parsing and packing |
+| `minemu-runtime` | Emulator-thread lifecycle, bounded commands, disk flush, and status publication |
+| `minemu` | CLI, headless test runner, and Ratatui/Crossterm TUI |
+| `platform/` | Student headers, linker scripts, startup/vector assembly, runtime, and templates |
 
 The primary Rust dependencies are `unicorn-engine`, `object`, `ratatui`,
 `crossterm`, `clap`, `serde`, and an error library such as `thiserror`.
@@ -145,14 +150,6 @@ virtualization.
 
 Before building the full platform, validate these capabilities in Rust:
 
-1. Execute a minimal Cortex-A9 A32 ELF through Unicorn.
-2. Implement UART MMIO callbacks and console output.
-3. Benchmark strict instruction-budget execution.
-4. Walk custom two-level page tables through Unicorn virtual-TLB hooks.
-5. Deliver SVC, MMU-fault, and timer-IRQ entries with correct saved state.
-6. Complete a deterministic DMA block transfer into guest RAM.
-7. Publish immutable snapshots from an emulator thread to a TUI thread.
-
-The exception and custom-MMU checks are the primary feasibility gate. The
-remaining work is conventional device, image, TUI, toolchain, and curriculum
-engineering.
+The feasibility spike completed these backend checks and is retained on the
+`spike` branch. `TODO.md` defines the staged production rewrite and its
+remaining backend, ABI, and student-platform gates.

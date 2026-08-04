@@ -2,8 +2,8 @@
 
 ## Purpose
 
-The spike established that Unicorn can support the proposed A32 teaching
-machine before the production implementation is built. It is a narrow Rust
+The spike established that Unicorn can support the proposed A32 machine before
+the production implementation is built. It is a narrow Rust
 prototype, not the foundation for the production codebase. The spike remains
 on the `spike` branch while `main` is reset before Cargo initialization and
 rewritten around the decisions below.

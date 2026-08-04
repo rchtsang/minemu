@@ -73,18 +73,21 @@ change guest virtual time or scheduling behavior.
 
 ## Snapshots and Events
 
-The emulator publishes immutable `MachineSnapshot` values. A snapshot includes
-only data needed for rendering:
+The emulator publishes lightweight immutable status values at a cadence or
+after material state changes. A status value includes only data needed for the
+default render:
 
 - Run state and virtual instruction count.
 - Selected CPU register values and current mode.
 - Device and interrupt-controller state.
 - Bounded console scrollback.
 - Bounded event history.
-- Current MMU fault state and selected translation result.
+- Current MMU fault state.
 
-Snapshots do not retain references to Unicorn or live emulator memory. The TUI
-may discard stale snapshots and render only the newest one.
+Detailed CPU registers, MMU walks, memory regions, and device internals are
+requested explicitly for inspector panes. Status and inspection responses do
+not retain references to Unicorn or live emulator memory. The TUI may discard
+stale status values and render only the newest one.
 
 The event pane is intentionally hardware-oriented. It should show events such
 as timer expiration, IRQ claim/EOI, page fault, block completion, and UART

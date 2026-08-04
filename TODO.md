@@ -11,58 +11,58 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## Agreed ABI Decisions
 
-- [ ] The CPU is a little-endian, single-core ARMv7-A Cortex-A9 running A32
+- [x] The CPU is a little-endian, single-core ARMv7-A Cortex-A9 running A32
   instructions only.
-- [ ] CP15 is the sole privileged MMU control interface. Remove the competing
+- [x] CP15 is the sole privileged MMU control interface. Remove the competing
   MMIO MMU-control ABI from the production specification.
-- [ ] The MMU remains the specified custom two-level, 4 KiB paging model, not
+- [x] The MMU remains the specified custom two-level, 4 KiB paging model, not
   ARM VMSA short descriptors.
-- [ ] PTE permissions are valid, readable, writable, user, and executable.
+- [x] PTE permissions are valid, readable, writable, user, and executable.
   All reserved PTE/PDE bits are rejected.
-- [ ] Physical RAM is `0x4000_0000..0x43ff_ffff`. The kernel has a fixed
+- [x] Physical RAM is `0x4000_0000..0x43ff_ffff`. The kernel has a fixed
   higher-half direct mapping at `0xc000_0000..0xc3ff_ffff`.
-- [ ] Boot uses a physical trampoline, enables the MMU, and branches to the
+- [x] Boot uses a physical trampoline, enables the MMU, and branches to the
   higher-half kernel entry.
-- [ ] User modules are fixed-address, non-PIE A32 images with no dynamic
+- [x] User modules are fixed-address, non-PIE A32 images with no dynamic
   relocation support in v1.
-- [ ] Supported exception paths are undefined instruction, SVC, prefetch
+- [x] Supported exception paths are undefined instruction, SVC, prefetch
   abort, data abort, and IRQ.
-- [ ] Virtual time is logical instruction progress:
-  - [ ] A completed instruction costs one tick.
-  - [ ] SVC and undefined instructions cost one tick plus one exception-entry
+- [x] Virtual time is logical instruction progress:
+  - [x] A completed instruction costs one tick.
+  - [x] SVC and undefined instructions cost one tick plus one exception-entry
     tick.
-  - [ ] Data and prefetch faults cost zero ticks for the faulting instruction
+  - [x] Data and prefetch faults cost zero ticks for the faulting instruction
     plus one exception-entry tick.
-  - [ ] Device success and failure complete at the same scheduled deadline.
-  - [ ] Host/backend failure adds no time after execution stops.
-- [ ] The block device is write-back. It clones its disk into host memory on
+  - [x] Device success and failure complete at the same scheduled deadline.
+  - [x] Host/backend failure adds no time after execution stops.
+- [x] The block device is write-back. It clones its disk into host memory on
   attach, tracks dirty sectors, and flushes only on pause, shutdown, or a
   terminal emulator/backend failure. Failed flushes retain dirty state for
   retry. Guest block command errors do not trigger a host flush.
-- [ ] `libgcc` is an allowed static toolchain dependency. Newlib and
+- [x] `libgcc` is an allowed static toolchain dependency. Newlib and
   newlib-nano are not part of the supported platform.
-- [ ] Device MMIO is supervisor-only, including the RNG. User code accesses
+- [x] Device MMIO is supervisor-only, including the RNG. User code accesses
   devices through kernel services.
-- [ ] The boot ROM trusts image contents initially. The image packer validates
+- [x] The boot ROM trusts image contents initially. The image packer validates
   inputs, but boot-time integrity validation is deferred.
 
 ## 0. Freeze ABI v1
 
-- [ ] Rewrite `docs/dev/emulator.md` as the normative ABI document and remove
+- [x] Rewrite `docs/dev/emulator.md` as the normative ABI document and remove
   stale spike terminology.
-- [ ] Specify CP15 operations, privilege checks, A32 condition behavior, and
+- [x] Specify CP15 operations, privilege checks, A32 condition behavior, and
   behavior for unsupported CP15 operations.
-- [ ] Specify all exception vector offsets, saved LR/SPSR values, banked-stack
+- [x] Specify all exception vector offsets, saved LR/SPSR values, banked-stack
   ownership, and return rules.
-- [ ] Specify the physical trampoline, high-half mapping, kernel link/load
+- [x] Specify the physical trampoline, high-half mapping, kernel link/load
   addresses, VBAR transition, and boot-info handoff.
-- [ ] Specify MMIO access width, alignment, read/write permissions, and error
+- [x] Specify MMIO access width, alignment, read/write permissions, and error
   behavior for every device register.
-- [ ] Specify IRQ priorities, pending/claim/ACK/EOI behavior, device error
+- [x] Specify IRQ priorities, pending/claim/ACK/EOI behavior, device error
   codes, and virtual device latencies.
-- [ ] Specify the versioned image and boot-info wire formats with explicit
+- [x] Specify the versioned image and boot-info wire formats with explicit
   little-endian fields and bounds rules.
-- [ ] Build a conformance matrix mapping each ABI rule to a Rust test, guest
+- [x] Build a conformance matrix mapping each ABI rule to a Rust test, guest
   fixture, template smoke test, or headless image test.
 
 ## 1. Implement `minemu-platform`

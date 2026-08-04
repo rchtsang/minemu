@@ -1,119 +1,221 @@
-# Emulator Specification
+# Emulator ABI
 
-## Purpose
+## Status And Scope
 
-`minemu` emulates a deliberately small, deterministic ARM teaching machine. It
-is not intended to reproduce a production SoC. The machine provides only the
-CPU, memory, exceptions, paging, and peripherals needed for the operating
-systems curriculum.
+This document is the normative ABI for the `minemu` A32 platform. Rust
+implementation details, Unicorn behavior, and host operating-system behavior
+are not part of the guest ABI unless specified here.
 
-The emulator is implemented in Rust and uses Unicorn for A32 instruction
-execution. The SoC, devices, virtual time, exception delivery, and teaching
-MMU are implemented by `minemu`.
+The platform is a deterministic, single-core ARMv7-A machine for operating
+systems coursework. It is not a model of a production SoC.
 
 ## CPU
 
-The guest CPU is a single little-endian ARMv7-A Cortex-A9 core.
+- One little-endian Cortex-A9 core.
+- A32 instructions only. Thumb is unsupported.
+- Supported modes are USR, SVC, IRQ, ABT, and UND.
+- Banked SP/LR registers and SPSR are available for supported exception modes.
+- VFP, NEON, FIQ, TrustZone, virtualization extensions, caches, DMA coherency,
+  and SMP are out of scope.
+- Student code is freestanding A32 C and assembly, built with
+  `arm-none-eabi-gcc`, `-mcpu=cortex-a9`, `-marm`, and `-mfloat-abi=soft`.
+- `libgcc` is an allowed static link dependency. Newlib and newlib-nano are not
+  part of the supported platform.
 
-- A32 (ARM) instructions only; Thumb is not supported.
-- One core; no SMP or multicore behavior.
-- Supported exception modes: USR, SVC, IRQ, ABT, and UND.
-- Banked SP/LR registers and SPSR behavior are exposed for exception modes.
-- VFP/NEON, FIQ, TrustZone, virtualization, caches, and DMA coherency are out
-  of scope.
-
-The toolchain targets freestanding A32 code. Student projects use C and ARM
-assembly, normally with `arm-none-eabi-gcc`, `-mcpu=cortex-a9`, `-marm`, and
-`-mfloat-abi=soft`.
-
-## Memory Map
+## Physical Memory Map
 
 | Physical range | Size | Purpose |
 |---|---:|---|
-| `0x0000_0000` - `0x0000_ffff` | 64 KiB | Immutable platform boot ROM |
-| `0x0800_0000` - `0x08ff_ffff` | 16 MiB | Immutable student system ROM |
-| `0x1000_0000` - `0x1000_0fff` | 4 KiB | UART |
-| `0x1000_1000` - `0x1000_1fff` | 4 KiB | Virtual timer |
-| `0x1000_2000` - `0x1000_2fff` | 4 KiB | Interrupt controller |
-| `0x1000_3000` - `0x1000_3fff` | 4 KiB | DMA block device |
-| `0x1000_4000` - `0x1000_4fff` | 4 KiB | Teaching MMU control/status |
-| `0x1000_f000` - `0x1000_ffff` | 4 KiB | Optional debug trace device |
-| `0x4000_0000` - `0x43ff_ffff` | 64 MiB | Writable RAM |
+| `0x0000_0000..0x0000_ffff` | 64 KiB | Immutable platform boot ROM |
+| `0x0800_0000..0x08ff_ffff` | 16 MiB | Immutable system ROM |
+| `0x1000_0000..0x1000_0fff` | 4 KiB | UART |
+| `0x1000_1000..0x1000_1fff` | 4 KiB | Virtual timer |
+| `0x1000_2000..0x1000_2fff` | 4 KiB | Interrupt controller |
+| `0x1000_3000..0x1000_3fff` | 4 KiB | DMA block device |
+| `0x1000_5000..0x1000_5fff` | 4 KiB | Deterministic RNG |
+| `0x1000_f000..0x1000_ffff` | 4 KiB | Optional trace device |
+| `0x4000_0000..0x43ff_ffff` | 64 MiB | Writable RAM |
 
-MMIO is addressed physically. Once the MMU is enabled, the kernel must map
-device pages before accessing them. User mappings must not expose device pages.
+`0x1000_4000..0x1000_4fff` is reserved. MMU control is CP15-only and has no
+MMIO control page.
 
-## Boot and Images
+Unmapped physical accesses, accesses to reserved device pages, and invalid
+MMIO transactions enter the data-abort path with fault cause
+`DEVICE_ACCESS`.
 
-`minemu image` packages independently linked ELF files into one immutable
-system-ROM image. It does not compile source code or perform general-purpose
-linking.
+## Bootstrap And Higher-Half Kernel
 
-The image contains:
+The reset and bootstrap contract uses these fixed physical addresses:
 
-- A versioned header and integrity check.
-- Kernel loadable segments and entry address.
-- A table of user-program modules.
-- Each module's entry address, segment metadata, permissions, initialized
-  bytes, and BSS size.
+| Address | Meaning |
+|---|---|
+| `0x4000_7000` | Boot-info physical address |
+| `0x4000_8000` | First permitted kernel bootstrap physical address |
+| `0xc000_0000` | Kernel higher-half direct-map base |
+| `0x8000_0000` | Kernel direct-map virtual-to-physical offset |
 
-At reset, the supplied boot ROM:
+The initial kernel mapping is:
 
-1. Starts in SVC mode with IRQ and FIQ masked.
-2. Validates the system-ROM header.
-3. Copies kernel segments from system ROM to RAM.
-4. Zeroes kernel BSS.
-5. Writes boot information to RAM.
-6. Establishes the initial vector base and stack.
-7. Jumps to the kernel entry point with a boot-information pointer in `r0`.
-
-The kernel, not the boot ROM, creates user processes. It selects a module,
-allocates new RAM frames, copies the module's code and data from ROM, zeroes
-its BSS, allocates a stack, maps the pages, and creates its initial user
-context. This permits independent concurrent instances of the same program
-without requiring students to parse ELF files.
-
-Student Makefiles compile the kernel and user programs. A typical workflow is:
-
-```sh
-make
-minemu image --config image.toml --out build/system.rom
-minemu run build/system.rom --disk build/disk.img
+```text
+VA 0xc000_0000..0xc3ff_ffff -> PA 0x4000_0000..0x43ff_ffff
 ```
 
-## Exceptions and Interrupts
+The host packer requires `bootstrap_entry_paddr = 0x4000_8000`. The boot ROM
+copies kernel segments to their declared physical addresses and starts that
+entry with translation disabled. The bootstrap code
+creates the initial page tables, installs TTBR0, enables SCTLR.M, sets VBAR to
+the kernel vector base, and branches to `kernel_entry_vaddr` in the high-half
+mapping. It passes `r0 = 0xc000_7000`, the high-half alias of boot info.
 
-The platform follows ARMv7-A-style exception entry for the supported modes.
-It uses the normal vector offsets for undefined instruction, SVC, prefetch
-abort, data abort, and IRQ. The host performs exception entry for events that
-Unicorn reports to the platform, preserving the appropriate banked state and
-saved CPSR.
+The bootstrap segment is physical code. Kernel high-half segments must satisfy
+`physical_address = virtual_address - 0x8000_0000`. The boot ROM does not
+validate image contents in ABI version 1; the host image packer validates all
+inputs before constructing a ROM image.
 
-The supplied startup assembly provides the vector table and a C dispatch
-boundary. Students implement exception handlers and decide their scheduling
-and context-switch behavior.
+## System-ROM Image Format
 
-Hardware IRQ delivery occurs at deterministic execution boundaries. Pending
-interrupts remain queued while IRQs are masked.
+All image fields are little-endian and fixed-width. The packer writes ABI
+version 1. The boot ROM trusts the header and tables in version 1; parser and
+packer validation remains mandatory on the host.
 
-## Virtual Time
+### Image Header
 
-Time is a virtual instruction clock, not host wall-clock time.
+The image header is 64 bytes at system-ROM offset zero.
 
-- The emulator runs bounded guest-instruction batches.
-- Strict mode raises timer events after configured guest-instruction counts,
-  independent of Unicorn translation-block shape.
-- Device completions are scheduled on the same instruction clock.
-- Interactive input is queued at the next execution boundary.
-- Test input can be scheduled at an exact virtual instruction count.
+| Offset | Type | Name |
+|---:|---|---|
+| `0x00` | `u32` | Magic, `0x4d45_4d55` (`MEMU`) |
+| `0x04` | `u16` | Format version, `1` |
+| `0x06` | `u16` | Header size, `64` |
+| `0x08` | `u32` | Total image size in bytes |
+| `0x0c` | `u32` | Kernel-segment table offset |
+| `0x10` | `u32` | Kernel-segment count |
+| `0x14` | `u32` | Module table offset |
+| `0x18` | `u32` | Module count |
+| `0x1c` | `u32` | Bootstrap entry physical address |
+| `0x20` | `u32` | Kernel entry virtual address |
+| `0x24` | `u32` | Boot-info physical address, `0x4000_7000` |
+| `0x28` | `u32` | Flags, zero in version 1 |
+| `0x2c..0x3f` | `u32[5]` | Reserved, zero |
 
-This makes scheduling and device tests reproducible across supported hosts.
+### Kernel Segment Record
 
-## Teaching MMU
+Each kernel-segment record is 32 bytes.
 
-The teaching MMU is a custom, software-defined two-level paging model. Unicorn
-executes ARM instructions, while `minemu` uses its virtual-TLB hooks to walk
-student-owned page tables and enforce mappings.
+| Offset | Type | Name |
+|---:|---|---|
+| `0x00` | `u32` | Initialized-byte offset in system ROM |
+| `0x04` | `u32` | Physical load address |
+| `0x08` | `u32` | Virtual address |
+| `0x0c` | `u32` | Initialized-byte size |
+| `0x10` | `u32` | Memory size after BSS zeroing |
+| `0x14` | `u32` | Flags: bit 0 readable, bit 1 writable, bit 2 executable |
+| `0x18..0x1f` | `u32[2]` | Reserved, zero |
+
+### Module Record
+
+Each module record is 32 bytes. A module segment record is also 32 bytes, with
+no physical load address. The kernel chooses physical frames when it creates a
+process.
+
+| Offset | Type | Name |
+|---:|---|---|
+| `0x00` | `u32` | UTF-8 module-name offset in system ROM |
+| `0x04` | `u32` | Module-name byte length |
+| `0x08` | `u32` | Module-segment table offset |
+| `0x0c` | `u32` | Module-segment count |
+| `0x10` | `u32` | Fixed user virtual entry address |
+| `0x14` | `u32` | Module flags, zero in version 1 |
+| `0x18..0x1f` | `u32[2]` | Reserved, zero |
+
+| Offset | Type | Module-segment field |
+|---:|---|---|
+| `0x00` | `u32` | Initialized-byte offset in system ROM |
+| `0x04` | `u32` | Fixed user virtual address |
+| `0x08` | `u32` | Initialized-byte size |
+| `0x0c` | `u32` | Memory size after BSS zeroing |
+| `0x10` | `u32` | Flags: bit 0 readable, bit 1 writable, bit 2 executable |
+| `0x14..0x1f` | `u32[3]` | Reserved, zero |
+
+The host packer rejects overlapping records, out-of-ROM offsets, unsupported
+ELF relocation models, duplicate names, Thumb entries, and nonzero reserved
+fields. There is no image digest or boot-time integrity verification in version
+1.
+
+### Boot Info
+
+Boot info is a 64-byte record written at physical `0x4000_7000` and exposed to
+the higher-half kernel at `0xc000_7000`.
+
+| Offset | Type | Name |
+|---:|---|---|
+| `0x00` | `u32` | Magic, `0x4d42_4f4f` (`MBOO`) |
+| `0x04` | `u16` | ABI version, `1` |
+| `0x06` | `u16` | Record size, `64` |
+| `0x08` | `u32` | System-ROM physical base |
+| `0x0c` | `u32` | System-ROM image size |
+| `0x10` | `u32` | Module-table system-ROM offset |
+| `0x14` | `u32` | Module count |
+| `0x18` | `u32` | Kernel direct-map virtual base, `0xc000_0000` |
+| `0x1c` | `u32` | Kernel direct-map physical base, `0x4000_0000` |
+| `0x20` | `u32` | Kernel direct-map size, `0x0400_0000` |
+| `0x24` | `u32` | Flags, zero in version 1 |
+| `0x28..0x3f` | `u32[6]` | Reserved, zero |
+
+## Exceptions
+
+The vectors are at `VBAR + offset`.
+
+| Offset | Exception | Mode | Banked LR on entry | Standard return |
+|---:|---|---|---|---|
+| `0x04` | Undefined instruction | UND | Faulting PC + 4 | `movs pc, lr` |
+| `0x08` | SVC | SVC | SVC PC + 4 | `movs pc, lr` |
+| `0x0c` | Prefetch abort | ABT | Faulting PC + 4 | `subs pc, lr, #4` |
+| `0x10` | Data abort | ABT | Faulting PC + 8 | `subs pc, lr, #8` |
+| `0x18` | IRQ | IRQ | Interrupted PC + 4 | `subs pc, lr, #4` |
+
+On every supported exception entry, the platform copies the prior CPSR into
+the destination mode's SPSR, enters the listed mode, clears the A32 Thumb bit,
+sets the IRQ mask bit, writes the listed banked LR value, and branches to the
+vector. The vector table and every exception handler must remain mapped as
+supervisor-readable and executable while the MMU is enabled.
+
+Undefined instructions include unsupported or unprivileged CP15 operations.
+Prefetch aborts represent failed instruction fetches. Data aborts represent
+failed data or MMIO accesses.
+
+## CP15 Interface
+
+CP15 is the sole MMU and fault-control interface. The following A32 operations
+are supported only in privileged modes: SVC, IRQ, ABT, and UND.
+
+| Instruction | Meaning |
+|---|---|
+| `MCR p15, 0, Rt, c2, c0, 0` | Set TTBR0 from `Rt` |
+| `MCR p15, 0, Rt, c1, c0, 0` | Set SCTLR; bit 0 controls MMU enable |
+| `MCR p15, 0, Rt, c8, c7, 0` | Invalidate all MMU translations; `Rt` ignored |
+| `MCR p15, 0, Rt, c12, c0, 0` | Set VBAR from `Rt` |
+| `MRC p15, 0, Rt, c5, c0, 0` | Read most recent fault status into `Rt` |
+| `MRC p15, 0, Rt, c6, c0, 0` | Read most recent fault address into `Rt` |
+
+The instruction condition is evaluated before CP15 access. A condition-false
+instruction has no effect. A CP15 operation from USR mode, an unsupported CP15
+operation, an unaligned VBAR, or an invalid TTBR0 produces an undefined
+instruction exception.
+
+TTBR0 must be a 4 KiB-aligned physical RAM address. SCTLR bit 0 is the only
+defined writable bit in version 1; all other bits are ignored. VBAR must be
+32-byte aligned. The platform applies a CP15 state change before executing the
+following guest instruction. An explicit DSB or ISB is not required by this
+ABI.
+
+DFSR and DFAR reset to zero. They report the most recent translation,
+protection, fetch, or invalid-MMIO fault until another fault replaces them.
+
+## MMU
+
+The MMU is a custom two-level 4 KiB paging model. Unicorn's native ARM VMSA
+page-table format is not part of the ABI.
 
 | Item | Definition |
 |---|---|
@@ -121,105 +223,110 @@ student-owned page tables and enforce mappings.
 | Page size | 4 KiB |
 | Directory | 1,024 entries indexed by VA bits `31:22` |
 | Page table | 1,024 entries indexed by VA bits `21:12` |
-| PTE permissions | valid, writable, user-accessible, executable |
-| Root pointer | 4 KiB-aligned physical `PTBR` |
-| Invalidation | Explicit `TLB_FLUSH` MMIO operation |
-| Faults | translation, read, write, and execute |
+| Root | TTBR0 physical RAM page |
+| Invalidation | `MCR ... c8, c7, 0` TLBIALL |
 
-The MMU is disabled after reset, where virtual addresses are identity mapped.
-When enabled, a TLB miss causes the host to walk the directory and page table
-in guest physical RAM. Missing or prohibited mappings become ABT-mode faults;
-the fault virtual address and cause are exposed through MMU status registers.
+Translation is disabled after reset. In that state, virtual addresses are
+physical addresses. When SCTLR.M is enabled, every instruction fetch, data
+read, and data write uses the current TTBR0 page directory.
 
-The model intentionally avoids ARM short-descriptor, domain, and CP15 details
-while retaining page allocation, multilevel translation, protection,
-per-process address spaces, and replacement-policy work.
+### Directory And Page-Table Entries
 
-### Page Table Entries
-
-Directory and page-table entries are little-endian 32-bit values.
+Directory and page-table entries are little-endian `u32` values.
 
 | Entry | Bit | Meaning |
 |---|---:|---|
-| PDE | 0 | Valid; bits `31:12` are the physical page-table base |
+| PDE | 0 | Valid; bits `31:12` are physical page-table base |
 | PTE | 0 | Valid |
 | PTE | 1 | Writable |
 | PTE | 2 | User accessible |
 | PTE | 3 | Executable |
-| PTE | `31:12` | Physical frame base |
+| PTE | 4 | Readable |
+| PTE | `31:12` | Physical target page base |
 
-All unspecified bits must be zero. Supervisor code may access valid user pages;
-user code requires the user-accessible bit. Writes and instruction fetches also
-require their respective PTE permissions.
+All unspecified bits are reserved and must be zero. A valid PDE target must be
+a 4 KiB page wholly inside physical RAM. A valid PTE target may be RAM, boot
+ROM, system ROM, or an implemented MMIO page. Device pages are always
+supervisor-only, regardless of PTE user bit.
 
-## Peripherals
+A valid PTE grants no implied permissions. Reads require readable, writes
+require writable, and instruction fetches require executable. User-mode access
+also requires user. Supervisor code may access valid user pages. ROM pages are
+never writable.
 
-### UART
+### Fault Status
 
-The UART is a byte-oriented console.
+The low byte identifies cause. Bits 8 through 10 describe the attempted
+access.
 
-- `TX_DATA`: writing the low byte emits a console byte.
-- `RX_DATA`: reading returns and consumes the next queued host byte.
-- `STATUS`: receive-ready and transmit-ready state.
-- `CONTROL`: receive-interrupt enable.
+| Value or bit | Meaning |
+|---:|---|
+| `1` | Translation fault |
+| `2` | Read-protection fault |
+| `3` | Write-protection fault |
+| `4` | Execute-protection fault |
+| `5` | Invalid or unmapped MMIO access |
+| Bit 8 | Access originated in USR mode |
+| Bit 9 | Access was a write |
+| Bit 10 | Access was an instruction fetch |
 
-The console supports normal printable text, carriage return, line feed, and
-backspace. It does not promise ANSI terminal emulation.
+## Virtual Time
 
-### Timer
+Virtual time is a deterministic logical instruction-progress clock, not a
+hardware-cycle model.
 
-The timer has a period, enable state, periodic mode, interrupt-enable state,
-and acknowledge operation. It schedules events against the virtual instruction
-clock and can raise a timer IRQ.
+- A completed instruction advances time by one tick.
+- SVC and undefined instructions advance time by one tick, then exception
+  entry advances time by one tick.
+- A data or prefetch fault does not advance time for the faulting instruction;
+  exception entry advances time by one tick.
+- Device commands consume their normal instruction tick. Successful and failed
+  operations complete at the same configured deadline.
+- Host or backend failures add no guest time after execution stops.
+- Timer and device deadlines are processed after time advances and before the
+  next guest instruction begins.
+- Pending IRQs are delivered only at instruction boundaries when CPSR.I is
+  clear. Exceptions and faults take priority over later IRQ delivery at the
+  same boundary.
 
-### Interrupt Controller
+## MMIO Rules
 
-The controller provides UART receive, timer, and block-completion sources. It
-has pending and enable bitmaps plus claim and EOI operations. Sources use a
-fixed documented priority order.
+All device registers are little-endian, 32-bit values at four-byte-aligned
+offsets. Reads and writes must be aligned 32-bit transactions. An access with
+another width, an unaligned access, a read from a write-only register, a write
+to a read-only register, a reserved-bit write, or an undefined register offset
+causes a `DEVICE_ACCESS` data abort.
 
-### Block Device
-
-The block device presents a persistent raw disk image with 512-byte sectors.
-Students write a simple DMA driver using command, LBA, sector count, physical
-RAM buffer address, status, and acknowledge registers.
-
-Reads and writes complete after a deterministic virtual-time delay. The device
-copies data between the raw disk file and guest physical RAM, then raises a
-completion IRQ. Invalid LBAs, unaligned DMA buffers, and DMA outside RAM
-produce documented errors.
-
-### Trace Device
-
-The optional trace device records course-defined diagnostic events such as
-context switches, page evictions, or filesystem operations. It never affects
-guest correctness or grading.
-
-## MMIO Register Layout
-
-All device registers are little-endian 32-bit values. Accesses of a different
-width are permitted only where the device documentation explicitly allows them.
+All implemented MMIO pages are supervisor-only. A user PTE that targets a
+device page causes a protection fault before the device is accessed.
 
 ### UART (`0x1000_0000`)
 
 | Offset | Name | Access | Definition |
 |---:|---|---|---|
-| `0x00` | `RX_DATA` | R | Low byte is the next queued input byte; read consumes it |
+| `0x00` | `RX_DATA` | R | Low byte is next queued input byte; read consumes it, or returns zero when empty |
 | `0x04` | `TX_DATA` | W | Low byte is appended to console output |
-| `0x08` | `STATUS` | R | Bit 0: RX ready; bit 1: TX ready |
-| `0x0c` | `CONTROL` | RW | Bit 0: enable RX interrupt |
+| `0x08` | `STATUS` | R | Bit 0 RX ready, bit 1 TX ready |
+| `0x0c` | `CONTROL` | RW | Bit 0 enables UART RX IRQ |
 
-TX ready is always set. A queued input byte with RX interrupts enabled raises
-the UART source in the interrupt controller.
+TX ready is always set. The UART source is level-pending while RX is nonempty
+and RX IRQ is enabled. It clears when input is consumed, the queue becomes
+empty, or RX IRQ is disabled. The platform exposes registers and raw MMIO
+helpers only; students implement UART drivers.
 
 ### Timer (`0x1000_1000`)
 
 | Offset | Name | Access | Definition |
 |---:|---|---|---|
-| `0x00` | `PERIOD` | RW | Guest-instruction interval; zero is invalid |
-| `0x04` | `CONTROL` | RW | Bit 0: enabled; bit 1: periodic; bit 2: IRQ enabled |
-| `0x08` | `STATUS` | R | Bit 0: event pending |
-| `0x0c` | `ACK` | W | Writing bit 0 clears the pending event |
+| `0x00` | `PERIOD` | RW | Positive virtual-tick interval |
+| `0x04` | `CONTROL` | RW | Bit 0 enable, bit 1 periodic, bit 2 IRQ enable |
+| `0x08` | `STATUS` | R | Bit 0 event pending |
+| `0x0c` | `ACK` | W | Bit 0 clears pending event |
+
+Writing zero to `PERIOD` is an invalid device access. A timer starts its first
+interval when enabled. Periodic expirations advance by exact multiples of the
+configured period, even when a batch crosses more than one deadline. ACK clears
+the current pending state; it does not disable a periodic timer.
 
 ### Interrupt Controller (`0x1000_2000`)
 
@@ -227,50 +334,89 @@ the UART source in the interrupt controller.
 |---:|---|---|---|
 | `0x00` | `PENDING` | R | Pending source bitmap |
 | `0x04` | `ENABLE` | RW | Enabled source bitmap |
-| `0x08` | `CLAIM` | R | Highest-priority active source, or `0xffff_ffff` if none |
-| `0x0c` | `EOI` | W | Complete the claimed source index |
+| `0x08` | `CLAIM` | R | Current claim or highest-priority active source |
+| `0x0c` | `EOI` | W | Completes the claimed source index |
 
-Source 0 is UART receive, source 1 is timer, and source 2 is block completion.
-Lower source indices have higher priority. A source is eligible when it is both
-pending and enabled.
+Source 0 is UART RX, source 1 is timer, and source 2 is block completion.
+Lower source indices have higher priority. A source is active when pending and
+enabled. Reading CLAIM selects and retains the highest-priority active source;
+it returns `0xffff_ffff` when none is active. A further CLAIM read returns the
+retained claim until a matching EOI. Device ACK clears the underlying source;
+EOI releases the controller claim. An EOI value that does not match the active
+claim is an invalid device access.
 
 ### Block Device (`0x1000_3000`)
 
 | Offset | Name | Access | Definition |
 |---:|---|---|---|
-| `0x00` | `COMMAND` | W | `1`: read; `2`: write |
+| `0x00` | `COMMAND` | W | `1` read, `2` write |
 | `0x04` | `LBA` | RW | First 512-byte sector |
-| `0x08` | `SECTOR_COUNT` | RW | Requested sector count |
+| `0x08` | `SECTOR_COUNT` | RW | Nonzero requested sector count |
 | `0x0c` | `DMA_PADDR` | RW | Physical RAM buffer address |
-| `0x10` | `STATUS` | R | Bit 0: busy; bit 1: complete; bit 2: error |
-| `0x14` | `ERROR` | R | Device-defined error code |
-| `0x18` | `ACK` | W | Writing bit 0 clears complete and error state |
-| `0x1c` | `CONTROL` | RW | Bit 0: enable completion IRQ |
+| `0x10` | `STATUS` | R | Bit 0 busy, bit 1 complete, bit 2 error |
+| `0x14` | `ERROR` | R | Error code |
+| `0x18` | `ACK` | W | Bit 0 clears complete and error state |
+| `0x1c` | `CONTROL` | RW | Bit 0 enables completion IRQ |
 
-Commands require an aligned RAM buffer and a nonzero sector count. A command
-issued while busy fails with an error. The device performs no address
-translation; DMA addresses are always physical.
+Every command accepted while idle, including one that will complete with a
+guest-visible validation error, completes exactly 32 virtual ticks after the
+command write. A command issued while busy is synchronously rejected with
+`Busy` and does not disturb the active request. DMA addresses are physical,
+512-byte aligned, and wholly inside RAM. Commands operate on the
+emulator-owned memory copy of an attached nonempty, sector-aligned raw disk.
+Writes mark affected sectors dirty and do not synchronously modify the host
+file.
 
-### Teaching MMU (`0x1000_4000`)
+| Error | Value |
+|---|---:|
+| None | `0` |
+| No media | `1` |
+| Busy | `2` |
+| Invalid command | `3` |
+| Invalid DMA | `4` |
+| Invalid LBA or range | `5` |
+| Deferred persistence failure | `6` |
+
+The runtime flushes dirty sectors on pause, shutdown, and terminal
+emulator/backend failure. A failed flush leaves dirty sectors intact for retry.
+Guest command errors never force a host flush.
+
+### RNG (`0x1000_5000`)
 
 | Offset | Name | Access | Definition |
 |---:|---|---|---|
-| `0x00` | `CTRL` | RW | Bit 0 enables translation and protection checks |
-| `0x04` | `PTBR` | RW | 4 KiB-aligned physical page-directory address |
-| `0x08` | `TLB_FLUSH` | W | Any write invalidates cached translations |
-| `0x0c` | `FAULT_VA` | R | Virtual address from the most recent MMU fault |
-| `0x10` | `FAULT_STATUS` | R | Fault cause and access metadata |
+| `0x00` | `SEED` | RW | Configured seed; writes restart the sequence |
+| `0x04` | `DATA` | R | Advance once and return next `u32` |
+| `0x08` | `STATE` | R | Current generator state |
 
-`FAULT_STATUS` values are: 1 for translation, 2 for read protection, 3 for
-write protection, and 4 for execute protection. Bit 8 identifies a user-mode
-fault, bit 9 a write access, and bit 10 an instruction fetch.
+The RNG is deterministic. Reset initializes SEED and STATE to
+`0x4d45_4d55`. Writing zero to SEED stores that default value instead. DATA
+uses `xorshift32`:
 
-## Observability and Testing
+```text
+x ^= x << 13
+x ^= x >> 17
+x ^= x << 5
+state = x
+return x
+```
 
-The emulator records bounded hardware events, including UART I/O, timer
-expiration, IRQ delivery, block requests, exceptions, and MMU faults. These
-events feed the TUI and headless test harness.
+RNG reads have no IRQ, DMA, or extra virtual-time cost beyond the instruction
+that performs the read.
 
-`minemu test` runs a completed ROM image with scripted input and expected
-console or machine-state assertions. Tests use the same emulator core as the
-interactive TUI and do not require the TUI to run.
+### Trace Device (`0x1000_f000`)
+
+The trace page is reserved for a future optional course-defined event device.
+Until specified, every access is an invalid MMIO transaction.
+
+## Observability And Testing
+
+The runtime records bounded UART, timer, IRQ, block, exception, MMU, and
+device events. It publishes lightweight immutable status at a cadence or after
+a material state change. CPU-register, MMU-walk, memory, and detailed device
+inspection are requested explicitly and are not continuously copied into every
+status update.
+
+`minemu test` runs a completed system-ROM image with scheduled input and
+assertions over console output, events, faults, and selected machine state. It
+uses the same machine and runtime contract as interactive execution.

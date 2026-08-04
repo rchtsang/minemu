@@ -24,16 +24,20 @@ All entries are planned until their named evidence exists.
 | MMU-01 | Directory/PTE layout, reserved bits, and RAM-only page tables | `minemu-platform` MMU tests |
 | MMU-02 | Read, write, execute, user, ROM, and device permissions | `fixtures/arm/mmu-permissions` |
 | MMU-03 | Fault status causes and access metadata | `fixtures/arm/mmu-fault-status` |
+| MMU-04 | Accessed/Dirty updates, software bits, and TLBIALL after clearing | `fixtures/arm/mmu-replacement-bits` |
+| MMU-05 | Fetch/data page faults enter prefetch/data abort and retry correctly | `fixtures/arm/page-faults` |
 | TIME-01 | Normal instruction, trap, fault, and exception-entry tick costs | `minemu-core` virtual-time tests |
 | TIME-02 | Exact timer and block deadlines across traps and faults | `fixtures/arm/device-deadlines` |
 | MMIO-01 | Width, alignment, direction, reserved-bit, and undefined-offset faults | `minemu-core` bus tests; `fixtures/arm/mmio-invalid` |
-| UART-01 | UART polling, RX queue, TX output, and RX level IRQ | `fixtures/arm/uart` |
-| TIMER-01 | Timer enable, periodic scheduling, ACK, and IRQ masking | `fixtures/arm/timer` |
+| UART-01 | UART0 and UART1 polling, RX queues, TX output, and RX level IRQs | `fixtures/arm/uart` |
+| TIMER-01 | SysTick enable, periodic scheduling, ACK, and IRQ masking | `fixtures/arm/systick` |
 | IRQ-01 | Source priority, CLAIM retention, source ACK, and EOI | `fixtures/arm/irq-controller` |
+| IRQ-02 | Configurable priority, SysTick-over-UART defaults, and source-ID tie breaking | `fixtures/arm/irq-priority` |
 | BLOCK-01 | Physical DMA, deterministic read/write completion, and guest errors | `fixtures/arm/block` |
 | BLOCK-02 | Write-back media, pause/shutdown flush, and flush retry | `minemu-runtime` disk tests; headless `block-writeback` test |
 | RNG-01 | Default seed, zero-seed policy, xorshift32 sequence, and reseed | `minemu-core` RNG tests; `fixtures/arm/rng` |
 | RNG-02 | RNG supervisor-only mapping | `fixtures/arm/rng-user-fault` |
+| TRACE-01 | Guest trace value, retired-instruction timestamp, bounded history, and supervisor-only access | `fixtures/arm/trace` |
 | OBS-01 | Bounded events, material-change status, and requested inspection | `minemu-runtime` snapshot tests |
 | RUNTIME-01 | Bounded commands, pause/reset/shutdown, and terminal error state | `minemu-runtime` service tests |
 | TEMPLATE-01 | Kernel/user/system templates build in released container | container template smoke test |

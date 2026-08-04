@@ -28,16 +28,16 @@ systems coursework. It is not a model of a production SoC.
 |---|---:|---|
 | `0x0000_0000..0x0000_ffff` | 64 KiB | Immutable platform boot ROM |
 | `0x0800_0000..0x08ff_ffff` | 16 MiB | Immutable system ROM |
-| `0x1000_0000..0x1000_0fff` | 4 KiB | UART |
-| `0x1000_1000..0x1000_1fff` | 4 KiB | Virtual timer |
-| `0x1000_2000..0x1000_2fff` | 4 KiB | Interrupt controller |
-| `0x1000_3000..0x1000_3fff` | 4 KiB | DMA block device |
-| `0x1000_5000..0x1000_5fff` | 4 KiB | Deterministic RNG |
-| `0x1000_f000..0x1000_ffff` | 4 KiB | Optional trace device |
+| `0x1000_0000..0x1000_0fff` | 4 KiB | Interrupt controller |
+| `0x1000_1000..0x1000_1fff` | 4 KiB | System timer (SysTick) |
+| `0x1000_2000..0x1000_2fff` | 4 KiB | DMA block device |
+| `0x1000_3000..0x1000_3fff` | 4 KiB | Deterministic RNG |
+| `0x1000_4000..0x1000_4fff` | 4 KiB | UART0 |
+| `0x1000_5000..0x1000_5fff` | 4 KiB | UART1 |
+| `0x1000_f000..0x1000_ffff` | 4 KiB | Trace device |
 | `0x4000_0000..0x43ff_ffff` | 64 MiB | Writable RAM |
 
-`0x1000_4000..0x1000_4fff` is reserved. MMU control is CP15-only and has no
-MMIO control page.
+MMU control is CP15-only and has no MMIO control page.
 
 Unmapped physical accesses, accesses to reserved device pages, and invalid
 MMIO transactions enter the data-abort path with fault cause
@@ -166,13 +166,13 @@ the higher-half kernel at `0xc000_7000`.
 
 The vectors are at `VBAR + offset`.
 
-| Offset | Exception | Mode | Banked LR on entry | Standard return |
-|---:|---|---|---|---|
-| `0x04` | Undefined instruction | UND | Faulting PC + 4 | `movs pc, lr` |
-| `0x08` | SVC | SVC | SVC PC + 4 | `movs pc, lr` |
-| `0x0c` | Prefetch abort | ABT | Faulting PC + 4 | `subs pc, lr, #4` |
-| `0x10` | Data abort | ABT | Faulting PC + 8 | `subs pc, lr, #8` |
-| `0x18` | IRQ | IRQ | Interrupted PC + 4 | `subs pc, lr, #4` |
+| Offset | Exception | Dispatch ID | Mode | Banked LR on entry | Standard return |
+|---:|---|---:|---|---|---|
+| `0x04` | Undefined instruction | `-4` | UND | Faulting PC + 4 | `movs pc, lr` |
+| `0x08` | SVC | `-3` | SVC | SVC PC + 4 | `movs pc, lr` |
+| `0x0c` | Prefetch abort | `-2` | ABT | Faulting PC + 4 | `subs pc, lr, #4` |
+| `0x10` | Data abort | `-1` | ABT | Faulting PC + 8 | `subs pc, lr, #8` |
+| `0x18` | IRQ | Claimed source ID | IRQ | Interrupted PC + 4 | `subs pc, lr, #4` |
 
 On every supported exception entry, the platform copies the prior CPSR into
 the destination mode's SPSR, enters the listed mode, clears the A32 Thumb bit,
@@ -183,6 +183,10 @@ supervisor-readable and executable while the MMU is enabled.
 Undefined instructions include unsupported or unprivileged CP15 operations.
 Prefetch aborts represent failed instruction fetches. Data aborts represent
 failed data or MMIO accesses.
+
+The platform runtime passes the signed dispatch ID to the C trap dispatcher.
+Synchronous exceptions have fixed negative IDs. The IRQ vector claims a
+nonnegative source ID from the interrupt controller before dispatching it.
 
 ## CP15 Interface
 
@@ -242,6 +246,9 @@ Directory and page-table entries are little-endian `u32` values.
 | PTE | 2 | User accessible |
 | PTE | 3 | Executable |
 | PTE | 4 | Readable |
+| PTE | 5 | Accessed |
+| PTE | 6 | Dirty |
+| PTE | `11:7` | Kernel-owned software metadata |
 | PTE | `31:12` | Physical target page base |
 
 All unspecified bits are reserved and must be zero. A valid PDE target must be
@@ -253,6 +260,15 @@ A valid PTE grants no implied permissions. Reads require readable, writes
 require writable, and instruction fetches require executable. User-mode access
 also requires user. Supervisor code may access valid user pages. ROM pages are
 never writable.
+
+The MMU sets Accessed after every successful instruction fetch, data read, or
+data write. It sets Dirty after every successful data write. It never sets
+either bit for a failed access, never clears either bit, and preserves bits
+`11:7` when it updates a PTE. The kernel clears Accessed and Dirty bits to
+sample activity; it must execute TLBIALL before relying on a later access to
+set them again. Bits `11:7` are reserved for kernel replacement metadata such
+as compact age or queue hints. Larger age counters, working-set timestamps, and
+deadline data belong in kernel memory rather than the PTE.
 
 ### Fault Status
 
@@ -269,6 +285,11 @@ access.
 | Bit 8 | Access originated in USR mode |
 | Bit 9 | Access was a write |
 | Bit 10 | Access was an instruction fetch |
+
+A translation or protection fault is the platform page-fault mechanism. A
+failed instruction fetch enters prefetch abort; a failed data read or write
+enters data abort. The kernel reads DFAR and DFSR, installs or changes a PTE,
+executes TLBIALL, and returns through the documented exception-return sequence.
 
 ## Virtual Time
 
@@ -300,21 +321,22 @@ causes a `DEVICE_ACCESS` data abort.
 All implemented MMIO pages are supervisor-only. A user PTE that targets a
 device page causes a protection fault before the device is accessed.
 
-### UART (`0x1000_0000`)
+### UART0 (`0x1000_4000`) And UART1 (`0x1000_5000`)
 
 | Offset | Name | Access | Definition |
 |---:|---|---|---|
 | `0x00` | `RX_DATA` | R | Low byte is next queued input byte; read consumes it, or returns zero when empty |
 | `0x04` | `TX_DATA` | W | Low byte is appended to console output |
 | `0x08` | `STATUS` | R | Bit 0 RX ready, bit 1 TX ready |
-| `0x0c` | `CONTROL` | RW | Bit 0 enables UART RX IRQ |
+| `0x0c` | `CONTROL` | RW | Bit 0 enables that UART's RX IRQ |
 
-TX ready is always set. The UART source is level-pending while RX is nonempty
-and RX IRQ is enabled. It clears when input is consumed, the queue becomes
-empty, or RX IRQ is disabled. The platform exposes registers and raw MMIO
-helpers only; students implement UART drivers.
+TX ready is always set. UART0 is source 1 and UART1 is source 2. Each source
+is level-pending while its RX queue is nonempty and its RX IRQ is enabled. It
+clears when input is consumed, the queue becomes empty, or RX IRQ is disabled.
+The platform exposes registers and raw MMIO helpers only; students implement
+UART drivers.
 
-### Timer (`0x1000_1000`)
+### System Timer (SysTick, `0x1000_1000`)
 
 | Offset | Name | Access | Definition |
 |---:|---|---|---|
@@ -326,9 +348,10 @@ helpers only; students implement UART drivers.
 Writing zero to `PERIOD` is an invalid device access. A timer starts its first
 interval when enabled. Periodic expirations advance by exact multiples of the
 configured period, even when a batch crosses more than one deadline. ACK clears
-the current pending state; it does not disable a periodic timer.
+the current pending state; it does not disable a periodic timer. SysTick is
+interrupt-controller source 0.
 
-### Interrupt Controller (`0x1000_2000`)
+### Interrupt Controller (`0x1000_0000`)
 
 | Offset | Name | Access | Definition |
 |---:|---|---|---|
@@ -336,16 +359,24 @@ the current pending state; it does not disable a periodic timer.
 | `0x04` | `ENABLE` | RW | Enabled source bitmap |
 | `0x08` | `CLAIM` | R | Current claim or highest-priority active source |
 | `0x0c` | `EOI` | W | Completes the claimed source index |
+| `0x10` | `PRIORITY_SYSTICK` | RW | Low eight bits set SysTick priority |
+| `0x14` | `PRIORITY_UART0` | RW | Low eight bits set UART0 priority |
+| `0x18` | `PRIORITY_UART1` | RW | Low eight bits set UART1 priority |
+| `0x1c` | `PRIORITY_BLOCK` | RW | Low eight bits set block priority |
 
-Source 0 is UART RX, source 1 is timer, and source 2 is block completion.
-Lower source indices have higher priority. A source is active when pending and
-enabled. Reading CLAIM selects and retains the highest-priority active source;
-it returns `0xffff_ffff` when none is active. A further CLAIM read returns the
-retained claim until a matching EOI. Device ACK clears the underlying source;
-EOI releases the controller claim. An EOI value that does not match the active
-claim is an invalid device access.
+Source 0 is SysTick, source 1 is UART0 RX, source 2 is UART1 RX, and source 3
+is block completion. A source is active when pending and enabled. Lower
+priority values win; ties resolve by lower source ID. The reset priorities are
+SysTick `0`, UART0 `64`, UART1 `64`, and block `128`.
 
-### Block Device (`0x1000_3000`)
+Reading CLAIM selects and retains the highest-priority active source; it returns
+`0xffff_ffff` when none is active. A further CLAIM read returns the retained
+claim until a matching EOI. Device ACK clears the underlying source; EOI
+releases the controller claim. An EOI value that does not match the active
+claim, or a priority write with nonzero bits above bit 7, is an invalid device
+access.
+
+### Block Device (`0x1000_2000`)
 
 | Offset | Name | Access | Definition |
 |---:|---|---|---|
@@ -381,7 +412,7 @@ The runtime flushes dirty sectors on pause, shutdown, and terminal
 emulator/backend failure. A failed flush leaves dirty sectors intact for retry.
 Guest command errors never force a host flush.
 
-### RNG (`0x1000_5000`)
+### RNG (`0x1000_3000`)
 
 | Offset | Name | Access | Definition |
 |---:|---|---|---|
@@ -406,12 +437,19 @@ that performs the read.
 
 ### Trace Device (`0x1000_f000`)
 
-The trace page is reserved for a future optional course-defined event device.
-Until specified, every access is an invalid MMIO transaction.
+| Offset | Name | Access | Definition |
+|---:|---|---|---|
+| `0x00` | `EVENT` | W | Append a guest trace event carrying the written `u32` |
+
+The platform stages an EVENT write until its issuing instruction retires, then
+records the value and completed-instruction tick in the bounded hardware-event
+history. Trace writes have no IRQ, DMA, or extra virtual-time cost. Trace is
+supervisor-only. When the event history reaches capacity, its oldest event is
+dropped. All other trace-page offsets are invalid MMIO transactions.
 
 ## Observability And Testing
 
-The runtime records bounded UART, timer, IRQ, block, exception, MMU, and
+The runtime records bounded UART, SysTick, IRQ, block, trace, exception, MMU, and
 device events. It publishes lightweight immutable status at a cadence or after
 a material state change. CPU-register, MMU-walk, memory, and detailed device
 inspection are requested explicitly and are not continuously copied into every

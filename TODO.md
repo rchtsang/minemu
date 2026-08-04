@@ -19,6 +19,8 @@ scenarios. Do not copy its monolithic implementation into this workspace.
   ARM VMSA short descriptors.
 - [x] PTE permissions are valid, readable, writable, user, and executable.
   All reserved PTE/PDE bits are rejected.
+- [x] PTEs include MMU-managed Accessed and Dirty bits plus five kernel-owned
+  software metadata bits for replacement policy hints.
 - [x] Physical RAM is `0x4000_0000..0x43ff_ffff`. The kernel has a fixed
   higher-half direct mapping at `0xc000_0000..0xc3ff_ffff`.
 - [x] Boot uses a physical trampoline, enables the MMU, and branches to the
@@ -43,6 +45,12 @@ scenarios. Do not copy its monolithic implementation into this workspace.
   newlib-nano are not part of the supported platform.
 - [x] Device MMIO is supervisor-only, including the RNG. User code accesses
   devices through kernel services.
+- [x] The interrupt controller assigns nonnegative source IDs and configurable
+  priorities. SysTick defaults above UART0, UART1, and block completion.
+- [x] UART0 and UART1 are independent MMIO peripherals with separate RX IRQ
+  sources and priorities.
+- [x] The trace device records a supervisor-written `u32` event at the
+  issuing instruction's completed virtual tick.
 - [x] The boot ROM trusts image contents initially. The image packer validates
   inputs, but boot-time integrity validation is deferred.
 
@@ -60,6 +68,10 @@ scenarios. Do not copy its monolithic implementation into this workspace.
   behavior for every device register.
 - [x] Specify IRQ priorities, pending/claim/ACK/EOI behavior, device error
   codes, and virtual device latencies.
+- [x] Specify MMU Accessed/Dirty behavior, kernel software metadata bits, and
+  prefetch/data-abort page-fault recovery.
+- [x] Specify dual UART source IDs, configurable source-priority registers,
+  SysTick defaults, and trace-event semantics.
 - [x] Specify the versioned image and boot-info wire formats with explicit
   little-endian fields and bounds rules.
 - [x] Build a conformance matrix mapping each ABI rule to a Rust test, guest
@@ -73,7 +85,8 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [ ] Define typed MMIO transactions with width, alignment, direction, address,
   and value.
 - [ ] Define PTE/PDE parsing and validation, including RAM-only page-table
-  backing and reserved-bit rejection.
+  backing, Accessed/Dirty updates, software metadata preservation, and
+  reserved-bit rejection.
 - [ ] Define backend-neutral CP15 operation and exception request types.
 - [ ] Define stable, explicit little-endian image-header, segment, module, and
   boot-info records. Never serialize Rust structs directly.
@@ -84,21 +97,23 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 - [ ] Implement physical memory/ROM lifecycle and a typed MMIO bus with
   centralized width, alignment, direction, and access validation.
-- [ ] Implement UART state, bounded RX/TX histories, RX-ready status, and
-  configurable RX interrupt behavior.
-- [ ] Implement timer state and exact virtual deadline scheduling.
+- [ ] Implement UART0/UART1 state, bounded RX/TX histories, RX-ready status,
+  and independently configurable RX interrupt behavior.
+- [ ] Implement SysTick state and exact virtual deadline scheduling.
 - [ ] Implement interrupt-controller state with deterministic priority,
-  pending, enable, claim, EOI, and source acknowledgement semantics.
+  pending, enable, claim, EOI, source acknowledgement, and configurable source
+  priorities.
 - [ ] Implement block-device command state, physical-RAM-only DMA validation,
   deterministic completion, guest-visible errors, write-back media, dirty
   sector tracking, and flush/retry state.
-- [ ] Implement deterministic MMIO RNG at `0x1000_5000`:
+- [ ] Implement deterministic MMIO RNG at `0x1000_3000`:
   - [ ] `SEED` is read/write, `DATA` advances and returns the next `u32`, and
     `STATE` exposes current state for inspection.
   - [ ] Use a specified `xorshift32` transition and a documented nonzero
     default/zero-seed policy.
   - [ ] Do not emit an event for every RNG read.
-- [ ] Implement optional trace-device state without affecting guest correctness.
+- [ ] Implement trace EVENT writes with retired-instruction timestamps and
+  bounded event-history behavior without affecting guest correctness.
 - [ ] Implement the MMU walker through a narrow physical-memory interface.
 - [ ] Implement exception planning and fault records without Unicorn callbacks.
 - [ ] Implement the virtual scheduler, bounded event history, small status
@@ -141,7 +156,7 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 ## 5. Build the Student ARM Platform
 
 - [ ] Add `platform/arm/include/minemu/platform.h` with the stable memory map,
-  constants, and a limited set of raw MMIO helpers.
+  constants, dual-UART definitions, and a limited set of raw MMIO helpers.
 - [ ] Add `mmu.h`, `boot.h`, `trap.h`, and `syscall.h` with fixed-width,
   student-facing ABI definitions.
 - [ ] Use packed, four-byte-aligned MMIO register structs with `_Static_assert`
@@ -200,9 +215,10 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 - [ ] Port spike scenarios into `fixtures/arm` as backend/ABI conformance
   tests, separate from student templates.
-- [ ] Cover ROM boot, UART polling/IRQ, timer deadlines, IRQ priority,
-  block success/error/write-back paths, RNG sequences, MMU permissions, CP15,
-  all exception paths, and process TTBR/TLBIALL switches.
+- [ ] Cover ROM boot, dual-UART polling/IRQ, SysTick deadlines, configurable
+  IRQ priority, block success/error/write-back paths, RNG sequences, trace
+  events, MMU replacement bits and permissions, CP15, all exception paths, and
+  process TTBR/TLBIALL switches.
 - [ ] Build the fixture suite through `just fixtures/test`.
 - [ ] Add template smoke tests: build kernel/user projects, package an image,
   boot it, run scripted input, and assert output/state.

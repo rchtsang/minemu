@@ -28,9 +28,10 @@ The default layout prioritizes the guest console.
 - **Console pane:** scrollable UART output and active keyboard input target.
 - **Machine pane:** virtual instruction clock, run state, CPU mode, PC, SP,
   and CPSR.
-- **Hardware pane:** enabled/pending IRQs and current UART, timer, and block
-  device state.
-- **Event pane:** recent UART, timer, IRQ, block, exception, and MMU events.
+- **Hardware pane:** enabled/pending IRQs and current UART0, UART1, SysTick,
+  RNG, and block-device state.
+- **Event pane:** recent UART, SysTick, IRQ, block, trace, exception, and MMU
+  events.
 - **Inspector pane:** selected virtual-address translation, page-table walk,
   or memory region.
 - **Status line:** active focus, shortcut reminder, image name, and errors.
@@ -90,10 +91,9 @@ not retain references to Unicorn or live emulator memory. The TUI may discard
 stale status values and render only the newest one.
 
 The event pane is intentionally hardware-oriented. It should show events such
-as timer expiration, IRQ claim/EOI, page fault, block completion, and UART
-input. It does not attempt to infer arbitrary student kernel structures. The
-optional guest trace device can provide higher-level course events when a
-kernel chooses to emit them.
+as SysTick expiration, IRQ claim/EOI, page fault, block completion, UART input,
+and guest trace values. It does not attempt to infer arbitrary student kernel
+structures. The trace device lets a kernel emit course-specific event values.
 
 ## Runtime Behavior
 

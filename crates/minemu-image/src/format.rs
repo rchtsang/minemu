@@ -43,12 +43,12 @@ impl SystemImage {
             return Err(ImageError::InvalidImage("image size"));
         }
         let mut image_map = ImageMap::new()?;
-        let kernel_table = span(
+        let kernel_table = Span::new_checked(
             header.kernel_segment_table_offset,
             header.kernel_segment_count,
             KERNEL_SEGMENT_SIZE,
         )?;
-        let module_table = span(
+        let module_table = Span::new_checked(
             header.module_table_offset,
             header.module_count,
             MODULE_RECORD_SIZE,
@@ -75,7 +75,7 @@ impl SystemImage {
             let offset = header.module_table_offset as usize + index * MODULE_RECORD_SIZE;
             let record = ModuleRecord::decode(&bytes[offset..offset + MODULE_RECORD_SIZE])?;
             let name_span = Span::from_offset_length(record.name_offset, record.name_length)?;
-            let segment_table = span(
+            let segment_table = Span::new_checked(
                 record.segment_table_offset,
                 record.segment_count,
                 MODULE_SEGMENT_SIZE,
@@ -244,6 +244,13 @@ impl Deref for ImageMap {
 }
 
 impl Span {
+    fn new_checked(offset: u32, count: u32, record_size: usize) -> Result<Self> {
+        let length = (count as usize)
+            .checked_mul(record_size)
+            .ok_or(ImageError::InvalidImage("table size overflow"))?;
+        Self::new(offset as usize, length)
+    }
+
     fn new(start: usize, length: usize) -> Result<Self> {
         Ok(Self {
             start,
@@ -260,13 +267,6 @@ impl Span {
     fn overlaps(self, other: Self) -> bool {
         self.start < other.end && other.start < self.end
     }
-}
-
-fn span(offset: u32, count: u32, record_size: usize) -> Result<Span> {
-    let length = (count as usize)
-        .checked_mul(record_size)
-        .ok_or(ImageError::InvalidImage("table size overflow"))?;
-    Span::new(offset as usize, length)
 }
 
 fn size32(value: usize, detail: &'static str) -> Result<u32> {

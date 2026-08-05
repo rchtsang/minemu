@@ -83,6 +83,13 @@ impl Machine {
         }
     }
 
+    /// Enters an exception at an instruction boundary after its instruction tick.
+    pub fn enter_exception(&mut self, kind: ExceptionKind, pc: VirtualAddress) -> ExceptionPlan {
+        self.advance_ticks(kind.entry_ticks());
+        self.record_event(ObservableEvent::Exception(kind));
+        ExceptionPlan::synchronous(kind, pc)
+    }
+
     pub fn status(&mut self) -> MachineStatus {
         MachineStatus {
             ticks: self.ticks,

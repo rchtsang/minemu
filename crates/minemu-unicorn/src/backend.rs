@@ -1,7 +1,10 @@
 //! Unicorn-backed A32 execution adapter for the backend-independent machine core.
 
 use minemu_core::{ExceptionPlan, InstructionOutcome, Machine, MmuFault};
-use minemu_platform::{MemRegion, MmioTransaction, MmioWidth, PhysicalAddress};
+use minemu_platform::{
+    Access, FaultCause, FaultStatus, MemRegion, MmioTransaction, MmioWidth, PhysicalAddress,
+    VirtualAddress,
+};
 use thiserror::Error;
 use unicorn_engine::{
     ArmCpuModel, RegisterARM, Unicorn,
@@ -14,7 +17,11 @@ use crate::arm::{self, PendingCp15};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BackendStop {
     InstructionBudget,
-    MmioFault { address: u32, detail: String },
+    MmioFault {
+        address: u32,
+        access: Access,
+        detail: String,
+    },
     MmuFault(MmuFault),
     Cp15Boundary,
     Exception(minemu_platform::ExceptionKind),
@@ -39,6 +46,15 @@ pub(crate) struct BackendData {
     executed_instructions: u64,
     callback_stop: Option<BackendStop>,
     pending_cp15: Option<PendingCp15>,
+    pending_exception: Option<PendingException>,
+}
+
+enum PendingException {
+    Synchronous {
+        kind: minemu_platform::ExceptionKind,
+        pc: u32,
+    },
+    Fault(MmuFault),
 }
 
 /// Safe, single-threaded Unicorn A32 backend bound to one core machine.
@@ -61,6 +77,7 @@ impl UnicornBackend {
                 executed_instructions: 0,
                 callback_stop: None,
                 pending_cp15: None,
+                pending_exception: None,
             },
         )
         .map_err(BackendError::Unicorn)?;
@@ -128,6 +145,20 @@ impl UnicornBackend {
                     return;
                 }
                 let instruction = u32::from_le_bytes(bytes);
+                if instruction & 0x0f00_0000 == 0x0f00_0000
+                    && arm::condition_holds(
+                        instruction >> 28,
+                        engine.reg_read(RegisterARM::CPSR).unwrap_or(0) as u32,
+                    )
+                {
+                    engine.get_data_mut().pending_exception = Some(PendingException::Synchronous {
+                        kind: minemu_platform::ExceptionKind::SupervisorCall,
+                        pc: address as u32,
+                    });
+                    let _ = engine.reg_write(RegisterARM::PC, address + 4);
+                    let _ = engine.emu_stop();
+                    return;
+                }
                 let Some(cp15) = arm::decode_cp15(instruction) else {
                     return;
                 };
@@ -146,6 +177,19 @@ impl UnicornBackend {
                 let _ = engine.emu_stop();
             })
             .map_err(BackendError::Unicorn)?;
+        backend
+            .engine
+            .add_insn_invalid_hook(|engine| {
+                let pc = engine.reg_read(RegisterARM::PC).unwrap_or(0) as u32;
+                engine.get_data_mut().pending_exception = Some(PendingException::Synchronous {
+                    kind: minemu_platform::ExceptionKind::Undefined,
+                    pc,
+                });
+                let _ = engine.reg_write(RegisterARM::PC, u64::from(pc + 4));
+                let _ = engine.emu_stop();
+                true
+            })
+            .map_err(BackendError::Unicorn)?;
 
         Ok(backend)
     }
@@ -156,26 +200,42 @@ impl UnicornBackend {
         data.executed_instructions = 0;
         data.callback_stop = None;
         data.pending_cp15 = None;
+        data.pending_exception = None;
 
         let result = self
             .engine
             .emu_start(u64::from(start), u64::from(end), 0, instruction_budget);
-        let pending_cp15 = {
+        let (pending_cp15, pending_exception, callback_stop) = {
             let data = self.engine.get_data_mut();
             let pending_cp15 = data.pending_cp15.take();
-            let completed_instructions = data.executed_instructions
-                - u64::from(matches!(pending_cp15, Some(PendingCp15::Undefined { .. })));
+            let pending_exception = data.pending_exception.take();
+            let callback_stop = data.callback_stop.take();
+            let faulting_instruction = matches!(pending_cp15, Some(PendingCp15::Undefined { .. }))
+                || pending_exception.is_some()
+                || matches!(
+                    callback_stop,
+                    Some(BackendStop::MmuFault(_) | BackendStop::MmioFault { .. })
+                );
+            let completed_instructions = data
+                .executed_instructions
+                .saturating_sub(u64::from(faulting_instruction));
             for _ in 0..completed_instructions {
                 data.machine
                     .finish_instruction(InstructionOutcome::Completed);
             }
-            if let Some(stop) = data.callback_stop.take() {
-                return stop;
-            }
-            pending_cp15
+            (pending_cp15, pending_exception, callback_stop)
         };
+        if let Some(stop) = callback_stop {
+            return self.finish_callback_stop(stop);
+        }
+        if let Some(exception) = pending_exception {
+            return self.finish_pending_exception(exception);
+        }
         if let Some(pending) = pending_cp15 {
             return self.finish_cp15(pending);
+        }
+        if let Some(stop) = self.deliver_irq() {
+            return stop;
         }
         match result {
             Ok(()) => BackendStop::InstructionBudget,
@@ -216,7 +276,11 @@ impl UnicornBackend {
     fn finish_cp15(&mut self, pending: PendingCp15) -> BackendStop {
         match pending {
             PendingCp15::Operation(operation) => {
+                let flush_tlb = matches!(operation, minemu_platform::Cp15Operation::InvalidateAll);
                 self.machine_mut().mmu.apply_cp15(operation);
+                if flush_tlb && self.engine.ctl_flush_tlb().is_err() {
+                    return BackendStop::Unicorn(uc_error::ARG);
+                }
                 BackendStop::Cp15Boundary
             }
             PendingCp15::ReadFaultStatus(register) => {
@@ -258,6 +322,63 @@ impl UnicornBackend {
                 BackendStop::Exception(minemu_platform::ExceptionKind::Undefined)
             }
         }
+    }
+
+    fn finish_callback_stop(&mut self, stop: BackendStop) -> BackendStop {
+        match stop {
+            BackendStop::MmuFault(fault) => {
+                self.finish_pending_exception(PendingException::Fault(fault))
+            }
+            BackendStop::MmioFault {
+                address, access, ..
+            } => self.finish_pending_exception(PendingException::Fault(MmuFault {
+                address: VirtualAddress::new(address),
+                status: FaultStatus::new(FaultCause::DeviceAccess, false, access),
+            })),
+            stop => stop,
+        }
+    }
+
+    fn finish_pending_exception(&mut self, exception: PendingException) -> BackendStop {
+        let plan = match exception {
+            PendingException::Synchronous { kind, pc } => {
+                self.machine_mut()
+                    .finish_instruction(InstructionOutcome::SynchronousException(
+                        kind,
+                        VirtualAddress::new(pc),
+                    ))
+            }
+            PendingException::Fault(fault) => self
+                .machine_mut()
+                .finish_instruction(InstructionOutcome::Fault(fault)),
+        };
+        let Some(plan) = plan else {
+            return BackendStop::Unicorn(uc_error::ARG);
+        };
+        let kind = plan.request.kind;
+        if self.enter_exception(plan).is_err() {
+            return BackendStop::Unicorn(uc_error::ARG);
+        }
+        BackendStop::Exception(kind)
+    }
+
+    fn deliver_irq(&mut self) -> Option<BackendStop> {
+        let cpsr = self.engine.reg_read(RegisterARM::CPSR).ok()? as u32;
+        if cpsr & (1 << 7) != 0 {
+            return None;
+        }
+        let _source = self.machine_mut().bus.interrupts.claim()?;
+        let pc = self.engine.reg_read(RegisterARM::PC).ok()? as u32;
+        let plan = self.machine_mut().enter_exception(
+            minemu_platform::ExceptionKind::Interrupt,
+            VirtualAddress::new(pc),
+        );
+        if self.enter_exception(plan).is_err() {
+            return Some(BackendStop::Unicorn(uc_error::ARG));
+        }
+        Some(BackendStop::Exception(
+            minemu_platform::ExceptionKind::Interrupt,
+        ))
     }
 
     /// Applies the documented A32 state transition for an exception plan.
@@ -322,6 +443,7 @@ impl UnicornBackend {
                         record_mmio_fault(
                             engine,
                             address,
+                            Access::Read,
                             format!("unsupported read width {size}"),
                         );
                         return 0;
@@ -334,7 +456,7 @@ impl UnicornBackend {
                         Ok(Some(value)) => u64::from(value),
                         Ok(None) => 0,
                         Err(error) => {
-                            record_mmio_fault(engine, address, error.to_string());
+                            record_mmio_fault(engine, address, Access::Read, error.to_string());
                             0
                         }
                     }
@@ -346,6 +468,7 @@ impl UnicornBackend {
                             record_mmio_fault(
                                 engine,
                                 address,
+                                Access::Write,
                                 format!("unsupported write width {size}"),
                             );
                             return;
@@ -359,7 +482,7 @@ impl UnicornBackend {
                         if let Err(error) =
                             engine.get_data_mut().machine.bus.access(transaction, now)
                         {
-                            record_mmio_fault(engine, address, error.to_string());
+                            record_mmio_fault(engine, address, Access::Write, error.to_string());
                         }
                     },
                 ),
@@ -378,9 +501,15 @@ fn mmio_width(size: usize) -> Option<MmioWidth> {
     }
 }
 
-fn record_mmio_fault(engine: &mut Unicorn<BackendData>, address: u64, detail: String) {
+fn record_mmio_fault(
+    engine: &mut Unicorn<BackendData>,
+    address: u64,
+    access: Access,
+    detail: String,
+) {
     engine.get_data_mut().callback_stop = Some(BackendStop::MmioFault {
         address: address as u32,
+        access,
         detail,
     });
     let _ = engine.emu_stop();
@@ -388,8 +517,11 @@ fn record_mmio_fault(engine: &mut Unicorn<BackendData>, address: u64, detail: St
 
 #[cfg(test)]
 mod tests {
-    use minemu_core::{Machine, PhysicalMemoryAccess};
-    use minemu_platform::{MemRegion, PTE_EXECUTABLE, PTE_READABLE, PTE_VALID, PhysicalAddress};
+    use minemu_core::{InterruptUpdate, Machine, PhysicalMemoryAccess, UartUpdate};
+    use minemu_platform::{
+        MemRegion, PTE_EXECUTABLE, PTE_READABLE, PTE_VALID, Peripheral, PhysicalAddress,
+        peripherals::{interrupt, uart},
+    };
     use unicorn_engine::RegisterARM;
 
     use super::{BackendStop, UnicornBackend};
@@ -510,5 +642,191 @@ mod tests {
         );
         assert!(backend.machine().mmu.enabled());
         assert_eq!(backend.machine().ticks(), 2);
+    }
+
+    #[test]
+    fn guest_svc_enters_the_supervisor_vector_with_two_ticks() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &[0, 0, 0, 0xef])
+            .unwrap(); // svc #0
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::CPSR, 0x13).unwrap();
+        assert_eq!(
+            backend.run(start, start + 4, 1),
+            BackendStop::Exception(minemu_platform::ExceptionKind::SupervisorCall)
+        );
+        assert_eq!(backend.register(RegisterARM::PC).unwrap(), 8);
+        assert_eq!(backend.machine().ticks(), 2);
+    }
+
+    #[test]
+    fn unprivileged_cp15_enters_the_undefined_vector() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        machine
+            .memory
+            .write_range(
+                PhysicalAddress::new(start),
+                &[0x10, 0x0f, 0x01, 0xee], // mcr p15, 0, r0, c1, c0, 0
+            )
+            .unwrap();
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::CPSR, 0x10).unwrap();
+        assert_eq!(
+            backend.run(start, start + 4, 1),
+            BackendStop::Exception(minemu_platform::ExceptionKind::Undefined)
+        );
+        assert_eq!(backend.register(RegisterARM::PC).unwrap(), 4);
+        assert_eq!(backend.machine().ticks(), 2);
+    }
+
+    #[test]
+    fn prefetch_and_data_faults_enter_the_correct_abort_vectors() {
+        let mut machine = Machine::default();
+        let ram = MemRegion::Ram.base().get();
+        machine.mmu.set_ttbr0(PhysicalAddress::new(ram));
+        machine.mmu.set_enabled(true);
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        assert_eq!(
+            backend.run(0, 4, 1),
+            BackendStop::Exception(minemu_platform::ExceptionKind::PrefetchAbort)
+        );
+        assert_eq!(backend.register(RegisterARM::PC).unwrap(), 12);
+        assert_eq!(backend.machine().ticks(), 1);
+
+        let mut machine = Machine::default();
+        let target = ram + 0x3000;
+        machine
+            .memory
+            .write_u32(PhysicalAddress::new(ram), (ram + 0x1000) | PTE_VALID)
+            .unwrap();
+        machine
+            .memory
+            .write_u32(
+                PhysicalAddress::new(ram + 0x1000),
+                target | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE,
+            )
+            .unwrap();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(target), &[0, 0, 0x91, 0xe5])
+            .unwrap(); // ldr r0, [r1]
+        machine.mmu.set_ttbr0(PhysicalAddress::new(ram));
+        machine.mmu.set_enabled(true);
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::R1, 0x1000).unwrap();
+        assert_eq!(
+            backend.run(0, 4, 1),
+            BackendStop::Exception(minemu_platform::ExceptionKind::DataAbort)
+        );
+        assert_eq!(backend.register(RegisterARM::PC).unwrap(), 16);
+        assert_eq!(backend.machine().ticks(), 1);
+    }
+
+    #[test]
+    fn enabled_pending_uart_delivers_an_irq_at_the_instruction_boundary() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &[0, 0xf0, 0x20, 0xe3])
+            .unwrap(); // nop
+        machine
+            .bus
+            .interrupts
+            .update(InterruptUpdate::Write {
+                register: interrupt::Register::Enable,
+                value: interrupt::Source::Uart0.bit(),
+            })
+            .unwrap();
+        machine.bus.uart0.update(UartUpdate::Receive(b'x')).unwrap();
+        machine
+            .bus
+            .uart0
+            .update(UartUpdate::Write {
+                register: uart::Register::Control,
+                value: 1,
+            })
+            .unwrap();
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::CPSR, 0x13).unwrap();
+        assert_eq!(
+            backend.run(start, start + 4, 1),
+            BackendStop::Exception(minemu_platform::ExceptionKind::Interrupt)
+        );
+        assert_eq!(backend.register(RegisterARM::PC).unwrap(), 24);
+        assert_eq!(backend.machine().ticks(), 2);
+    }
+
+    #[test]
+    fn guest_cp15_mrc_reads_fault_registers_at_a_boundary() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        machine
+            .memory
+            .write_range(
+                PhysicalAddress::new(start),
+                &[0x10, 0x0f, 0x15, 0xee], // mrc p15, 0, r0, c5, c0, 0
+            )
+            .unwrap();
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::CPSR, 0x13).unwrap();
+        assert_eq!(backend.run(start, start + 4, 1), BackendStop::Cp15Boundary);
+        assert_eq!(backend.register(RegisterARM::R0).unwrap(), 0);
+    }
+
+    #[test]
+    fn ttbr_switch_requires_and_honors_tlbiall() {
+        let mut machine = Machine::default();
+        let ram = MemRegion::Ram.base().get();
+        let directory_a = ram;
+        let table_a = ram + 0x1000;
+        let directory_b = ram + 0x2000;
+        let table_b = ram + 0x3000;
+        let page_a = ram + 0x4000;
+        let page_b = ram + 0x5000;
+        for (directory, table, page) in [
+            (directory_a, table_a, page_a),
+            (directory_b, table_b, page_b),
+        ] {
+            machine
+                .memory
+                .write_u32(PhysicalAddress::new(directory), table | PTE_VALID)
+                .unwrap();
+            machine
+                .memory
+                .write_u32(
+                    PhysicalAddress::new(table),
+                    page | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE,
+                )
+                .unwrap();
+        }
+        machine
+            .memory
+            .write_range(
+                PhysicalAddress::new(page_a),
+                &[
+                    0x10, 0x0f, 0x02, 0xee, // mcr p15, 0, r0, c2, c0, 0
+                    0x17, 0x0f, 0x08, 0xee, // mcr p15, 0, r0, c8, c7, 0
+                    1, 0x10, 0xa0, 0xe3, // mov r1, #1 (must not execute)
+                ],
+            )
+            .unwrap();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(page_b + 8), &[2, 0x10, 0xa0, 0xe3])
+            .unwrap(); // mov r1, #2
+        machine.mmu.set_ttbr0(PhysicalAddress::new(directory_a));
+        machine.mmu.set_enabled(true);
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::CPSR, 0x13).unwrap();
+        backend.set_register(RegisterARM::R0, directory_b).unwrap();
+        assert_eq!(backend.run(0, 4, 1), BackendStop::Cp15Boundary);
+        assert_eq!(backend.run(4, 8, 1), BackendStop::Cp15Boundary);
+        assert_eq!(backend.run(8, 12, 1), BackendStop::InstructionBudget);
+        assert_eq!(backend.register(RegisterARM::R1).unwrap(), 2);
     }
 }

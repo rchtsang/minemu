@@ -133,10 +133,10 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Apply CP15 state changes only at safe execution boundaries.
 - [x] Implement CPU register, CPSR/SPSR, banked SP/LR, VBAR, and vector entry
   mechanics required by the core exception plan.
-- [ ] Deliver undefined, SVC, prefetch abort, data abort, and IRQ paths with
+- [x] Deliver undefined, SVC, prefetch abort, data abort, and IRQ paths with
   correct state and virtual-time accounting.
-- [ ] Keep TLB fallback/restart workarounds isolated to this crate.
-- [ ] Prove CP15 TTBR switch plus TLBIALL reliability across two address spaces
+- [x] Keep TLB fallback/restart workarounds isolated to this crate.
+- [x] Prove CP15 TTBR switch plus TLBIALL reliability across two address spaces
   before process/context-switch coursework depends on it.
 
 ## 4. Implement `minemu-image`

@@ -78,7 +78,7 @@ impl InterruptController {
     }
 
     /// Returns and retains the active source until matching EOI.
-    pub(crate) fn claim(&mut self) -> Option<Source> {
+    pub fn claim(&mut self) -> Option<Source> {
         self.process_signals();
         if self.claim.is_none() {
             self.claim = [Source::SysTick, Source::Uart0, Source::Uart1, Source::Block]

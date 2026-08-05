@@ -155,25 +155,48 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## 5. Build the Student ARM Platform
 
+- [ ] Extend the normative exception contract with 8-byte-aligned SVC, IRQ,
+  ABT, and UND stack symbols; one shared ABT stack; no nested IRQs; a normalized
+  trap-frame layout; and IRQ claim, source-ACK, and controller-EOI ownership.
 - [ ] Add `platform/arm/include/minemu/platform.h` with the stable memory map,
   constants, dual-UART definitions, and a limited set of raw MMIO helpers.
-- [ ] Add `mmu.h`, `boot.h`, `trap.h`, and `syscall.h` with fixed-width,
-  student-facing ABI definitions.
+- [ ] Add `mmu.h`, `boot.h`, `trap.h`, `syscall.h`, and `irq.h` with fixed-width,
+  student-facing ABI definitions. Keep `syscall.h` and `irq.h` skeletal: they
+  define stable frame/dispatch contracts and explicit student implementation
+  points rather than completing the trampolines.
 - [ ] Use packed, four-byte-aligned MMIO register structs with `_Static_assert`
   checks for size, alignment, and field offsets.
 - [ ] Use explicit masks for register bits; do not use C bit-fields.
 - [ ] Add kernel and user linker scripts for physical bootstrap and fixed
-  higher-half/user virtual addresses.
-- [ ] Add startup/vector assembly and normalized trap-frame mechanics for all
-  five supported exception paths.
-- [ ] Initialize SVC, IRQ, ABT, and UND stacks according to the ABI.
+  higher-half/user virtual addresses, vector placement, and stack reservation.
+- [ ] Add platform bootstrap/startup assembly that initializes all banked SVC,
+  IRQ, ABT, and UND stacks before exceptions are enabled.
+- [ ] Provide undefined, prefetch-abort, and data-abort vector/trampoline
+  support that creates the normalized frame and dispatches fixed exception IDs.
+- [ ] Leave SVC and IRQ vector trampolines student-owned. Ship weak fail-stop
+  defaults so a fresh kernel template still links and boots.
+- [ ] Define the student-owned IRQ trampoline sequence: claim once, perform the
+  source-specific ACK, write matching controller EOI, then return or switch
+  context with IRQs masked throughout the handler.
 - [ ] Build `libminemu_rt.a` with freestanding memory primitives and
   panic/halt support, but no UART driver convenience API.
 - [ ] Document and link `libgcc` explicitly through supported Makefile rules.
-- [ ] Provide kernel, user, and system templates as separate student projects.
+- [ ] Add complete reference examples outside the starter template for SVC
+  context switching; IRQ enable/disable and IRQ context switching; UART polling
+  and RX IRQ handling; and raw SysTick, interrupt-controller, RNG, trace, and
+  block MMIO access.
+- [ ] Create a separately hosted, independently buildable kernel-template Git
+  repository that pins this repository as a Git submodule. The template keeps
+  student-owned SVC/IRQ trampoline sources, consumes the pinned platform assets,
+  and builds without hosted libc/newlib from its initial clone.
+- [ ] Include open-ended Docker image pull and container-launch commands in the
+  external kernel-template README, together with clone, submodule-init, build,
+  and emulator commands. Pin the image name and version after publication.
+- [ ] Provide user and system templates as separate student projects.
 - [ ] Require students to implement low-level device drivers, especially UART,
   using exposed definitions and raw MMIO helpers.
-- [ ] Verify template builds have no hosted libc/newlib dependency.
+- [ ] Add template and reference-example smoke tests, including ABT/UND, SVC,
+  IRQ, stack-frame, and IRQ-completion conformance evidence.
 
 ## 6. Implement `minemu-runtime`
 

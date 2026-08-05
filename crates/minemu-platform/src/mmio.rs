@@ -13,6 +13,20 @@ pub enum MmioWidth {
     U64 = 8,
 }
 
+impl TryFrom<usize> for MmioWidth {
+    type Error = usize;
+
+    fn try_from(value: usize) -> std::result::Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::U8),
+            2 => Ok(Self::U16),
+            4 => Ok(Self::U32),
+            8 => Ok(Self::U64),
+            _ => Err(value),
+        }
+    }
+}
+
 /// A backend-neutral MMIO transaction to validate and dispatch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MmioTransaction {

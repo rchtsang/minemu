@@ -35,8 +35,6 @@ pub enum BackendError {
     Core(#[from] minemu_core::CoreError),
     #[error("Unicorn operation failed: {0:?}")]
     Unicorn(uc_error),
-    #[error("MMIO callback received unsupported access width {0}")]
-    UnsupportedMmioWidth(usize),
 }
 
 type Result<T> = std::result::Result<T, BackendError>;
@@ -89,107 +87,8 @@ impl UnicornBackend {
         backend.map_bytes(MemRegion::BootRom, Prot::READ | Prot::EXEC, &boot_rom)?;
         backend.map_bytes(MemRegion::SystemRom, Prot::READ | Prot::EXEC, &system_rom)?;
         backend.map_bytes(MemRegion::Ram, Prot::ALL, &ram)?;
-        backend.map_mmio(MemRegion::InterruptController)?;
-        backend.map_mmio(MemRegion::SysTick)?;
-        backend.map_mmio(MemRegion::Dma)?;
-        backend.map_mmio(MemRegion::Rng)?;
-        backend.map_mmio(MemRegion::Uart0)?;
-        backend.map_mmio(MemRegion::Uart1)?;
-        backend.map_mmio(MemRegion::Trace)?;
-        backend
-            .engine
-            .ctl_set_tlb_type(TlbType::VIRTUAL)
-            .map_err(BackendError::Unicorn)?;
-        backend
-            .engine
-            .add_tlb_hook(1, 0, |engine, address, memory_type| {
-                let access = arm::mmu_access(memory_type)?;
-                let data = engine.get_data_mut();
-                let BackendData {
-                    machine,
-                    callback_stop,
-                    ..
-                } = data;
-                match machine.mmu.translate(
-                    &mut machine.memory,
-                    minemu_platform::VirtualAddress::new(address as u32),
-                    access,
-                    false,
-                ) {
-                    Ok(physical) => Some(TlbEntry {
-                        paddr: u64::from(physical.get()),
-                        perms: Prot::ALL,
-                    }),
-                    Err(fault) => {
-                        *callback_stop = Some(BackendStop::MmuFault(fault));
-                        None
-                    }
-                }
-            })
-            .map_err(BackendError::Unicorn)?;
-
-        backend
-            .engine
-            .add_code_hook(1, 0, |engine, _, _| {
-                engine.get_data_mut().executed_instructions += 1;
-            })
-            .map_err(BackendError::Unicorn)?;
-        backend
-            .engine
-            .add_code_hook(1, 0, |engine, address, size| {
-                if size != 4 {
-                    return;
-                }
-                let mut bytes = [0; 4];
-                if engine.vmem_read(address, Prot::EXEC, &mut bytes).is_err() {
-                    return;
-                }
-                let instruction = u32::from_le_bytes(bytes);
-                if instruction & 0x0f00_0000 == 0x0f00_0000
-                    && arm::condition_holds(
-                        instruction >> 28,
-                        engine.reg_read(RegisterARM::CPSR).unwrap_or(0) as u32,
-                    )
-                {
-                    engine.get_data_mut().pending_exception = Some(PendingException::Synchronous {
-                        kind: minemu_platform::ExceptionKind::SupervisorCall,
-                        pc: address as u32,
-                    });
-                    let _ = engine.reg_write(RegisterARM::PC, address + 4);
-                    let _ = engine.emu_stop();
-                    return;
-                }
-                let Some(cp15) = arm::decode_cp15(instruction) else {
-                    return;
-                };
-                let cpsr = engine.reg_read(RegisterARM::CPSR).unwrap_or(0) as u32;
-                let pending = if !arm::condition_holds(cp15.condition, cpsr) {
-                    None
-                } else if !arm::cp15_is_privileged(cpsr) {
-                    Some(PendingCp15::Undefined { pc: address as u32 })
-                } else {
-                    arm::cp15_pending(engine, cp15, address as u32)
-                };
-                if let Some(pending) = pending {
-                    engine.get_data_mut().pending_cp15 = Some(pending);
-                }
-                let _ = engine.reg_write(RegisterARM::PC, address + 4);
-                let _ = engine.emu_stop();
-            })
-            .map_err(BackendError::Unicorn)?;
-        backend
-            .engine
-            .add_insn_invalid_hook(|engine| {
-                let pc = engine.reg_read(RegisterARM::PC).unwrap_or(0) as u32;
-                engine.get_data_mut().pending_exception = Some(PendingException::Synchronous {
-                    kind: minemu_platform::ExceptionKind::Undefined,
-                    pc,
-                });
-                let _ = engine.reg_write(RegisterARM::PC, u64::from(pc + 4));
-                let _ = engine.emu_stop();
-                true
-            })
-            .map_err(BackendError::Unicorn)?;
+        backend.map_mmio_window()?;
+        hooks::register(&mut backend.engine)?;
 
         Ok(backend)
     }
@@ -430,89 +329,200 @@ impl UnicornBackend {
             .map_err(BackendError::Unicorn)
     }
 
-    fn map_mmio(&mut self, region: MemRegion) -> Result<()> {
-        let base = u64::from(region.base().get());
-        let size = u64::from(region.size());
+    fn map_mmio_window(&mut self) -> Result<()> {
+        const MMIO_BASE: u64 = 0x1000_0000;
+        const MMIO_SIZE: u64 = 0x1_0000;
         self.engine
             .mmio_map(
-                base,
-                size,
-                Some(move |engine: &mut Unicorn<BackendData>, offset, size| {
-                    let address = base + offset;
-                    let Some(width) = mmio_width(size) else {
-                        record_mmio_fault(
-                            engine,
-                            address,
-                            Access::Read,
-                            format!("unsupported read width {size}"),
-                        );
-                        return 0;
-                    };
-                    let transaction =
-                        MmioTransaction::read(PhysicalAddress::new(address as u32), width);
-                    let now = engine.get_data().machine.ticks();
-                    let result = engine.get_data_mut().machine.bus.access(transaction, now);
-                    match result {
-                        Ok(Some(value)) => u64::from(value),
-                        Ok(None) => 0,
-                        Err(error) => {
-                            record_mmio_fault(engine, address, Access::Read, error.to_string());
-                            0
-                        }
-                    }
-                }),
-                Some(
-                    move |engine: &mut Unicorn<BackendData>, offset, size, value| {
-                        let address = base + offset;
-                        let Some(width) = mmio_width(size) else {
-                            record_mmio_fault(
-                                engine,
-                                address,
-                                Access::Write,
-                                format!("unsupported write width {size}"),
-                            );
-                            return;
-                        };
-                        let transaction = MmioTransaction::write(
-                            PhysicalAddress::new(address as u32),
-                            width,
-                            value as u32,
-                        );
-                        let now = engine.get_data().machine.ticks();
-                        if let Err(error) =
-                            engine.get_data_mut().machine.bus.access(transaction, now)
-                        {
-                            record_mmio_fault(engine, address, Access::Write, error.to_string());
-                        }
-                    },
-                ),
+                MMIO_BASE,
+                MMIO_SIZE,
+                Some(hooks::mmio_read_callback),
+                Some(hooks::mmio_write_callback),
             )
             .map_err(BackendError::Unicorn)
     }
 }
 
-fn mmio_width(size: usize) -> Option<MmioWidth> {
-    match size {
-        1 => Some(MmioWidth::U8),
-        2 => Some(MmioWidth::U16),
-        4 => Some(MmioWidth::U32),
-        8 => Some(MmioWidth::U64),
-        _ => None,
-    }
-}
+/// All Unicorn callback registration is centralized here so the backend's
+/// emulator-visible behavior is auditable without searching construction code.
+mod hooks {
+    use super::*;
 
-fn record_mmio_fault(
-    engine: &mut Unicorn<BackendData>,
-    address: u64,
-    access: Access,
-    detail: String,
-) {
-    engine.get_data_mut().callback_stop = Some(BackendStop::MmioFault {
-        address: address as u32,
-        access,
-        detail,
-    });
-    let _ = engine.emu_stop();
+    /// Registers virtual translation, instruction accounting, synchronous A32
+    /// trap interception, and invalid-instruction callbacks.
+    pub(super) fn register(engine: &mut Unicorn<'static, BackendData>) -> Result<()> {
+        engine
+            .ctl_set_tlb_type(TlbType::VIRTUAL)
+            .map_err(BackendError::Unicorn)?;
+        engine
+            .add_tlb_hook(1, 0, virtual_tlb_callback)
+            .map(|_| ())
+            .map_err(BackendError::Unicorn)?;
+        engine
+            .add_code_hook(1, 0, instruction_counter_callback)
+            .map(|_| ())
+            .map_err(BackendError::Unicorn)?;
+        engine
+            .add_code_hook(1, 0, a32_synchronous_trap_callback)
+            .map(|_| ())
+            .map_err(BackendError::Unicorn)?;
+        engine
+            .add_insn_invalid_hook(invalid_instruction_callback)
+            .map(|_| ())
+            .map_err(BackendError::Unicorn)
+    }
+
+    fn virtual_tlb_callback(
+        engine: &mut Unicorn<BackendData>,
+        address: u64,
+        memory_type: unicorn_engine::unicorn_const::MemType,
+    ) -> Option<TlbEntry> {
+        let access = arm::mmu_access(memory_type)?;
+        let data = engine.get_data_mut();
+        let BackendData {
+            machine,
+            callback_stop,
+            ..
+        } = data;
+        match machine.mmu.translate(
+            &mut machine.memory,
+            VirtualAddress::new(address as u32),
+            access,
+            false,
+        ) {
+            Ok(physical) => Some(TlbEntry {
+                paddr: u64::from(physical.get()),
+                perms: Prot::ALL,
+            }),
+            Err(fault) => {
+                *callback_stop = Some(BackendStop::MmuFault(fault));
+                None
+            }
+        }
+    }
+
+    fn instruction_counter_callback(engine: &mut Unicorn<BackendData>, _: u64, _: u32) {
+        engine.get_data_mut().executed_instructions += 1;
+    }
+
+    fn a32_synchronous_trap_callback(engine: &mut Unicorn<BackendData>, address: u64, size: u32) {
+        if size != 4 {
+            return;
+        }
+        let mut bytes = [0; 4];
+        if engine.vmem_read(address, Prot::EXEC, &mut bytes).is_err() {
+            return;
+        }
+        let instruction = u32::from_le_bytes(bytes);
+        if instruction & 0x0f00_0000 == 0x0f00_0000
+            && arm::condition_holds(
+                instruction >> 28,
+                engine.reg_read(RegisterARM::CPSR).unwrap_or(0) as u32,
+            )
+        {
+            engine.get_data_mut().pending_exception = Some(PendingException::Synchronous {
+                kind: minemu_platform::ExceptionKind::SupervisorCall,
+                pc: address as u32,
+            });
+            let _ = engine.reg_write(RegisterARM::PC, address + 4);
+            let _ = engine.emu_stop();
+            return;
+        }
+        let Some(cp15) = arm::decode_cp15(instruction) else {
+            return;
+        };
+        let cpsr = engine.reg_read(RegisterARM::CPSR).unwrap_or(0) as u32;
+        let pending = if !arm::condition_holds(cp15.condition, cpsr) {
+            None
+        } else if !arm::cp15_is_privileged(cpsr) {
+            Some(PendingCp15::Undefined { pc: address as u32 })
+        } else {
+            arm::cp15_pending(engine, cp15, address as u32)
+        };
+        if let Some(pending) = pending {
+            engine.get_data_mut().pending_cp15 = Some(pending);
+        }
+        let _ = engine.reg_write(RegisterARM::PC, address + 4);
+        let _ = engine.emu_stop();
+    }
+
+    fn invalid_instruction_callback(engine: &mut Unicorn<BackendData>) -> bool {
+        let pc = engine.reg_read(RegisterARM::PC).unwrap_or(0) as u32;
+        engine.get_data_mut().pending_exception = Some(PendingException::Synchronous {
+            kind: minemu_platform::ExceptionKind::Undefined,
+            pc,
+        });
+        let _ = engine.reg_write(RegisterARM::PC, u64::from(pc + 4));
+        let _ = engine.emu_stop();
+        true
+    }
+
+    pub(super) fn mmio_read_callback(
+        engine: &mut Unicorn<BackendData>,
+        offset: u64,
+        size: usize,
+    ) -> u64 {
+        const MMIO_BASE: u64 = 0x1000_0000;
+        let address = MMIO_BASE + offset;
+        let Ok(width) = MmioWidth::try_from(size) else {
+            record_mmio_fault(
+                engine,
+                address,
+                Access::Read,
+                format!("unsupported read width {size}"),
+            );
+            return 0;
+        };
+        let transaction = MmioTransaction::read(PhysicalAddress::new(address as u32), width);
+        let now = engine.get_data().machine.ticks();
+        match engine.get_data_mut().machine.bus.access(transaction, now) {
+            Ok(Some(value)) => u64::from(value),
+            Ok(None) => 0,
+            Err(error) => {
+                record_mmio_fault(engine, address, Access::Read, error.to_string());
+                0
+            }
+        }
+    }
+
+    pub(super) fn mmio_write_callback(
+        engine: &mut Unicorn<BackendData>,
+        offset: u64,
+        size: usize,
+        value: u64,
+    ) {
+        const MMIO_BASE: u64 = 0x1000_0000;
+        let address = MMIO_BASE + offset;
+        let Ok(width) = MmioWidth::try_from(size) else {
+            record_mmio_fault(
+                engine,
+                address,
+                Access::Write,
+                format!("unsupported write width {size}"),
+            );
+            return;
+        };
+        let transaction =
+            MmioTransaction::write(PhysicalAddress::new(address as u32), width, value as u32);
+        let now = engine.get_data().machine.ticks();
+        if let Err(error) = engine.get_data_mut().machine.bus.access(transaction, now) {
+            record_mmio_fault(engine, address, Access::Write, error.to_string());
+        }
+    }
+
+    fn record_mmio_fault(
+        engine: &mut Unicorn<BackendData>,
+        address: u64,
+        access: Access,
+        detail: String,
+    ) {
+        engine.get_data_mut().callback_stop = Some(BackendStop::MmioFault {
+            address: address as u32,
+            access,
+            detail,
+        });
+        let _ = engine.emu_stop();
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ops::Deref;
 
 use minemu_platform::{
     IMAGE_HEADER_SIZE, ImageHeader, KERNEL_SEGMENT_SIZE, KernelSegment, MODULE_RECORD_SIZE,
@@ -41,7 +42,7 @@ impl SystemImage {
         if bytes.len() != header.image_size as usize {
             return Err(ImageError::InvalidImage("image size"));
         }
-        let mut occupied = vec![Span::new(0, IMAGE_HEADER_SIZE)?];
+        let mut image_map = ImageMap::new()?;
         let kernel_table = span(
             header.kernel_segment_table_offset,
             header.kernel_segment_count,
@@ -52,25 +53,14 @@ impl SystemImage {
             header.module_count,
             MODULE_RECORD_SIZE,
         )?;
-        occupy(
-            &mut occupied,
-            kernel_table,
-            bytes.len(),
-            "overlapping image tables",
-        )?;
-        occupy(
-            &mut occupied,
-            module_table,
-            bytes.len(),
-            "overlapping image tables",
-        )?;
+        image_map.occupy(kernel_table, bytes.len(), "overlapping image tables")?;
+        image_map.occupy(module_table, bytes.len(), "overlapping image tables")?;
 
         let mut kernel_segments = Vec::new();
         for index in 0..header.kernel_segment_count as usize {
             let offset = header.kernel_segment_table_offset as usize + index * KERNEL_SEGMENT_SIZE;
             let segment = KernelSegment::decode(&bytes[offset..offset + KERNEL_SEGMENT_SIZE])?;
-            occupy(
-                &mut occupied,
+            image_map.occupy(
                 Span::from_offset_length(segment.data_offset, segment.file_size)?,
                 bytes.len(),
                 "overlapping image data",
@@ -90,18 +80,8 @@ impl SystemImage {
                 record.segment_count,
                 MODULE_SEGMENT_SIZE,
             )?;
-            occupy(
-                &mut occupied,
-                name_span,
-                bytes.len(),
-                "overlapping image data",
-            )?;
-            occupy(
-                &mut occupied,
-                segment_table,
-                bytes.len(),
-                "overlapping image tables",
-            )?;
+            image_map.occupy(name_span, bytes.len(), "overlapping image data")?;
+            image_map.occupy(segment_table, bytes.len(), "overlapping image tables")?;
             let name = std::str::from_utf8(&bytes[name_span.start..name_span.end])
                 .map_err(|_| ImageError::InvalidImage("module name is not UTF-8"))?;
             if name.is_empty() || !names.insert(name.to_owned()) {
@@ -114,8 +94,7 @@ impl SystemImage {
                 let segment = ModuleSegment::decode(
                     &bytes[segment_offset..segment_offset + MODULE_SEGMENT_SIZE],
                 )?;
-                occupy(
-                    &mut occupied,
+                image_map.occupy(
                     Span::from_offset_length(segment.data_offset, segment.file_size)?,
                     bytes.len(),
                     "overlapping image data",
@@ -237,6 +216,33 @@ struct Span {
     end: usize,
 }
 
+struct ImageMap(Vec<Span>);
+
+impl ImageMap {
+    fn new() -> Result<Self> {
+        Ok(Self(vec![Span::new(0, IMAGE_HEADER_SIZE)?]))
+    }
+
+    fn occupy(&mut self, candidate: Span, image_size: usize, detail: &'static str) -> Result<()> {
+        if candidate.end > image_size {
+            return Err(ImageError::InvalidImage("record outside image"));
+        }
+        if self.iter().any(|span| span.overlaps(candidate)) {
+            return Err(ImageError::InvalidImage(detail));
+        }
+        self.0.push(candidate);
+        Ok(())
+    }
+}
+
+impl Deref for ImageMap {
+    type Target = Vec<Span>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl Span {
     fn new(start: usize, length: usize) -> Result<Self> {
         Ok(Self {
@@ -261,22 +267,6 @@ fn span(offset: u32, count: u32, record_size: usize) -> Result<Span> {
         .checked_mul(record_size)
         .ok_or(ImageError::InvalidImage("table size overflow"))?;
     Span::new(offset as usize, length)
-}
-
-fn occupy(
-    occupied: &mut Vec<Span>,
-    candidate: Span,
-    image_size: usize,
-    detail: &'static str,
-) -> Result<()> {
-    if candidate.end > image_size {
-        return Err(ImageError::InvalidImage("record outside image"));
-    }
-    if occupied.iter().any(|span| span.overlaps(candidate)) {
-        return Err(ImageError::InvalidImage(detail));
-    }
-    occupied.push(candidate);
-    Ok(())
 }
 
 fn size32(value: usize, detail: &'static str) -> Result<u32> {

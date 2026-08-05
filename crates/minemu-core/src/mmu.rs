@@ -16,6 +16,7 @@ pub struct MmuFault {
 pub struct Mmu {
     enabled: bool,
     ttbr0: PhysicalAddress,
+    vector_base: VirtualAddress,
     last_fault: Option<MmuFault>,
 }
 
@@ -24,6 +25,7 @@ impl Mmu {
         Self {
             enabled: false,
             ttbr0: PhysicalAddress::new(0),
+            vector_base: VirtualAddress::new(0),
             last_fault: None,
         }
     }
@@ -36,6 +38,10 @@ impl Mmu {
         self.ttbr0
     }
 
+    pub const fn vector_base(&self) -> VirtualAddress {
+        self.vector_base
+    }
+
     pub const fn last_fault(&self) -> Option<MmuFault> {
         self.last_fault
     }
@@ -45,6 +51,7 @@ impl Mmu {
         MmuInspection {
             enabled: self.enabled,
             ttbr0: self.ttbr0,
+            vector_base: self.vector_base,
             last_fault_address: match self.last_fault {
                 Some(fault) => Some(fault.address.get()),
                 None => None,
@@ -70,16 +77,14 @@ impl Mmu {
 
     /// Applies the CP15 operations that alter backend-independent MMU state.
     ///
-    /// VBAR and fault-register operations belong to the CPU adapter because this
-    /// core has no CPU register file or exception-entry mechanism.
+    /// VBAR is maintained here because it is CP15 state shared with the CPU adapter.
     pub fn apply_cp15(&mut self, operation: Cp15Operation) {
         match operation {
             Cp15Operation::SetTtbr0(address) => self.set_ttbr0(address),
             Cp15Operation::SetMmuEnabled(enabled) => self.set_enabled(enabled),
             Cp15Operation::InvalidateAll => self.invalidate_all(),
-            Cp15Operation::SetVectorBase(_)
-            | Cp15Operation::ReadFaultStatus
-            | Cp15Operation::ReadFaultAddress => {}
+            Cp15Operation::SetVectorBase(address) => self.vector_base = address,
+            Cp15Operation::ReadFaultStatus | Cp15Operation::ReadFaultAddress => {}
         }
     }
 

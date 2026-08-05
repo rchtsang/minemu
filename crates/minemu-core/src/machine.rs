@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
 
 use minemu_platform::{
-    ExceptionKind, InspectionRequest, InspectionResponse, ObservableEvent, TraceInspectionEvent,
-    VirtualAddress,
+    ExceptionKind, InspectionRequest, InspectionResponse, MemRegion, ObservableEvent,
+    TraceInspectionEvent, VirtualAddress,
 };
 
-use crate::{ExceptionPlan, MmioBus, Mmu, MmuFault, PhysicalMemory, Result};
+use crate::{ExceptionPlan, MmioBus, Mmu, MmuFault, PhysicalMemory, PhysicalMemoryAccess, Result};
 
 /// Result of a single backend instruction attempt supplied by the CPU adapter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,6 +51,14 @@ impl Machine {
 
     pub const fn ticks(&self) -> u64 {
         self.ticks
+    }
+
+    /// Copies the physical bytes in one implemented region for backend mapping.
+    pub fn copy_region(&self, region: MemRegion) -> Result<Vec<u8>> {
+        let range = region.range();
+        let mut bytes = vec![0; range.length() as usize];
+        self.memory.read_range(range, &mut bytes)?;
+        Ok(bytes)
     }
 
     /// Applies the virtual-time contract after one attempted guest instruction.

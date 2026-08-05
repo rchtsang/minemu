@@ -1,4 +1,4 @@
-use crate::{ExceptionKind, FaultStatus, PhysicalAddress, PhysicalRange};
+use crate::{ExceptionKind, FaultStatus, PhysicalAddress, PhysicalRange, VirtualAddress};
 
 /// Data requested on demand rather than copied into every machine status update.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,6 +14,7 @@ pub enum InspectionRequest {
 pub struct MmuInspection {
     pub enabled: bool,
     pub ttbr0: PhysicalAddress,
+    pub vector_base: VirtualAddress,
     pub last_fault_address: Option<u32>,
     pub last_fault_status: Option<FaultStatus>,
 }

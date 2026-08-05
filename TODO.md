@@ -122,16 +122,16 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## 3. Implement `minemu-unicorn`
 
-- [ ] Configure Unicorn as A32 Cortex-A9 with physical RAM, ROM, and typed MMIO
+- [x] Configure Unicorn as A32 Cortex-A9 with physical RAM, ROM, and typed MMIO
   mappings.
-- [ ] Adapt Unicorn MMIO callbacks into core MMIO transactions only.
-- [ ] Implement bounded instruction execution with explicit backend stop
+- [x] Adapt Unicorn MMIO callbacks into core MMIO transactions only.
+- [x] Implement bounded instruction execution with explicit backend stop
   reasons.
-- [ ] Integrate Unicorn virtual-TLB callbacks with the core MMU walker.
-- [ ] Implement CP15 interception with explicit A32 condition evaluation and
+- [x] Integrate Unicorn virtual-TLB callbacks with the core MMU walker.
+- [x] Implement CP15 interception with explicit A32 condition evaluation and
   privileged-access checks.
-- [ ] Apply CP15 state changes only at safe execution boundaries.
-- [ ] Implement CPU register, CPSR/SPSR, banked SP/LR, VBAR, and vector entry
+- [x] Apply CP15 state changes only at safe execution boundaries.
+- [x] Implement CPU register, CPSR/SPSR, banked SP/LR, VBAR, and vector entry
   mechanics required by the core exception plan.
 - [ ] Deliver undefined, SVC, prefetch abort, data abort, and IRQ paths with
   correct state and virtual-time accounting.

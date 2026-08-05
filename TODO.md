@@ -141,16 +141,16 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## 4. Implement `minemu-image`
 
-- [ ] Define a versioned system-ROM image layout with kernel segment and user
+- [x] Define a versioned system-ROM image layout with kernel segment and user
   module tables, explicit offsets/lengths, permissions, BSS metadata, entry
   points, and reserved fields.
-- [ ] Parse and validate independently linked A32 ELF inputs.
-- [ ] Reject Thumb entries, unsupported relocations, overlapping segments,
+- [x] Parse and validate independently linked A32 ELF inputs.
+- [x] Reject Thumb entries, unsupported relocations, overlapping segments,
   invalid ranges, duplicate module names, and ROM overflow.
-- [ ] Produce byte-identical images for identical inputs.
-- [ ] Implement boot-ROM handling for multi-segment kernel copy, BSS zeroing,
+- [x] Produce byte-identical images for identical inputs.
+- [x] Implement boot-ROM handling for multi-segment kernel copy, BSS zeroing,
   boot-info publication, physical trampoline entry, and high-half handoff.
-- [ ] Add corrupt/truncated/version-mismatched image parser tests. Boot-time
+- [x] Add corrupt/truncated/version-mismatched image parser tests. Boot-time
   image integrity validation is intentionally deferred.
 
 ## 5. Build the Student ARM Platform

@@ -248,20 +248,13 @@ impl ModuleSegment {
             memory_size: read_u32(bytes, 12)?,
             flags: read_u32(bytes, 16)?,
         };
-        if segment.memory_size == 0
-            || segment.file_size > segment.memory_size
-            || segment.flags & !SEGMENT_FLAGS_MASK != 0
-        {
-            return Err(PlatformError::InvalidImageField("module segment"));
-        }
+        segment.validate()?;
         Ok(segment)
     }
 
     /// Encodes this record without relying on Rust struct layout.
     pub fn encode(self) -> Result<[u8; MODULE_SEGMENT_SIZE]> {
-        if self.file_size > self.memory_size || self.flags & !SEGMENT_FLAGS_MASK != 0 {
-            return Err(PlatformError::InvalidImageField("module segment"));
-        }
+        self.validate()?;
         let mut bytes = [0; MODULE_SEGMENT_SIZE];
         write_u32(&mut bytes, 0, self.data_offset);
         write_u32(&mut bytes, 4, self.virtual_address.get());
@@ -269,6 +262,17 @@ impl ModuleSegment {
         write_u32(&mut bytes, 12, self.memory_size);
         write_u32(&mut bytes, 16, self.flags);
         Ok(bytes)
+    }
+
+    /// Validates segment sizes and flags.
+    pub fn validate(self) -> Result<()> {
+        if self.memory_size == 0
+            || self.file_size > self.memory_size
+            || self.flags & !SEGMENT_FLAGS_MASK != 0
+        {
+            return Err(PlatformError::InvalidImageField("module segment"));
+        }
+        Ok(())
     }
 }
 

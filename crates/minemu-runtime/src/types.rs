@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use minemu_core::{CoreError, Machine, MachineStatus};
-use minemu_platform::{MmuInspection, ObservableEvent, PeripheralsInspection};
+use minemu_platform::{MmuInspection, ObservableEvent, PeripheralsInspection, PhysicalAddress};
 use minemu_unicorn::BackendError;
 use thiserror::Error;
 
@@ -60,6 +60,7 @@ pub struct RuntimeConfig {
     pub command_capacity: usize,
     pub uart_capacity: usize,
     pub block_media_path: Option<PathBuf>,
+    pub initial_ram_writes: Vec<(PhysicalAddress, Vec<u8>)>,
 }
 
 impl RuntimeConfig {
@@ -73,7 +74,14 @@ impl RuntimeConfig {
             command_capacity: 32,
             uart_capacity: 4096,
             block_media_path: None,
+            initial_ram_writes: Vec::new(),
         }
+    }
+
+    /// Adds a RAM write applied after every machine reset and before execution.
+    pub fn with_initial_ram_write(mut self, address: PhysicalAddress, bytes: Vec<u8>) -> Self {
+        self.initial_ram_writes.push((address, bytes));
+        self
     }
 }
 

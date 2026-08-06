@@ -193,7 +193,7 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Include open-ended Docker image pull and container-launch commands in the
   `minimum-template` README, together with clone and build commands. Pin the
   image name and version after publication.
-- [ ] Provide user and system templates as separate student projects.
+- [x] Provide user and system templates as separate student projects.
 - [x] Require students to implement low-level device drivers, especially UART,
   using exposed definitions and raw MMIO helpers.
 - [ ] Add template and reference-example smoke tests, including ABT/UND, SVC,
@@ -216,12 +216,12 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## 7. Implement CLI and Test Runner
 
-- [ ] Add `minemu image` to package a system image from a declarative manifest.
-- [ ] Add `minemu run` to load an image, attach optional write-back media, and
+- [x] Add `minemu image` to package a system image from a declarative manifest.
+- [x] Add `minemu run` to load an image, attach optional write-back media, and
   run headlessly or through the runtime service.
-- [ ] Add `minemu test` to run headless images with scheduled input and
+- [x] Add `minemu test` to run headless images with scheduled input and
   assertions over console output, events, faults, and machine state.
-- [ ] Ensure diagnostics identify image, ELF, device, CP15, and runtime errors
+- [x] Ensure diagnostics identify image, ELF, device, CP15, and runtime errors
   without exposing backend internals as ABI.
 
 ## 8. Build the TUI

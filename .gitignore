@@ -2,3 +2,4 @@
 **/target/
 fixtures/arm/build/
 minimum-template/build/
+minimum-template/system/build/

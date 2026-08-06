@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use minemu_core::{BlockUpdate, MachineStatus, UartUpdate};
+use minemu_core::{BlockUpdate, MachineStatus, PhysicalMemoryAccess, UartUpdate};
 use minemu_platform::{InspectionRequest, InspectionResponse, Peripheral};
 use minemu_unicorn::{BackendStop, UnicornBackend};
 
@@ -171,17 +171,12 @@ struct Emulator {
     end: u32,
     instruction_batch: usize,
     block_media_path: Option<std::path::PathBuf>,
+    initial_ram_writes: Vec<(minemu_platform::PhysicalAddress, Vec<u8>)>,
 }
 
 impl Emulator {
     fn new(config: &RuntimeConfig) -> Result<Self> {
-        let mut machine = config.machine.reset_clone()?;
-        if let Some(path) = &config.block_media_path {
-            machine
-                .bus
-                .block
-                .update(BlockUpdate::Attach(fs::read(path)?))?;
-        }
+        let machine = configured_machine(config, &config.machine)?;
         let mut backend = UnicornBackend::new(machine)?;
         backend.set_program_counter(config.entry)?;
         Ok(Self {
@@ -190,6 +185,7 @@ impl Emulator {
             end: config.end,
             instruction_batch: config.instruction_batch,
             block_media_path: config.block_media_path.clone(),
+            initial_ram_writes: config.initial_ram_writes.clone(),
         })
     }
 
@@ -200,7 +196,18 @@ impl Emulator {
 
     fn reset(&mut self) -> Result<()> {
         self.flush()?;
-        let machine = self.backend.machine().reset_clone()?;
+        let config = RuntimeConfig {
+            machine: self.backend.machine().reset_clone()?,
+            entry: self.entry,
+            end: self.end,
+            instruction_batch: self.instruction_batch,
+            status_period: Duration::ZERO,
+            command_capacity: 1,
+            uart_capacity: 0,
+            block_media_path: self.block_media_path.clone(),
+            initial_ram_writes: self.initial_ram_writes.clone(),
+        };
+        let machine = configured_machine(&config, &config.machine)?;
         self.backend = UnicornBackend::new(machine)?;
         self.backend.set_program_counter(self.entry)?;
         Ok(())
@@ -255,6 +262,23 @@ impl Emulator {
             InspectionResponse::Events(events) => RuntimeInspection::Events(events),
         })
     }
+}
+
+fn configured_machine(
+    config: &RuntimeConfig,
+    source: &minemu_core::Machine,
+) -> Result<minemu_core::Machine> {
+    let mut machine = source.reset_clone()?;
+    if let Some(path) = &config.block_media_path {
+        machine
+            .bus
+            .block
+            .update(BlockUpdate::Attach(fs::read(path)?))?;
+    }
+    for (address, bytes) in &config.initial_ram_writes {
+        machine.memory.write_range(*address, bytes)?;
+    }
+    Ok(machine)
 }
 
 struct Service {

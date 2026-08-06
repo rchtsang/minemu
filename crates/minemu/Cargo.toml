@@ -6,4 +6,9 @@ edition = "2024"
 [dependencies]
 minemu-image = { path = "../minemu-image" }
 minemu-runtime = { path = "../minemu-runtime" }
-
+minemu-core = { path = "../minemu-core" }
+minemu-platform = { path = "../minemu-platform" }
+clap = { version = "4.6.4", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2"
+toml = "0.9.12"

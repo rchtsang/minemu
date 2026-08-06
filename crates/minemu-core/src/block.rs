@@ -192,6 +192,11 @@ impl BlockDevice {
         self.dirty_sectors.len()
     }
 
+    /// Clones attached write-back media for a machine reset.
+    pub fn media_clone(&self) -> Option<Vec<u8>> {
+        self.media.clone()
+    }
+
     pub fn inspect(&self) -> BlockInspection {
         BlockInspection {
             status: self.status(),

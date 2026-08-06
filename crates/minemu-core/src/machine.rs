@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use minemu_platform::{
-    ExceptionKind, InspectionRequest, InspectionResponse, MemRegion, ObservableEvent,
+    ExceptionKind, InspectionRequest, InspectionResponse, MemRegion, ObservableEvent, Peripheral,
     TraceInspectionEvent, VirtualAddress,
 };
 
@@ -59,6 +59,23 @@ impl Machine {
         let mut bytes = vec![0; range.length() as usize];
         self.memory.read_range(range, &mut bytes)?;
         Ok(bytes)
+    }
+
+    /// Recreates reset machine state while preserving immutable ROM and attached media.
+    pub fn reset_clone(&self) -> Result<Self> {
+        let boot_rom = self.copy_region(MemRegion::BootRom)?;
+        let system_rom = self.copy_region(MemRegion::SystemRom)?;
+        let mut machine = Self::new(
+            PhysicalMemory::with_roms(&boot_rom, &system_rom)?,
+            self.event_capacity,
+        );
+        if let Some(media) = self.bus.block.media_clone() {
+            machine
+                .bus
+                .block
+                .update(crate::BlockUpdate::Attach(media))?;
+        }
+        Ok(machine)
     }
 
     /// Applies the virtual-time contract after one attempted guest instruction.
@@ -154,7 +171,7 @@ mod tests {
         MmioWidth, ObservableEvent, PhysicalAddress, TraceInspectionEvent, VirtualAddress,
     };
 
-    use crate::{InstructionOutcome, Machine};
+    use crate::{InstructionOutcome, Machine, PhysicalMemory, PhysicalMemoryAccess};
 
     #[test]
     fn virtual_time_distinguishes_traps_and_faults() {
@@ -198,6 +215,28 @@ mod tests {
                 tick: 1,
                 value: 7,
             })])
+        );
+    }
+
+    #[test]
+    fn reset_clone_preserves_rom_and_clears_ram() {
+        let mut machine = Machine::new(PhysicalMemory::with_roms(&[1], &[2]).unwrap(), 4);
+        machine
+            .memory
+            .write_u8(PhysicalAddress::new(MemRegion::Ram.base().get()), 7)
+            .unwrap();
+        let reset = machine.reset_clone().unwrap();
+        assert_eq!(reset.memory.read_u8(MemRegion::BootRom.base()).unwrap(), 1);
+        assert_eq!(
+            reset.memory.read_u8(MemRegion::SystemRom.base()).unwrap(),
+            2
+        );
+        assert_eq!(
+            reset
+                .memory
+                .read_u8(PhysicalAddress::new(MemRegion::Ram.base().get()))
+                .unwrap(),
+            0
         );
     }
 }

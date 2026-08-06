@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 minemu-core = { path = "../minemu-core" }
 minemu-unicorn = { path = "../minemu-unicorn" }
-
+minemu-platform = { path = "../minemu-platform" }
+thiserror = "2"

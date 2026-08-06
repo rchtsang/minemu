@@ -160,6 +160,16 @@ impl UnicornBackend {
             .map_err(BackendError::Unicorn)
     }
 
+    /// Returns the guest program counter outside active emulation.
+    pub fn program_counter(&self) -> Result<u32> {
+        self.register(RegisterARM::PC)
+    }
+
+    /// Sets the guest program counter outside active emulation.
+    pub fn set_program_counter(&mut self, value: u32) -> Result<()> {
+        self.set_register(RegisterARM::PC, value)
+    }
+
     /// Writes an ARM register outside active emulation.
     pub fn set_register(&mut self, register: RegisterARM, value: u32) -> Result<()> {
         self.engine

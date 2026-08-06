@@ -181,7 +181,9 @@ name = "minemu-runtime"
 version = "0.1.0"
 dependencies = [
  "minemu-core",
+ "minemu-platform",
  "minemu-unicorn",
+ "thiserror",
 ]
 
 [[package]]

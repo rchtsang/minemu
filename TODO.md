@@ -201,17 +201,17 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## 6. Implement `minemu-runtime`
 
-- [ ] Run the concrete machine exclusively on the emulator thread.
-- [ ] Define starting, running, paused, stopping, stopped, and failed lifecycle
+- [x] Run the concrete machine exclusively on the emulator thread.
+- [x] Define starting, running, paused, stopping, stopped, and failed lifecycle
   states.
-- [ ] Implement prioritized, bounded lifecycle commands and bounded/coalesced
+- [x] Implement prioritized, bounded lifecycle commands and bounded/coalesced
   UART input.
-- [ ] Implement pause, reset, shutdown, and terminal-error paths with one final
+- [x] Implement pause, reset, shutdown, and terminal-error paths with one final
   status publication.
-- [ ] Flush dirty disk state on pause, shutdown, and terminal backend failure.
-- [ ] Publish lightweight immutable status at a cadence or material state
+- [x] Flush dirty disk state on pause, shutdown, and terminal backend failure.
+- [x] Publish lightweight immutable status at a cadence or material state
   change; serve larger CPU/MMU/memory/device inspection on request.
-- [ ] Prove slow snapshot consumers cannot block guest execution or accumulate
+- [x] Prove slow snapshot consumers cannot block guest execution or accumulate
   unbounded state.
 
 ## 7. Implement CLI and Test Runner

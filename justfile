@@ -23,10 +23,13 @@ lint:
 fmt:
   {{ cargo }} fmt --all -- --check
 
+# build the freestanding minimum student template and reference examples
+template:
+  make -C "{{ root }}/minimum-template"
+
 # ci pipeline
-ci: fmt check lint test
+ci: fmt check lint test template
 
 # cargo clean
 clean:
   {{ cargo }} clean
-

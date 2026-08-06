@@ -188,6 +188,37 @@ The platform runtime passes the signed dispatch ID to the C trap dispatcher.
 Synchronous exceptions have fixed negative IDs. The IRQ vector claims a
 nonnegative source ID from the interrupt controller before dispatching it.
 
+### Guest Exception Runtime
+
+The supplied guest platform initializes separate eight-byte-aligned banked
+stacks for SVC, IRQ, ABT, and UND before it enables exceptions. Prefetch and
+data aborts share the ABT stack. User stack state is process context rather
+than an exception stack.
+
+The supplied linker script reserves physical `0x4001_0000..0x4002_1fff` for
+the bootstrap page directory and its page tables. Kernel high-half loadable
+segments begin at physical `0x4003_0000`, while the physical trampoline remains
+at `0x4000_8000`.
+
+Bootstrap temporarily maps physical `0x4000_0000..0x403f_ffff` identically so
+the trampoline can execute the instruction after enabling translation. Kernel
+code must use the documented higher-half direct map and must not rely on this
+transition mapping.
+
+The supplied undefined and abort trampolines create an 88-byte normalized
+`minemu_trap_frame`: `r0..r12`, banked return LR, SPSR, signed dispatch ID,
+faulting PC, DFSR, DFAR, banked user SP/LR, and one reserved word. The frame is at an
+eight-byte-aligned stack address. The faulting PC is `LR - 4` for undefined and
+prefetch aborts, and `LR - 8` for data aborts. Student SVC and IRQ trampolines
+must use the same frame format before calling their declared C dispatch hooks;
+a dispatcher may return a different frame to select another saved context.
+
+Exception entry masks IRQs. The v1 guest platform does not support nested IRQs:
+handlers must not clear `CPSR.I` before their documented exception return. The
+student-owned IRQ trampoline reads CLAIM exactly once, stores that source ID in
+the frame, performs the source-specific device ACK, writes the same value to
+EOI, and only then returns or selects another context.
+
 ## CP15 Interface
 
 CP15 is the sole MMU and fault-control interface. The following A32 operations

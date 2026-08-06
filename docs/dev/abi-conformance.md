@@ -18,6 +18,7 @@ All entries are planned until their named evidence exists.
 | IMG-03 | Multi-segment kernel and fixed-address user modules boot | headless `image-multisegment` test |
 | EXC-01 | Vector offsets, CPSR/SPSR, banked LR, and return rules | `fixtures/arm/exceptions` |
 | EXC-02 | Undefined, SVC, prefetch abort, data abort, and IRQ delivery | `fixtures/arm/exceptions` subcases |
+| EXC-03 | Banked-stack initialization, normalized frame, no nested IRQs, and claim/ACK/EOI sequencing | platform reference-example smoke tests |
 | CP15-01 | CP15 condition and privilege semantics | `fixtures/arm/cp15-privilege` |
 | CP15-02 | TTBR0, SCTLR.M, VBAR, DFSR, and DFAR behavior | `fixtures/arm/cp15-control` |
 | CP15-03 | TTBR switch plus TLBIALL has no stale translation | `fixtures/arm/cp15-switch` release gate |

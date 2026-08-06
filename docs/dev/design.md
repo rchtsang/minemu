@@ -77,7 +77,7 @@ The project should begin as a small Cargo workspace.
 | `minemu-image` | Versioned system-ROM image parsing and packing |
 | `minemu-runtime` | Emulator-thread lifecycle, bounded commands, disk flush, and status publication |
 | `minemu` | CLI, headless test runner, and Ratatui/Crossterm TUI |
-| `platform/` | Student headers, linker scripts, startup/vector assembly, runtime, and templates |
+| `minimum-template/` | Student headers, linker scripts, startup/vector assembly, runtime, examples, and starter projects |
 
 The primary Rust dependencies are `unicorn-engine`, `object`, `ratatui`,
 `crossterm`, `clap`, `serde`, and an error library such as `thiserror`.
@@ -137,9 +137,9 @@ Student projects own their own Makefiles. `minemu` does runtime and packaging
 work only:
 
 ```sh
-minemu image --config image.toml --out build/system.rom
-minemu run build/system.rom --disk build/disk.img
-minemu test build/system.rom --script tests/smoke.toml
+minemu image system/minimum.toml --output build/system.img
+minemu run build/system.img --block-media build/disk.img --ticks 100000
+minemu test system/minimum-test.toml
 ```
 
 An OCI image provides the pinned Rust binary, cross-compiler, and supporting

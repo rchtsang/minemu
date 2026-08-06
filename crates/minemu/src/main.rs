@@ -6,7 +6,9 @@ use minemu::{CliError, RunOptions, package_manifest, run_headless, run_image};
 #[derive(Parser)]
 #[command(
     name = "minemu",
-    about = "A32 teaching-platform image and headless runner"
+    about = "Package, boot, and test A32 teaching-platform images.",
+    long_about = "Package independently linked A32 kernel and user ELFs into a system image, then boot it headlessly through the same deterministic runtime used by tests.",
+    after_help = "Examples:\n  minemu image minimum-template/system/minimum.toml --output build/minimum.img\n  minemu run build/minimum.img --ticks 100000\n  minemu test minimum-template/system/minimum-test.toml"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -15,22 +17,33 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Package a system ROM image from a TOML manifest.
+    /// Package kernel and user ELFs into a versioned system-ROM image.
     Image {
+        /// TOML manifest naming the kernel ELF and optional user modules.
+        #[arg(value_name = "MANIFEST")]
         manifest: PathBuf,
-        #[arg(short, long)]
+        /// Destination path for the versioned system-ROM image.
+        #[arg(short, long, value_name = "IMAGE")]
         output: PathBuf,
     },
-    /// Boot and run a system image headlessly for a bounded virtual-time budget.
+    /// Boot a system image headlessly for a bounded virtual-time budget.
     Run {
+        /// Versioned system-ROM image produced by `minemu image`.
+        #[arg(value_name = "IMAGE")]
         image: PathBuf,
+        /// Optional host raw-disk file attached as write-back block media.
         #[arg(short = 'm', long)]
         block_media: Option<PathBuf>,
+        /// Maximum completed virtual instruction ticks before stopping.
         #[arg(short = 't', long, default_value_t = 100_000)]
         ticks: u64,
     },
-    /// Run a TOML headless test manifest with scheduled input and assertions.
-    Test { manifest: PathBuf },
+    /// Run scheduled UART input and assertions from a TOML test manifest.
+    Test {
+        /// TOML test manifest naming a system image and expected observations.
+        #[arg(value_name = "MANIFEST")]
+        manifest: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {

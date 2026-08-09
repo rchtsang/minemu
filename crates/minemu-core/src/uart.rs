@@ -95,6 +95,8 @@ impl Uart {
 
     pub fn inspect(&self) -> UartInspection {
         UartInspection {
+            status: self.status(),
+            control: self.control(),
             rx_queued: self.rx.len(),
             rx_irq_enabled: self.rx_irq_enabled,
             tx_history: self.tx_history().collect(),

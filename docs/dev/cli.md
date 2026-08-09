@@ -28,16 +28,23 @@ The packer validates that every input is a little-endian ARM executable ELF,
 rejects Thumb entries and relocations, then writes the stable versioned image
 format documented in `emulator.md`.
 
-## Headless Runs
+## Interactive And Headless Runs
 
-`minemu run` host-applies the image boot plan, starts at the physical bootstrap
-entry, and stops after the requested virtual-tick budget. UART0 output is sent
-to standard output and UART1 output to standard error.
+`minemu run` host-applies the image boot plan and opens the interactive TUI.
+Use its command prompt to pause, resume, reset, inspect the paused machine, or
+quit. See `tui.md` for controls.
 
 ```sh
-minemu run minimum-template/system/build/minimum.img --ticks 100000
+minemu run minimum-template/system/build/minimum.img
 minemu run minimum-template/system/build/minimum.img \
-  --block-media build/disk.img --ticks 1000000
+  --block-media build/disk.img
+```
+
+For CI or scripts, `--headless` stops after the requested virtual-tick budget.
+UART0 output is sent to standard output and UART1 output to standard error.
+
+```sh
+minemu run minimum-template/system/build/minimum.img --headless --ticks 100000
 ```
 
 The optional media file is copied into write-back device state. The runtime

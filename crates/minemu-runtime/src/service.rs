@@ -10,12 +10,14 @@ use std::{
 };
 
 use minemu_core::{BlockUpdate, MachineStatus, PhysicalMemoryAccess, UartUpdate};
-use minemu_platform::{InspectionRequest, InspectionResponse, Peripheral};
+use minemu_platform::{
+    InspectionRequest, InspectionResponse, Peripheral, PhysicalRange, VirtualAddress,
+};
 use minemu_unicorn::{BackendStop, UnicornBackend};
 
 use crate::{
     LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection, RuntimeStatus, UartPort,
-    types::{InspectionResult, Result},
+    types::{ExecutionInspection, InspectionResult, Result},
 };
 
 enum Command {
@@ -24,6 +26,12 @@ enum Command {
     Reset,
     Shutdown,
     Inspect(InspectionRequest, SyncSender<InspectionResult>),
+    LiveMemory(PhysicalRange, SyncSender<InspectionResult>),
+    Execution {
+        before: usize,
+        after: usize,
+        response: SyncSender<InspectionResult>,
+    },
 }
 
 /// Thread-safe host handle. It never exposes the concrete guest machine.
@@ -117,6 +125,24 @@ impl RuntimeHandle {
         self.request_inspection(request)?
             .recv()
             .map_err(|_| RuntimeError::Stopped)?
+    }
+
+    /// Reads current physical bytes from Unicorn rather than the core RAM mirror.
+    pub fn inspect_live_memory(&self, range: PhysicalRange) -> Result<RuntimeInspection> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        self.send(Command::LiveMemory(range, sender))?;
+        receiver.recv().map_err(|_| RuntimeError::Stopped)?
+    }
+
+    /// Captures CPU state and virtual instruction bytes at one emulator-thread boundary.
+    pub fn inspect_execution(&self, before: usize, after: usize) -> Result<RuntimeInspection> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        self.send(Command::Execution {
+            before,
+            after,
+            response: sender,
+        })?;
+        receiver.recv().map_err(|_| RuntimeError::Stopped)?
     }
 
     fn send(&self, command: Command) -> Result<()> {
@@ -261,6 +287,29 @@ impl Emulator {
             }
             InspectionResponse::Events(events) => RuntimeInspection::Events(events),
         })
+    }
+
+    fn inspect_live_memory(&self, range: PhysicalRange) -> Result<RuntimeInspection> {
+        Ok(RuntimeInspection::LiveMemory(
+            range,
+            self.backend
+                .read_physical_memory(range.start(), range.length() as usize)?,
+        ))
+    }
+
+    fn inspect_execution(&mut self, before: usize, after: usize) -> Result<RuntimeInspection> {
+        let cpu = self.backend.cpu_state()?;
+        let start = cpu.registers[15].saturating_sub(before as u32);
+        let length = before.checked_add(after).ok_or(RuntimeError::Stopped)?;
+        Ok(RuntimeInspection::Execution(ExecutionInspection {
+            registers: cpu.registers,
+            cpsr: cpu.cpsr,
+            spsr: cpu.spsr,
+            instruction_address: VirtualAddress::new(start),
+            instruction_bytes: self
+                .backend
+                .read_virtual_memory(VirtualAddress::new(start), length)?,
+        }))
     }
 }
 
@@ -433,6 +482,16 @@ impl Service {
             }
             Command::Inspect(request, response) => {
                 let _ = response.try_send(emulator.inspect(request));
+            }
+            Command::LiveMemory(range, response) => {
+                let _ = response.try_send(emulator.inspect_live_memory(range));
+            }
+            Command::Execution {
+                before,
+                after,
+                response,
+            } => {
+                let _ = response.try_send(emulator.inspect_execution(before, after));
             }
             _ => {}
         }

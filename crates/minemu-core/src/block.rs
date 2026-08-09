@@ -115,6 +115,10 @@ impl BlockDevice {
         self.completion_irq_enabled && self.complete
     }
 
+    pub const fn control(&self) -> u32 {
+        self.completion_irq_enabled as u32
+    }
+
     fn set_lba(&mut self, lba: u32) {
         self.lba = lba;
     }
@@ -199,6 +203,10 @@ impl BlockDevice {
 
     pub fn inspect(&self) -> BlockInspection {
         BlockInspection {
+            lba: self.lba,
+            sector_count: self.sector_count,
+            dma_address: self.dma_address.get(),
+            control: self.control(),
             status: self.status(),
             error: self.error as u32,
             dirty_sector_count: self.dirty_sector_count(),

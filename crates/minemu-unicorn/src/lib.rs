@@ -3,4 +3,4 @@
 mod arm;
 mod backend;
 
-pub use backend::{BackendError, BackendStop, UnicornBackend};
+pub use backend::{BackendError, BackendStop, CpuState, UnicornBackend};

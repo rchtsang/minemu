@@ -93,8 +93,10 @@ impl InterruptController {
         self.claim
     }
 
-    pub fn inspect(&self) -> InterruptInspection {
+    pub fn inspect(&mut self) -> InterruptInspection {
+        self.process_signals();
         InterruptInspection {
+            pending: self.pending,
             enabled: self.enabled,
             claim: self.claim.map(|source| source as u32),
             priorities: self.priorities,
@@ -165,7 +167,12 @@ impl Peripheral for InterruptController {
     }
 
     fn inspect(&self) -> Self::Inspection {
-        InterruptController::inspect(self)
+        InterruptInspection {
+            pending: self.pending,
+            enabled: self.enabled,
+            claim: self.claim.map(|source| source as u32),
+            priorities: self.priorities,
+        }
     }
 }
 

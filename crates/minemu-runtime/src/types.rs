@@ -1,7 +1,10 @@
 use std::{path::PathBuf, time::Duration};
 
 use minemu_core::{CoreError, Machine, MachineStatus};
-use minemu_platform::{MmuInspection, ObservableEvent, PeripheralsInspection, PhysicalAddress};
+use minemu_platform::{
+    MmuInspection, ObservableEvent, PeripheralsInspection, PhysicalAddress, PhysicalRange,
+    VirtualAddress,
+};
 use minemu_unicorn::BackendError;
 use thiserror::Error;
 
@@ -48,6 +51,18 @@ pub enum RuntimeInspection {
     Mmu(MmuInspection),
     Peripherals(PeripheralsInspection),
     Events(Vec<ObservableEvent>),
+    LiveMemory(PhysicalRange, Vec<u8>),
+    Execution(ExecutionInspection),
+}
+
+/// Live backend execution state captured at an emulator-thread boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionInspection {
+    pub registers: [u32; 16],
+    pub cpsr: u32,
+    pub spsr: u32,
+    pub instruction_address: VirtualAddress,
+    pub instruction_bytes: Vec<u8>,
 }
 
 /// Runtime configuration supplied before the emulator thread starts.

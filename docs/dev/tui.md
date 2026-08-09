@@ -1,107 +1,61 @@
-# TUI Specification
+# TUI
 
-## Purpose
+`minemu run IMAGE` starts the terminal UI. Use `--headless --ticks N` for a
+bounded, noninteractive run suitable for scripts and CI.
 
-The `minemu` terminal user interface is an observability console for a running
-guest kernel. It supports print-style debugging and machine inspection; it is
-not intended to be a source-level or instruction-stepping debugger.
+The TUI is an observability console, not a source-level debugger. The TUI
+thread owns Crossterm raw mode and the alternate screen; it communicates with
+the emulator only through `minemu-runtime` commands and immutable snapshots.
+Terminal state is restored on normal exit, errors, and panic unwinding.
 
-The TUI is implemented in Rust with Ratatui and Crossterm. It runs on Linux,
-macOS, and Windows terminals supported by Crossterm.
+## Views
 
-## Responsibilities
+The initial **runtime** view prioritizes guest UART output and event history.
+The console is the initial focus and ordinary key presses and pasted text are
+queued to the selected UART. `Enter` and `Backspace` send their corresponding
+guest input bytes. Press `Esc` to leave console focus.
 
-The TUI thread owns all terminal behavior:
+Use `:view inspect` to enter **introspection**. Entering it pauses a running
+guest before requesting its snapshot. It presents live Unicorn-backed physical
+RAM as hex/ASCII, A32 Capstone disassembly from the current PC, CPU registers,
+and interrupt/peripheral state. It is intentionally a paused inspection view:
+the runtime does not maintain a continuously copied 64 MiB RAM image. Use
+`:view runtime` to return; use `:resume` when execution should continue.
 
-- Entering and restoring raw mode and the alternate screen.
-- Receiving keyboard, resize, and quit events.
-- Rendering all panes from immutable machine snapshots.
-- Sending user input and runtime-control commands to the emulator thread.
+At small terminal sizes, the active inspection pane is shown alone instead of
+compressing all panes into unusable columns.
 
-The TUI never accesses Unicorn, guest RAM, live device state, or mutable
-emulator state directly.
+## Controls
 
-## Default Layout
+While console focus is active, guest input takes precedence. After `Esc`, the
+following controls work in both views:
 
-The default layout prioritizes the guest console.
-
-- **Console pane:** scrollable UART output and active keyboard input target.
-- **Machine pane:** virtual instruction clock, run state, CPU mode, PC, SP,
-  and CPSR.
-- **Hardware pane:** enabled/pending IRQs and current UART0, UART1, SysTick,
-  RNG, and block-device state.
-- **Event pane:** recent UART, SysTick, IRQ, block, trace, exception, and MMU
-  events.
-- **Inspector pane:** selected virtual-address translation, page-table walk,
-  or memory region.
-- **Status line:** active focus, shortcut reminder, image name, and errors.
-
-At small terminal sizes, the console remains visible and inspector panes are
-hidden before console space is reduced.
-
-## Interaction Model
-
-Guest-directed input is forwarded as UART receive bytes. TUI-specific commands
-use reserved host shortcuts and never become guest input.
-
-The initial command set should provide:
-
-| Action | Behavior |
+| Input | Effect |
 |---|---|
-| Focus console | Send printable keys and paste bytes to the UART queue |
-| Toggle inspector | Move focus among machine, event, and memory views |
-| Pause/resume | Request an execution-state change from the emulator |
-| Reset | Reset the machine and boot the loaded ROM image again |
-| Select memory/VA | Change the inspected virtual or physical address |
-| Quit | Request orderly emulator shutdown and restore the terminal |
+| `Tab` | Cycle panes in the current view. |
+| `h` `j` `k` `l` | Move by pane-local character, row, or byte/line units. |
+| `w` `e` | Advance by pane-local natural items: memory words, instructions, or rows. |
+| `gg` / `G` | Move to the first / last position in the focused pane. |
+| Count prefix | Applies a decimal count, for example `12j` or `4w`. |
+| `:` | Open a command prompt. |
+| `Esc` | Cancel a partial motion or command. |
 
-Exact key bindings are a UX detail and may evolve. They must be listed in the
-status line and help view, and must avoid consuming ordinary console text while
-the console has focus.
+The supported commands are:
 
-## Console Semantics
+| Command | Effect |
+|---|---|
+| `:pause`, `:resume`, `:reset` | Control emulator lifecycle. |
+| `:quit` or `:q` | Shut down the runtime and exit. |
+| `:view runtime` / `:view inspect` | Change view. |
+| `:focus console|events|memory|disasm|cpu|hardware` | Select a pane. |
+| `:mem ADDRESS` | Inspect a 256-byte physical RAM window, with a hexadecimal address. |
+| `:uart 0` or `:uart 1` | Select the console input UART. |
+| `:help` | Display the command overlay. |
 
-The console represents UART output, not the host shell.
+## Snapshot Boundaries
 
-- Output is retained in bounded scrollback.
-- Input bytes are queued in order for the UART receive register.
-- Carriage return, line feed, and backspace are rendered for readability.
-- Escape sequences are not interpreted as a full terminal protocol.
-- Paste sends the pasted byte sequence as guest input.
-
-The TUI should display output promptly, but screen refresh timing must not
-change guest virtual time or scheduling behavior.
-
-## Snapshots and Events
-
-The emulator publishes lightweight immutable status values at a cadence or
-after material state changes. A status value includes only data needed for the
-default render:
-
-- Run state and virtual instruction count.
-- Selected CPU register values and current mode.
-- Device and interrupt-controller state.
-- Bounded console scrollback.
-- Bounded event history.
-- Current MMU fault state.
-
-Detailed CPU registers, MMU walks, memory regions, and device internals are
-requested explicitly for inspector panes. Status and inspection responses do
-not retain references to Unicorn or live emulator memory. The TUI may discard
-stale status values and render only the newest one.
-
-The event pane is intentionally hardware-oriented. It should show events such
-as SysTick expiration, IRQ claim/EOI, page fault, block completion, UART input,
-and guest trace values. It does not attempt to infer arbitrary student kernel
-structures. The trace device lets a kernel emit course-specific event values.
-
-## Runtime Behavior
-
-The TUI communicates with the emulator through channels.
-
-- TUI-to-emulator messages contain input bytes or explicit runtime commands.
-- Emulator-to-TUI data consists of immutable snapshots and terminal errors.
-- The emulator processes commands between bounded guest execution batches.
-- A slow TUI must not block guest execution or accumulate an unbounded backlog.
-
-The TUI must restore the terminal on normal exit, emulator error, and panic.
+Status, events, and platform peripherals are copied into immutable runtime
+responses. Live memory and current instruction bytes are read on the emulator
+thread only after the guest is paused, directly from Unicorn. This keeps
+inspection accurate after guest stores without making every rendered frame copy
+the complete RAM mapping.

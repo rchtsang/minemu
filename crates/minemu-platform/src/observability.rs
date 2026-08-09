@@ -22,6 +22,8 @@ pub struct MmuInspection {
 /// Snapshot of UART state and bounded transmit history.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UartInspection {
+    pub status: u32,
+    pub control: u32,
     pub rx_queued: usize,
     pub rx_irq_enabled: bool,
     pub tx_history: Vec<u8>,
@@ -38,6 +40,7 @@ pub struct SysTickInspection {
 /// Snapshot of interrupt-controller state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InterruptInspection {
+    pub pending: u32,
     pub enabled: u32,
     pub claim: Option<u32>,
     pub priorities: [u8; 4],
@@ -46,6 +49,10 @@ pub struct InterruptInspection {
 /// Snapshot of block-device command and media state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlockInspection {
+    pub lba: u32,
+    pub sector_count: u32,
+    pub dma_address: u32,
+    pub control: u32,
     pub status: u32,
     pub error: u32,
     pub dirty_sector_count: usize,

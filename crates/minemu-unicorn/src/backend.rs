@@ -28,6 +28,14 @@ pub enum BackendStop {
     Unicorn(uc_error),
 }
 
+/// CPU state captured at an emulator-thread execution boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CpuState {
+    pub registers: [u32; 16],
+    pub cpsr: u32,
+    pub spsr: u32,
+}
+
 /// Errors while constructing or operating the Unicorn backend.
 #[derive(Debug, Error)]
 pub enum BackendError {
@@ -168,6 +176,55 @@ impl UnicornBackend {
     /// Sets the guest program counter outside active emulation.
     pub fn set_program_counter(&mut self, value: u32) -> Result<()> {
         self.set_register(RegisterARM::PC, value)
+    }
+
+    /// Captures the architecturally visible A32 general register file and status registers.
+    pub fn cpu_state(&self) -> Result<CpuState> {
+        let registers = [
+            self.register(RegisterARM::R0)?,
+            self.register(RegisterARM::R1)?,
+            self.register(RegisterARM::R2)?,
+            self.register(RegisterARM::R3)?,
+            self.register(RegisterARM::R4)?,
+            self.register(RegisterARM::R5)?,
+            self.register(RegisterARM::R6)?,
+            self.register(RegisterARM::R7)?,
+            self.register(RegisterARM::R8)?,
+            self.register(RegisterARM::R9)?,
+            self.register(RegisterARM::R10)?,
+            self.register(RegisterARM::R11)?,
+            self.register(RegisterARM::R12)?,
+            self.register(RegisterARM::SP)?,
+            self.register(RegisterARM::LR)?,
+            self.register(RegisterARM::PC)?,
+        ];
+        Ok(CpuState {
+            registers,
+            cpsr: self.register(RegisterARM::CPSR)?,
+            spsr: self.register(RegisterARM::SPSR)?,
+        })
+    }
+
+    /// Reads the authoritative physical bytes currently mapped by Unicorn.
+    pub fn read_physical_memory(&self, address: PhysicalAddress, length: usize) -> Result<Vec<u8>> {
+        let mut bytes = vec![0; length];
+        self.engine
+            .mem_read(u64::from(address.get()), &mut bytes)
+            .map_err(BackendError::Unicorn)?;
+        Ok(bytes)
+    }
+
+    /// Reads virtual instruction bytes through the active Unicorn translation state.
+    pub fn read_virtual_memory(
+        &mut self,
+        address: VirtualAddress,
+        length: usize,
+    ) -> Result<Vec<u8>> {
+        let mut bytes = vec![0; length];
+        self.engine
+            .vmem_read(u64::from(address.get()), Prot::READ, &mut bytes)
+            .map_err(BackendError::Unicorn)?;
+        Ok(bytes)
     }
 
     /// Writes an ARM register outside active emulation.

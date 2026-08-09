@@ -226,14 +226,27 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## 8. Build the TUI
 
-- [ ] Implement a Ratatui/Crossterm TUI that owns terminal mode and renders
-  only immutable status/inspection responses.
-- [ ] Implement console input, pause/resume, reset, shutdown, and inspector
-  selection commands.
-- [ ] Render console, machine status, hardware status, bounded event history,
-  and on-demand MMU/memory inspection.
-- [ ] Preserve console visibility in small terminals.
-- [ ] Restore the terminal after normal exit, emulator failure, and panic.
+- [x] Add Ratatui/Crossterm and Capstone-backed `minemu run` TUI execution by
+  default; retain headless execution behind `--headless`.
+- [x] Implement a runtime view with console input/output, real-time bounded
+  event log, lifecycle/tick status, and emulation controls.
+- [x] Implement an introspection view with paused live Unicorn memory hex/ASCII
+  snapshots, Capstone A32 disassembly around PC, CPU registers, interrupt
+  status, and peripheral register/state values.
+- [x] Pause on entry to the introspection view and request CPU, memory, and
+  instruction snapshots on the emulator thread; do not copy or continuously
+  synchronize all 64 MiB of RAM.
+- [x] Add extensible count-aware non-console motions: `h`, `j`, `k`, `l`, `w`,
+  `e`, `gg`, and `G`. Console focus forwards guest input until `Esc` deselects
+  it. Implement `:` commands for runtime control, view/focus selection,
+  memory address selection, UART target selection, and help.
+- [x] Preserve console visibility in small runtime layouts; collapse secondary
+  panes before the console and show a focused inspection pane in small
+  introspection layouts.
+- [x] Restore terminal mode after normal exit, runtime failure, and panic; add
+  pure motion/command/app-state tests without requiring a real terminal.
+- [x] Update `docs/dev/tui.md` with both layouts, paused snapshot behavior,
+  motions, command-line syntax, resize behavior, and terminal ownership.
 
 ## 9. Port Fixtures and Release the Platform
 

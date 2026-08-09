@@ -5,7 +5,8 @@ mod types;
 
 pub use service::RuntimeHandle;
 pub use types::{
-    LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection, RuntimeStatus, UartPort,
+    ExecutionInspection, LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection,
+    RuntimeStatus, UartPort,
 };
 
 #[cfg(test)]

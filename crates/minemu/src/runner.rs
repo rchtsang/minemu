@@ -76,10 +76,7 @@ pub struct RunResult {
 
 /// Loads a system image and runs it headlessly for a bounded virtual-time budget.
 pub fn run_image(options: RunOptions) -> Result<RunResult> {
-    let image_path = options.image.clone();
-    let image = minemu_image::SystemImage::parse(&read(&image_path)?)?;
-    let config = runtime_config(&image, options.block_media_path)?;
-    let runtime = RuntimeHandle::spawn(config).map_err(|_| CliError::RuntimeSetup)?;
+    let runtime = start_runtime(&options.image, options.block_media_path)?;
     let mut inputs = options.inputs;
     inputs.sort_by_key(|input| input.at_tick);
     let mut next_input = 0;
@@ -141,6 +138,15 @@ pub fn run_image(options: RunOptions) -> Result<RunResult> {
         mmu,
         events,
     })
+}
+
+pub(crate) fn start_runtime(
+    image_path: &Path,
+    block_media_path: Option<PathBuf>,
+) -> Result<RuntimeHandle> {
+    let image = minemu_image::SystemImage::parse(&read(image_path)?)?;
+    let config = runtime_config(&image, block_media_path)?;
+    RuntimeHandle::spawn(config).map_err(|_| CliError::RuntimeSetup)
 }
 
 /// Loads and executes a declarative headless test manifest.

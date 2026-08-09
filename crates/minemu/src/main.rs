@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
-use minemu::{CliError, RunOptions, package_manifest, run_headless, run_image};
+use minemu::{CliError, RunOptions, package_manifest, run_headless, run_image, run_tui};
 
 #[derive(Parser)]
 #[command(
@@ -37,6 +37,9 @@ enum Command {
         /// Maximum completed virtual instruction ticks before stopping.
         #[arg(short = 't', long, default_value_t = 100_000)]
         ticks: u64,
+        /// Run without the terminal UI and stop after `--ticks`.
+        #[arg(long)]
+        headless: bool,
     },
     /// Run scheduled UART input and assertions from a TOML test manifest.
     Test {
@@ -69,7 +72,11 @@ fn execute(command: Command) -> minemu::Result<()> {
             image,
             block_media,
             ticks,
+            headless,
         } => {
+            if !headless {
+                return run_tui(image, block_media);
+            }
             let result = run_image(RunOptions {
                 image,
                 block_media_path: block_media,

@@ -93,16 +93,6 @@ impl InterruptController {
         self.claim
     }
 
-    pub fn inspect(&mut self) -> InterruptInspection {
-        self.process_signals();
-        InterruptInspection {
-            pending: self.pending,
-            enabled: self.enabled,
-            claim: self.claim.map(|source| source as u32),
-            priorities: self.priorities,
-        }
-    }
-
     fn eoi(&mut self, source: u32) -> Result<()> {
         let expected = self.claim.map(|claim| claim as u32).unwrap_or(u32::MAX);
         if source != expected {

@@ -2,10 +2,10 @@ use std::{path::PathBuf, time::Duration};
 
 use minemu_core::{CoreError, Machine, MachineStatus};
 use minemu_platform::{
-    MmuInspection, ObservableEvent, PeripheralsInspection, PhysicalAddress, PhysicalRange,
-    VirtualAddress,
+    InspectionRequest, MmuInspection, ObservableEvent, PeripheralsInspection, PhysicalAddress,
+    PhysicalRange,
 };
-use minemu_unicorn::BackendError;
+use minemu_unicorn::{BackendError, ExecutionInspection};
 use thiserror::Error;
 
 /// Lifecycle state published by the emulator service.
@@ -55,14 +55,15 @@ pub enum RuntimeInspection {
     Execution(ExecutionInspection),
 }
 
-/// Live backend execution state captured at an emulator-thread boundary.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExecutionInspection {
-    pub registers: [u32; 16],
-    pub cpsr: u32,
-    pub spsr: u32,
-    pub instruction_address: VirtualAddress,
-    pub instruction_bytes: Vec<u8>,
+/// An inspection request that is always performed on the emulator thread.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeInspectionRequest {
+    /// Delegates to the backend-independent machine inspection API.
+    Machine(InspectionRequest),
+    /// Reads the authoritative physical RAM mapping from Unicorn.
+    LiveMemory(PhysicalRange),
+    /// Captures CPU state and instruction bytes from Unicorn.
+    Execution { before: usize, after: usize },
 }
 
 /// Runtime configuration supplied before the emulator thread starts.
@@ -116,4 +117,4 @@ pub enum RuntimeError {
 }
 
 pub(crate) type Result<T> = std::result::Result<T, RuntimeError>;
-pub(crate) type InspectionResult = std::result::Result<RuntimeInspection, RuntimeError>;
+pub type InspectionResult = std::result::Result<RuntimeInspection, RuntimeError>;

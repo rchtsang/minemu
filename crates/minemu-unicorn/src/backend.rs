@@ -3,7 +3,7 @@
 use minemu_core::{ExceptionPlan, InstructionOutcome, Machine, MmuFault};
 use minemu_platform::{
     Access, FaultCause, FaultStatus, MemRegion, MmioTransaction, MmioWidth, PhysicalAddress,
-    VirtualAddress,
+    PhysicalRange, VirtualAddress,
 };
 use thiserror::Error;
 use unicorn_engine::{
@@ -36,6 +36,16 @@ pub struct CpuState {
     pub spsr: u32,
 }
 
+/// Live execution data captured directly from Unicorn at an execution boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionInspection {
+    pub registers: [u32; 16],
+    pub cpsr: u32,
+    pub spsr: u32,
+    pub instruction_address: VirtualAddress,
+    pub instruction_bytes: Vec<u8>,
+}
+
 /// Errors while constructing or operating the Unicorn backend.
 #[derive(Debug, Error)]
 pub enum BackendError {
@@ -43,6 +53,8 @@ pub enum BackendError {
     Core(#[from] minemu_core::CoreError),
     #[error("Unicorn operation failed: {0:?}")]
     Unicorn(uc_error),
+    #[error("inspection byte range is too large")]
+    InspectionRange,
 }
 
 type Result<T> = std::result::Result<T, BackendError>;
@@ -225,6 +237,31 @@ impl UnicornBackend {
             .vmem_read(u64::from(address.get()), Prot::READ, &mut bytes)
             .map_err(BackendError::Unicorn)?;
         Ok(bytes)
+    }
+
+    /// Captures the authoritative physical bytes currently mapped by Unicorn.
+    pub fn inspect_live_memory(&self, range: PhysicalRange) -> Result<Vec<u8>> {
+        self.read_physical_memory(range.start(), range.length() as usize)
+    }
+
+    /// Captures CPU state and virtual instruction bytes at one execution boundary.
+    pub fn inspect_execution(
+        &mut self,
+        before: usize,
+        after: usize,
+    ) -> Result<ExecutionInspection> {
+        let cpu = self.cpu_state()?;
+        let start = cpu.registers[15].saturating_sub(before as u32);
+        let length = before
+            .checked_add(after)
+            .ok_or(BackendError::InspectionRange)?;
+        Ok(ExecutionInspection {
+            registers: cpu.registers,
+            cpsr: cpu.cpsr,
+            spsr: cpu.spsr,
+            instruction_address: VirtualAddress::new(start),
+            instruction_bytes: self.read_virtual_memory(VirtualAddress::new(start), length)?,
+        })
     }
 
     /// Writes an ARM register outside active emulation.
@@ -597,6 +634,7 @@ mod tests {
     use minemu_core::{InterruptUpdate, Machine, PhysicalMemoryAccess, UartUpdate};
     use minemu_platform::{
         MemRegion, PTE_EXECUTABLE, PTE_READABLE, PTE_VALID, Peripheral, PhysicalAddress,
+        PhysicalRange,
         peripherals::{interrupt, uart},
     };
     use unicorn_engine::RegisterARM;
@@ -618,6 +656,29 @@ mod tests {
         );
         assert_eq!(backend.register(RegisterARM::R0).unwrap(), 1);
         assert_eq!(backend.machine().ticks(), 1);
+    }
+
+    #[test]
+    fn inspection_snapshots_come_from_the_unicorn_mapping() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        let instruction = [1, 0, 0xa0, 0xe3]; // mov r0, #1
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &instruction)
+            .unwrap();
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_program_counter(start).unwrap();
+
+        assert_eq!(
+            backend
+                .inspect_live_memory(PhysicalRange::new(PhysicalAddress::new(start), 4).unwrap())
+                .unwrap(),
+            instruction
+        );
+        let execution = backend.inspect_execution(0, 4).unwrap();
+        assert_eq!(execution.instruction_address.get(), start);
+        assert_eq!(execution.instruction_bytes, instruction);
     }
 
     #[test]

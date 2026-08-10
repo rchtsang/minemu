@@ -166,9 +166,16 @@ fn disassembly(app: &App) -> Paragraph<'static> {
                 instructions
                     .iter()
                     .map(|instruction| {
+                        let bytes = instruction
+                            .bytes()
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<Vec<_>>()
+                            .join(" ");
                         format!(
-                            "{:08x}: {:<8} {}",
+                            "{:08x}: {:<11} {:<8} {}",
                             instruction.address(),
+                            bytes,
                             instruction.mnemonic().unwrap_or("?"),
                             instruction.op_str().unwrap_or("")
                         )
@@ -186,10 +193,14 @@ fn disassembly(app: &App) -> Paragraph<'static> {
             .chunks(4)
             .enumerate()
             .map(|(index, bytes)| {
+                let bytes = bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 format!(
-                    "{:08x}: {:02x?}",
+                    "{:08x}: {bytes}",
                     execution.instruction_address.get() + (index * 4) as u32,
-                    bytes
                 )
             })
             .collect::<Vec<_>>()

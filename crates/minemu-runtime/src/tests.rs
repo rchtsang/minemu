@@ -3,16 +3,24 @@ use std::{thread, time::Duration};
 use minemu_core::{Machine, PhysicalMemoryAccess};
 use minemu_platform::{InspectionRequest, MemRegion, PhysicalAddress, PhysicalRange};
 
-use crate::{LifecycleState, RuntimeConfig, RuntimeHandle, UartPort};
+use crate::{
+    LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeInspectionRequest,
+    UartPort,
+};
 
 fn running_runtime() -> RuntimeHandle {
     let mut machine = Machine::default();
     let entry = MemRegion::Ram.base().get();
+    let instruction = [0xfe, 0xff, 0xff, 0xea]; // b .
     machine
         .memory
-        .write_range(PhysicalAddress::new(entry), &[0xfe, 0xff, 0xff, 0xea])
-        .unwrap(); // b .
-    RuntimeHandle::spawn(RuntimeConfig::new(machine, entry)).unwrap()
+        .write_range(PhysicalAddress::new(entry), &instruction)
+        .unwrap();
+    RuntimeHandle::spawn(
+        RuntimeConfig::new(machine, entry)
+            .with_initial_ram_write(PhysicalAddress::new(entry), instruction.to_vec()),
+    )
+    .unwrap()
 }
 
 fn wait_for(runtime: &RuntimeHandle, state: LifecycleState) {
@@ -43,8 +51,8 @@ fn dropped_inspection_receivers_do_not_stop_execution() {
     let runtime = running_runtime();
     wait_for(&runtime, LifecycleState::Running);
     let receiver = runtime
-        .request_inspection(InspectionRequest::Memory(
-            PhysicalRange::new(MemRegion::Ram.base(), 4096).unwrap(),
+        .request_inspection(RuntimeInspectionRequest::Machine(
+            InspectionRequest::Memory(PhysicalRange::new(MemRegion::Ram.base(), 4096).unwrap()),
         ))
         .unwrap();
     drop(receiver);
@@ -56,5 +64,38 @@ fn dropped_inspection_receivers_do_not_stop_execution() {
         thread::sleep(Duration::from_millis(2));
     }
     assert!(runtime.status().machine.ticks > 0);
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn backend_snapshots_share_the_inspection_request_path() {
+    let runtime = running_runtime();
+    wait_for(&runtime, LifecycleState::Running);
+    runtime.pause().unwrap();
+    wait_for(&runtime, LifecycleState::Paused);
+
+    let range = PhysicalRange::new(MemRegion::Ram.base(), 4).unwrap();
+    let memory = runtime
+        .request_inspection(RuntimeInspectionRequest::LiveMemory(range))
+        .unwrap()
+        .recv()
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(memory, RuntimeInspection::LiveMemory(_, bytes) if bytes == [0xfe, 0xff, 0xff, 0xea])
+    );
+
+    let execution = runtime
+        .request_inspection(RuntimeInspectionRequest::Execution {
+            before: 0,
+            after: 4,
+        })
+        .unwrap()
+        .recv()
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(execution, RuntimeInspection::Execution(snapshot) if snapshot.instruction_bytes == [0xfe, 0xff, 0xff, 0xea])
+    );
     runtime.shutdown().unwrap();
 }

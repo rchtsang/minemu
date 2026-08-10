@@ -3,9 +3,10 @@
 mod service;
 mod types;
 
+pub use minemu_unicorn::ExecutionInspection;
 pub use service::RuntimeHandle;
 pub use types::{
-    ExecutionInspection, LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection,
+    LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection, RuntimeInspectionRequest,
     RuntimeStatus, UartPort,
 };
 

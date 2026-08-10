@@ -3,7 +3,8 @@ use std::{path::PathBuf, thread, time::Duration};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use minemu_platform::{InspectionRequest, MemRegion, PhysicalAddress, PhysicalRange};
 use minemu_runtime::{
-    ExecutionInspection, LifecycleState, RuntimeHandle, RuntimeInspection, RuntimeStatus, UartPort,
+    ExecutionInspection, LifecycleState, RuntimeHandle, RuntimeInspection,
+    RuntimeInspectionRequest, RuntimeStatus, UartPort,
 };
 
 use crate::{CliError, Result, runner::start_runtime};
@@ -215,7 +216,10 @@ impl App {
         }
         if let RuntimeInspection::LiveMemory(range, bytes) = self
             .runtime
-            .inspect_live_memory(self.memory_range)
+            .request_inspection(RuntimeInspectionRequest::LiveMemory(self.memory_range))
+            .map_err(|_| CliError::RuntimeSetup)?
+            .recv()
+            .map_err(|_| CliError::RuntimeSetup)?
             .map_err(|_| CliError::RuntimeSetup)?
         {
             self.memory_range = range;
@@ -223,7 +227,13 @@ impl App {
         }
         if let RuntimeInspection::Execution(execution) = self
             .runtime
-            .inspect_execution(32, 96)
+            .request_inspection(RuntimeInspectionRequest::Execution {
+                before: 32,
+                after: 96,
+            })
+            .map_err(|_| CliError::RuntimeSetup)?
+            .recv()
+            .map_err(|_| CliError::RuntimeSetup)?
             .map_err(|_| CliError::RuntimeSetup)?
         {
             self.execution = Some(execution);
@@ -244,9 +254,9 @@ impl App {
 
     fn apply_motion(&mut self, motion: Motion) -> Result<()> {
         match self.focus {
-            Focus::Events => move_event_offset(&mut self.event_offset, self.events.len(), motion),
-            Focus::Memory => move_memory_range(&mut self.memory_range, motion)?,
-            Focus::Disassembly => move_memory_range(&mut self.memory_range, motion)?,
+            Focus::Events => nav_event_offset(&mut self.event_offset, self.events.len(), motion),
+            Focus::Memory => nav_memory_range(&mut self.memory_range, motion)?,
+            Focus::Disassembly => nav_memory_range(&mut self.memory_range, motion)?,
             Focus::Cpu | Focus::Hardware => {}
             Focus::Console => unreachable!("console motions are handled before decoding"),
         }
@@ -277,7 +287,7 @@ fn parse_address(value: Option<&str>) -> Result<u32> {
         .map_err(|_| CliError::Assertion("invalid physical address".into()))
 }
 
-fn move_event_offset(offset: &mut usize, length: usize, motion: Motion) {
+fn nav_event_offset(offset: &mut usize, length: usize, motion: Motion) {
     let count = match motion {
         Motion::Left(count)
         | Motion::Down(count)
@@ -300,7 +310,7 @@ fn move_event_offset(offset: &mut usize, length: usize, motion: Motion) {
     }
 }
 
-fn move_memory_range(range: &mut PhysicalRange, motion: Motion) -> Result<()> {
+fn nav_memory_range(range: &mut PhysicalRange, motion: Motion) -> Result<()> {
     let count = match motion {
         Motion::Left(count)
         | Motion::Down(count)
@@ -345,7 +355,7 @@ fn move_memory_range(range: &mut PhysicalRange, motion: Motion) -> Result<()> {
 mod tests {
     use minemu_platform::{MemRegion, PhysicalRange};
 
-    use super::{Focus, Motion, move_event_offset, move_memory_range, parse_address, parse_focus};
+    use super::{Focus, Motion, nav_event_offset, nav_memory_range, parse_address, parse_focus};
 
     #[test]
     fn parses_tui_command_arguments() {
@@ -358,15 +368,15 @@ mod tests {
     #[test]
     fn applies_pane_local_navigation() {
         let mut range = PhysicalRange::new(MemRegion::Ram.base(), 32).unwrap();
-        move_memory_range(&mut range, Motion::Down(2)).unwrap();
+        nav_memory_range(&mut range, Motion::Down(2)).unwrap();
         assert_eq!(range.start().get(), MemRegion::Ram.base().get() + 32);
-        move_memory_range(&mut range, Motion::NextItem(3)).unwrap();
+        nav_memory_range(&mut range, Motion::NextItem(3)).unwrap();
         assert_eq!(range.start().get(), MemRegion::Ram.base().get() + 44);
 
         let mut event_offset = 2;
-        move_event_offset(&mut event_offset, 10, Motion::Top);
+        nav_event_offset(&mut event_offset, 10, Motion::Top);
         assert_eq!(event_offset, 0);
-        move_event_offset(&mut event_offset, 10, Motion::Bottom);
+        nav_event_offset(&mut event_offset, 10, Motion::Bottom);
         assert_eq!(event_offset, 9);
     }
 }

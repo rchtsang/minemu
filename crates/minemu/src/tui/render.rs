@@ -2,9 +2,9 @@ use capstone::prelude::*;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Tabs, Wrap},
 };
 
 use super::app::{App, Focus, View};
@@ -16,17 +16,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     if let Some(command) = &app.command {
         let area = centered(frame.area(), 80, 3);
+        frame.render_widget(Clear, area);
         frame.render_widget(
-            Paragraph::new(format!(":{command}"))
-                .block(Block::default().borders(Borders::ALL).title("command")),
+            Paragraph::new(format!(":{command}")).block(block("command", true)),
             area,
         );
     }
     if app.show_help {
         let area = centered(frame.area(), 80, 8);
+        frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(":pause  :resume  :reset  :quit\n:view runtime|inspect  :focus <pane>\n:mem <physical-address>  :uart 0|1\n\nPress any key to close.")
-                .block(Block::default().borders(Borders::ALL).title("help")),
+                .block(block("help", true)),
             area,
         );
     }
@@ -41,7 +42,7 @@ fn draw_runtime(frame: &mut Frame, app: &App) {
             Constraint::Length(2),
         ])
         .split(frame.area());
-    frame.render_widget(Paragraph::new(status_line(app)), areas[0]);
+    header(frame, areas[0], app);
     if areas[1].width < 50 || areas[1].height < 10 {
         frame.render_widget(console(app), areas[1]);
     } else {
@@ -64,7 +65,7 @@ fn draw_introspection(frame: &mut Frame, app: &App) {
             Constraint::Length(2),
         ])
         .split(frame.area());
-    frame.render_widget(Paragraph::new(status_line(app)), areas[0]);
+    header(frame, areas[0], app);
     if areas[1].width < 80 || areas[1].height < 18 {
         frame.render_widget(focused_inspection(app), areas[1]);
     } else {
@@ -254,16 +255,36 @@ fn hardware(app: &App) -> Paragraph<'static> {
     ))
 }
 
+fn header(frame: &mut Frame, area: Rect, app: &App) {
+    let areas = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(22), Constraint::Min(1)])
+        .split(area);
+    let selected = match app.view {
+        View::Runtime => 0,
+        View::Introspection => 1,
+    };
+    frame.render_widget(
+        Tabs::new(["runtime", "inspect"])
+            .select(selected)
+            .style(yellow())
+            .highlight_style(yellow().add_modifier(Modifier::BOLD | Modifier::REVERSED))
+            .divider(" | "),
+        areas[0],
+    );
+    frame.render_widget(Paragraph::new(status_line(app)), areas[1]);
+}
+
 fn status_line(app: &App) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!("{:?} ", app.status.lifecycle),
-            Style::default().add_modifier(Modifier::BOLD),
+            yellow().add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!(
-            "tick {}  view {:?}  focus {:?}",
-            app.status.machine.ticks, app.view, app.focus
-        )),
+        Span::styled(
+            format!("tick {}  focus {:?}", app.status.machine.ticks, app.focus),
+            yellow(),
+        ),
     ])
 }
 
@@ -273,19 +294,24 @@ fn footer(app: &App) -> Line<'static> {
     } else {
         "hjkl we gg G | :help"
     };
-    Line::from(prompt)
+    Line::styled(prompt, yellow())
 }
 
 fn block(title: &str, focused: bool) -> Block<'static> {
     let style = if focused {
-        Style::default().add_modifier(Modifier::BOLD)
+        yellow().add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
+        yellow()
     };
     Block::default()
         .borders(Borders::ALL)
         .title(title.to_owned())
+        .title_style(style)
         .border_style(style)
+}
+
+fn yellow() -> Style {
+    Style::default().fg(Color::Yellow)
 }
 
 fn centered(area: Rect, width_percent: u16, height: u16) -> Rect {

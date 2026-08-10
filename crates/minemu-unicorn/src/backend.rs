@@ -234,7 +234,7 @@ impl UnicornBackend {
     ) -> Result<Vec<u8>> {
         let mut bytes = vec![0; length];
         self.engine
-            .vmem_read(u64::from(address.get()), Prot::READ, &mut bytes)
+            .vmem_read(u64::from(address.get()), Prot::EXEC, &mut bytes)
             .map_err(BackendError::Unicorn)?;
         Ok(bytes)
     }
@@ -707,6 +707,14 @@ mod tests {
         assert_eq!(backend.run(0, 4, 1), BackendStop::InstructionBudget);
         assert_eq!(backend.register(RegisterARM::R0).unwrap(), 7);
         assert_eq!(backend.machine().mmu.last_fault(), None);
+        assert_eq!(
+            backend
+                .inspect_execution(0, 4)
+                .unwrap()
+                .instruction_address
+                .get(),
+            4
+        );
     }
 
     #[test]

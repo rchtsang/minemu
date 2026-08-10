@@ -41,6 +41,7 @@ pub struct App {
     pub execution: Option<ExecutionInspection>,
     pub command: Option<String>,
     pub show_help: bool,
+    command_paused: bool,
     motion: MotionDecoder,
     pub event_offset: usize,
 }
@@ -63,6 +64,7 @@ impl App {
             execution: None,
             command: None,
             show_help: false,
+            command_paused: false,
             motion: MotionDecoder::default(),
             event_offset: 0,
         };
@@ -96,7 +98,10 @@ impl App {
         }
         if let Some(command) = &mut self.command {
             match key.code {
-                KeyCode::Esc => self.command = None,
+                KeyCode::Esc => {
+                    self.command = None;
+                    self.resume_after_command()?;
+                }
                 KeyCode::Enter => {
                     let command = std::mem::take(command);
                     self.command = None;
@@ -127,7 +132,7 @@ impl App {
             return Ok(false);
         }
         match key.code {
-            KeyCode::Char(':') => self.command = Some(String::new()),
+            KeyCode::Char(':') => self.begin_command()?,
             KeyCode::Esc => self.motion.reset(),
             KeyCode::Tab => self.next_focus(),
             code => {
@@ -141,14 +146,27 @@ impl App {
 
     fn execute_command(&mut self, command: &str) -> Result<bool> {
         let mut words = command.split_whitespace();
+        let mut resume_after_command = self.command_paused;
         match words.next() {
-            Some("pause") => self.runtime.pause().map_err(|_| CliError::RuntimeSetup)?,
-            Some("resume") => self.runtime.resume().map_err(|_| CliError::RuntimeSetup)?,
-            Some("reset") => self.runtime.reset().map_err(|_| CliError::RuntimeSetup)?,
+            Some("pause") => {
+                self.runtime.pause().map_err(|_| CliError::RuntimeSetup)?;
+                resume_after_command = false;
+            }
+            Some("resume") => {
+                self.runtime.resume().map_err(|_| CliError::RuntimeSetup)?;
+                resume_after_command = false;
+            }
+            Some("reset") => {
+                self.runtime.reset().map_err(|_| CliError::RuntimeSetup)?;
+                resume_after_command = false;
+            }
             Some("quit") | Some("q") => return Ok(true),
             Some("view") => match words.next() {
                 Some("runtime") => self.view = View::Runtime,
-                Some("inspect") | Some("introspection") => self.enter_introspection()?,
+                Some("inspect") | Some("introspection") => {
+                    self.enter_introspection()?;
+                    resume_after_command = false;
+                }
                 _ => return Err(CliError::Assertion("usage: :view runtime|inspect".into())),
             },
             Some("focus") => self.focus = parse_focus(words.next())?,
@@ -168,26 +186,50 @@ impl App {
             Some("help") => self.show_help = true,
             Some(_) | None => return Err(CliError::Assertion("unknown TUI command".into())),
         }
+        if resume_after_command {
+            self.runtime.resume().map_err(|_| CliError::RuntimeSetup)?;
+        }
+        self.command_paused = false;
         self.refresh()?;
         Ok(false)
     }
 
+    fn begin_command(&mut self) -> Result<()> {
+        if self.status.lifecycle == LifecycleState::Running {
+            self.pause_and_wait()?;
+            self.command_paused = true;
+        }
+        self.command = Some(String::new());
+        Ok(())
+    }
+
+    fn resume_after_command(&mut self) -> Result<()> {
+        if self.command_paused {
+            self.runtime.resume().map_err(|_| CliError::RuntimeSetup)?;
+            self.command_paused = false;
+        }
+        self.refresh()
+    }
+
     fn enter_introspection(&mut self) -> Result<()> {
         if self.status.lifecycle == LifecycleState::Running {
-            self.runtime.pause().map_err(|_| CliError::RuntimeSetup)?;
-            for _ in 0..500 {
-                if self.runtime.status().lifecycle == LifecycleState::Paused {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(2));
-            }
-            if self.runtime.status().lifecycle != LifecycleState::Paused {
-                return Err(CliError::RuntimeSetup);
-            }
+            self.pause_and_wait()?;
         }
         self.view = View::Introspection;
         self.focus = Focus::Memory;
         self.refresh_introspection()
+    }
+
+    fn pause_and_wait(&mut self) -> Result<()> {
+        self.runtime.pause().map_err(|_| CliError::RuntimeSetup)?;
+        for _ in 0..500 {
+            if self.runtime.status().lifecycle == LifecycleState::Paused {
+                self.status = self.runtime.status();
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        Err(CliError::RuntimeSetup)
     }
 
     fn refresh_runtime(&mut self) -> Result<()> {

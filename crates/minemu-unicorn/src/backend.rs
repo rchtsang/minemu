@@ -6,6 +6,7 @@ use minemu_platform::{
     PhysicalRange, VirtualAddress,
 };
 use thiserror::Error;
+use tracing::{debug, debug_span, trace, warn};
 use unicorn_engine::{
     ArmCpuModel, RegisterARM, Unicorn,
     unicorn_const::{Arch, Mode, Prot, TlbEntry, TlbType, uc_error},
@@ -219,11 +220,23 @@ impl UnicornBackend {
 
     /// Reads the authoritative physical bytes currently mapped by Unicorn.
     pub fn read_physical_memory(&self, address: PhysicalAddress, length: usize) -> Result<Vec<u8>> {
+        trace!(
+            physical_address = address.get(),
+            length, "reading physical Unicorn memory for inspection"
+        );
         let mut bytes = vec![0; length];
-        self.engine
-            .mem_read(u64::from(address.get()), &mut bytes)
-            .map_err(BackendError::Unicorn)?;
-        Ok(bytes)
+        match self.engine.mem_read(u64::from(address.get()), &mut bytes) {
+            Ok(()) => Ok(bytes),
+            Err(error) => {
+                warn!(
+                    physical_address = address.get(),
+                    length,
+                    error = ?error,
+                    "Unicorn physical inspection read failed"
+                );
+                Err(BackendError::Unicorn(error))
+            }
+        }
     }
 
     /// Reads virtual instruction bytes through the active Unicorn translation state.
@@ -232,15 +245,38 @@ impl UnicornBackend {
         address: VirtualAddress,
         length: usize,
     ) -> Result<Vec<u8>> {
+        trace!(
+            virtual_address = address.get(),
+            length,
+            access = "execute",
+            "reading translated Unicorn instruction bytes for inspection"
+        );
         let mut bytes = vec![0; length];
-        self.engine
+        match self
+            .engine
             .vmem_read(u64::from(address.get()), Prot::EXEC, &mut bytes)
-            .map_err(BackendError::Unicorn)?;
-        Ok(bytes)
+        {
+            Ok(()) => Ok(bytes),
+            Err(error) => {
+                warn!(
+                    virtual_address = address.get(),
+                    length,
+                    access = "execute",
+                    error = ?error,
+                    "Unicorn virtual inspection read failed"
+                );
+                Err(BackendError::Unicorn(error))
+            }
+        }
     }
 
     /// Captures the authoritative physical bytes currently mapped by Unicorn.
     pub fn inspect_live_memory(&self, range: PhysicalRange) -> Result<Vec<u8>> {
+        debug!(
+            physical_address = range.start().get(),
+            length = range.length(),
+            "capturing Unicorn live-memory inspection snapshot"
+        );
         self.read_physical_memory(range.start(), range.length() as usize)
     }
 
@@ -250,11 +286,31 @@ impl UnicornBackend {
         before: usize,
         after: usize,
     ) -> Result<ExecutionInspection> {
-        let cpu = self.cpu_state()?;
+        let cpu = self.cpu_state().map_err(|error| {
+            warn!(before, after, error = %error, "Unicorn CPU inspection failed");
+            error
+        })?;
         let start = cpu.registers[15].saturating_sub(before as u32);
-        let length = before
-            .checked_add(after)
-            .ok_or(BackendError::InspectionRange)?;
+        let Some(length) = before.checked_add(after) else {
+            warn!(
+                pc = cpu.registers[15],
+                cpsr = cpu.cpsr,
+                before,
+                after,
+                "Unicorn execution inspection range overflow"
+            );
+            return Err(BackendError::InspectionRange);
+        };
+        let span = debug_span!(
+            "unicorn_execution_inspection",
+            pc = cpu.registers[15],
+            cpsr = cpu.cpsr,
+            virtual_address = start,
+            length,
+            access = "execute",
+        );
+        let _entered = span.enter();
+        debug!("capturing Unicorn execution inspection snapshot");
         Ok(ExecutionInspection {
             registers: cpu.registers,
             cpsr: cpu.cpsr,
@@ -639,7 +695,7 @@ mod tests {
     };
     use unicorn_engine::RegisterARM;
 
-    use super::{BackendStop, UnicornBackend};
+    use super::{BackendError, BackendStop, UnicornBackend};
 
     #[test]
     fn cortex_a9_executes_one_a32_instruction() {
@@ -715,6 +771,19 @@ mod tests {
                 .get(),
             4
         );
+    }
+
+    #[test]
+    fn enabled_mmu_inspection_reports_an_unmapped_program_counter() {
+        let mut machine = Machine::default();
+        machine.mmu.set_enabled(true);
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_program_counter(0x2000).unwrap();
+
+        assert!(matches!(
+            backend.inspect_execution(0, 4),
+            Err(BackendError::Unicorn(_))
+        ));
     }
 
     #[test]

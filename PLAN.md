@@ -38,6 +38,5 @@ runtime/backend error before user-facing code reduces it to `CliError::RuntimeSe
 
 ## Scope For This Change
 
-Implement steps 1 through 5 only, including the step-3 diagnostic invocation.
-Stop for review before backend-level tracing and the additional regression
-coverage in steps 6 and 7.
+All seven steps are implemented. Unicorn inspection tracing remains outside
+guest instruction execution and is enabled only by the `minemu_unicorn` filter.

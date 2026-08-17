@@ -74,10 +74,11 @@ file is appended to and `RUST_LOG` selects verbosity; the default filter is
 `warn`.
 
 ```sh
-RUST_LOG=minemu=debug,minemu_runtime=debug \
+RUST_LOG=minemu=debug,minemu_runtime=debug,minemu_unicorn=trace \
 cargo run -p minemu -- --log-file /tmp/minemu.log run \
   minimum-template/system/build/minimum.img
 ```
 
 For a failed `:view inspect`, inspect `/tmp/minemu.log` for the TUI request,
-runtime inspection result, lifecycle, tick, and the original runtime error.
+runtime inspection result, lifecycle, tick, PC, CPSR, requested virtual range,
+and the exact Unicorn error.

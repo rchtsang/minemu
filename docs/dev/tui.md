@@ -82,3 +82,7 @@ cargo run -p minemu -- --log-file /tmp/minemu.log run \
 For a failed `:view inspect`, inspect `/tmp/minemu.log` for the TUI request,
 runtime inspection result, lifecycle, tick, PC, CPSR, requested virtual range,
 and the exact Unicorn error.
+
+If Unicorn cannot read instruction bytes at the paused PC, the TUI retains the
+CPU and peripheral snapshots and reports the error in the disassembly pane
+instead of exiting.

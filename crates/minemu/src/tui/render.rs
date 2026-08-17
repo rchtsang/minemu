@@ -153,6 +153,10 @@ fn disassembly(app: &App) -> Paragraph<'static> {
         return Paragraph::new("paused execution snapshot unavailable")
             .block(block("disassembly", false));
     };
+    if let Some(error) = &execution.instruction_error {
+        return Paragraph::new(format!("instruction bytes unavailable: {error}"))
+            .block(block("A32 disassembly", app.focus == Focus::Disassembly));
+    }
     let text = if let Ok(capstone) = Capstone::new()
         .arm()
         .mode(capstone::arch::arm::ArchMode::Arm)

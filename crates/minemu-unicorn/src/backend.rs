@@ -45,6 +45,7 @@ pub struct ExecutionInspection {
     pub spsr: u32,
     pub instruction_address: VirtualAddress,
     pub instruction_bytes: Vec<u8>,
+    pub instruction_error: Option<String>,
 }
 
 /// Errors while constructing or operating the Unicorn backend.
@@ -311,12 +312,21 @@ impl UnicornBackend {
         );
         let _entered = span.enter();
         debug!("capturing Unicorn execution inspection snapshot");
+        let (instruction_bytes, instruction_error) =
+            match self.read_virtual_memory(VirtualAddress::new(start), length) {
+                Ok(bytes) => (bytes, None),
+                Err(error) => {
+                    warn!(error = %error, "execution inspection has no readable instruction bytes");
+                    (Vec::new(), Some(error.to_string()))
+                }
+            };
         Ok(ExecutionInspection {
             registers: cpu.registers,
             cpsr: cpu.cpsr,
             spsr: cpu.spsr,
             instruction_address: VirtualAddress::new(start),
-            instruction_bytes: self.read_virtual_memory(VirtualAddress::new(start), length)?,
+            instruction_bytes,
+            instruction_error,
         })
     }
 
@@ -695,7 +705,7 @@ mod tests {
     };
     use unicorn_engine::RegisterARM;
 
-    use super::{BackendError, BackendStop, UnicornBackend};
+    use super::{BackendStop, UnicornBackend};
 
     #[test]
     fn cortex_a9_executes_one_a32_instruction() {
@@ -774,16 +784,16 @@ mod tests {
     }
 
     #[test]
-    fn enabled_mmu_inspection_reports_an_unmapped_program_counter() {
+    fn enabled_mmu_inspection_retains_cpu_state_when_instruction_bytes_are_unmapped() {
         let mut machine = Machine::default();
         machine.mmu.set_enabled(true);
         let mut backend = UnicornBackend::new(machine).unwrap();
         backend.set_program_counter(0x2000).unwrap();
 
-        assert!(matches!(
-            backend.inspect_execution(0, 4),
-            Err(BackendError::Unicorn(_))
-        ));
+        let inspection = backend.inspect_execution(0, 4).unwrap();
+        assert_eq!(inspection.registers[15], 0x2000);
+        assert!(inspection.instruction_bytes.is_empty());
+        assert!(inspection.instruction_error.is_some());
     }
 
     #[test]

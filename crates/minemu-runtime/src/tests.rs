@@ -87,6 +87,7 @@ fn backend_snapshots_share_the_inspection_request_path() {
 
     let execution = runtime
         .request_inspection(RuntimeInspectionRequest::Execution {
+            address: None,
             before: 0,
             after: 4,
         })
@@ -97,5 +98,37 @@ fn backend_snapshots_share_the_inspection_request_path() {
     assert!(
         matches!(execution, RuntimeInspection::Execution(snapshot) if snapshot.instruction_bytes == [0xfe, 0xff, 0xff, 0xea])
     );
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn memory_search_requests_return_matches_and_no_match() {
+    let runtime = running_runtime();
+    wait_for(&runtime, LifecycleState::Running);
+    runtime.pause().unwrap();
+    wait_for(&runtime, LifecycleState::Paused);
+
+    let match_response = runtime
+        .request_inspection(RuntimeInspectionRequest::SearchMemory {
+            pattern: vec![0xfe, 0xff, 0xff, 0xea],
+        })
+        .unwrap()
+        .recv()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        match_response,
+        RuntimeInspection::SearchMemory(Some(MemRegion::Ram.base()))
+    );
+
+    let no_match_response = runtime
+        .request_inspection(RuntimeInspectionRequest::SearchMemory {
+            pattern: vec![0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe],
+        })
+        .unwrap()
+        .recv()
+        .unwrap()
+        .unwrap();
+    assert_eq!(no_match_response, RuntimeInspection::SearchMemory(None));
     runtime.shutdown().unwrap();
 }

@@ -53,17 +53,24 @@ pub enum RuntimeInspection {
     Events(Vec<ObservableEvent>),
     LiveMemory(PhysicalRange, Vec<u8>),
     Execution(ExecutionInspection),
+    SearchMemory(Option<PhysicalAddress>),
 }
 
 /// An inspection request that is always performed on the emulator thread.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeInspectionRequest {
     /// Delegates to the backend-independent machine inspection API.
     Machine(InspectionRequest),
     /// Reads the authoritative physical RAM mapping from Unicorn.
     LiveMemory(PhysicalRange),
     /// Captures CPU state and instruction bytes from Unicorn.
-    Execution { before: usize, after: usize },
+    Execution {
+        address: Option<minemu_platform::VirtualAddress>,
+        before: usize,
+        after: usize,
+    },
+    /// Searches the authoritative physical RAM mapping from Unicorn.
+    SearchMemory { pattern: Vec<u8> },
 }
 
 /// Runtime configuration supplied before the emulator thread starts.

@@ -8,10 +8,11 @@
 | :---                     | :--- |
 | :q / :quit               | quit tui |
 | :? / :help               | open help window |
-| :s / :start              | start emulation |
-| :s / :stop               | stop emulation  |
+| :s                       | toggle emulation start/stop |
+| :start                   | start emulation |
+| :stop                    | stop emulation  |
 | :reset                   | reset emulator (emulated power cycle) |
-| :v [opt] / :view [opt]   | change view (options: [r]untime, [i]nspect) |
+| :v [opt] / :view [opt]   | change view (options: [r]untime, [i]nspect; no option toggles) |
 | :set [key] [val]         | set configuration values |
 | :g / :goto [loc]         | goto location if applicable ([loc] depends on pane) |
 
@@ -139,6 +140,9 @@ Panes:
     - Goto Current: G
 
 Subviews:
+- only the selected primary and secondary subviews are rendered; the stacked
+  memory/disassembly rows above illustrate both primary formats rather than two
+  simultaneously visible panes
 - memory (primary)
   - Normal Mode:
     - Search ASCII: /[pattern]
@@ -152,6 +156,9 @@ Subviews:
     - Goto Register: >`[reg]`
 - peripherals (secondary)
 - pending (secondary)
+
+Memory searches scan all physical RAM. ASCII search uses UTF-8 input and byte
+search uses whitespace-separated hexadecimal pairs such as `\de ad be ef`.
 
 # asciiflow
 

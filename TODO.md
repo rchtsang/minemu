@@ -248,6 +248,39 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Update `docs/dev/tui.md` with both layouts, paused snapshot behavior,
   motions, command-line syntax, resize behavior, and terminal ownership.
 
+## 8A. Redesign The TUI
+
+- [x] Add `TuiWidget`, `WidgetId`, `AppEvent`, `Action`, `RuntimeController`,
+  and centralized `SplitLayout` foundations. Keep `RuntimeHandle` out of all
+  widgets and route asynchronous inspection responses to target widgets.
+- [x] Replace the monolithic TUI app state with ordered header, console, events,
+  dialog, primary inspector, secondary inspector, input-bar, and hints widgets.
+  Move emulator snapshots and scroll state into their owning widgets.
+- [x] Split input handling into motion, leader, command, search, goto, and
+  mode-aware router modules. Use grammar-only normal, insert, command, leader,
+  ASCII-search, byte-search, and goto modes.
+- [x] Implement console normal/insert behavior; Ctrl+C/E/D/P/S pane focus;
+  count-aware motions; Space+r/i/s leader commands; and contextual input/hints
+  bars.
+- [x] Implement `:q`, `:?`, `:start`, `:stop`, `:s`, `:reset`, `:v`/`:view`,
+  `:set`, and pane-aware `:g`/`:goto` command behavior and aliases.
+- [x] Implement selected primary memory/disassembly and secondary
+  registers/peripherals/pending subviews. Pending combines MMU last-fault and
+  interrupt pending/enabled/claim state.
+- [x] Add an owned full-RAM byte-search `RuntimeInspectionRequest`. Scan live
+  Unicorn RAM in bounded overlapping chunks and return a matching physical
+  address without copying all RAM into the TUI.
+- [x] Replace recoverable TUI action failures with bounded red dialog messages.
+  Preserve tracing context and render input/action output in the persistent
+  dialog/input panes.
+- [x] Enable mouse capture and implement Ctrl+left-drag resize actions for
+  runtime and inspect splits. Add small-terminal layout fallbacks.
+- [x] Add tests for action dispatch, input modes, aliases, leader sequences,
+  motion/search/goto parsing, widget event updates, dialog recovery, split
+  geometry, runtime search boundaries, and inspection routing.
+- [x] Rewrite `docs/dev/tui.md` from the completed behavior, run workspace and
+  template verification, then perform a manual TUI pass with `--log-file`.
+
 ## 9. Port Fixtures and Release the Platform
 
 - [ ] Port spike scenarios into `fixtures/arm` as backend/ABI conformance

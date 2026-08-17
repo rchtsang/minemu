@@ -1,514 +1,386 @@
-use std::{path::PathBuf, thread, time::Duration};
-
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
-use minemu_platform::{InspectionRequest, MemRegion, PhysicalAddress, PhysicalRange};
-use minemu_runtime::{
-    ExecutionInspection, LifecycleState, RuntimeError, RuntimeHandle, RuntimeInspection,
-    RuntimeInspectionRequest, RuntimeStatus, UartPort,
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    time::{Duration, Instant},
 };
+
+use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use minemu_runtime::LifecycleState;
+use ratatui::{Frame, layout::Rect};
 use tracing::{debug, error, info, warn};
 
 use crate::{CliError, Result, runner::start_runtime};
 
-use super::input::{Motion, MotionDecoder};
+use super::{
+    action::Action,
+    event::AppEvent,
+    input::InputRouter,
+    layout::SplitLayout,
+    runtime::{PendingResult, RuntimeController},
+    types::{DialogMessage, InputMode, SplitId, View, WidgetId},
+    widget::{InputContext, RenderContext, TuiWidget},
+    widgets::{
+        ConsoleWidget, DialogWidget, EventsWidget, HeaderWidget, HintsWidget, InputBarWidget,
+        PrimaryWidget, SecondaryWidget,
+    },
+};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum View {
-    Runtime,
-    Introspection,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Focus {
-    Console,
-    Events,
-    Memory,
-    Disassembly,
-    Cpu,
-    Hardware,
-}
-
-/// Immutable data assembled from runtime snapshots and TUI-local navigation state.
 pub struct App {
-    pub runtime: RuntimeHandle,
-    pub view: View,
-    pub focus: Focus,
-    pub active_uart: UartPort,
-    pub status: RuntimeStatus,
-    pub peripherals: Option<minemu_platform::PeripheralsInspection>,
-    pub events: Vec<minemu_platform::ObservableEvent>,
-    pub memory_range: PhysicalRange,
-    pub memory: Vec<u8>,
-    pub execution: Option<ExecutionInspection>,
-    pub command: Option<String>,
-    pub show_help: bool,
-    command_paused: bool,
-    motion: MotionDecoder,
-    pub event_offset: usize,
+    runtime: RuntimeController,
+    widgets: Vec<Box<dyn TuiWidget>>,
+    view: View,
+    focused: WidgetId,
+    input: InputRouter,
+    layout: SplitLayout,
+    actions: VecDeque<Action>,
+    quit: bool,
+    resume_after_input: bool,
+    suppress_input_resume: bool,
+    last_pulse: Instant,
+    terminal_area: Rect,
+    dragging: Option<SplitId>,
 }
 
 impl App {
     pub fn start(image: PathBuf, block_media: Option<PathBuf>) -> Result<Self> {
-        let runtime = start_runtime(&image, block_media)?;
-        let memory_range =
-            PhysicalRange::new(MemRegion::Ram.base(), 256).map_err(|_| CliError::RuntimeSetup)?;
+        let handle = start_runtime(&image, block_media)?;
+        let runtime = RuntimeController::new(handle);
         let mut app = Self {
-            status: runtime.status(),
             runtime,
+            widgets: vec![
+                Box::new(HeaderWidget::default()),
+                Box::new(ConsoleWidget::default()),
+                Box::new(EventsWidget::default()),
+                Box::new(PrimaryWidget::default()),
+                Box::new(SecondaryWidget::default()),
+                Box::new(DialogWidget::default()),
+                Box::new(InputBarWidget),
+                Box::new(HintsWidget),
+            ],
             view: View::Runtime,
-            focus: Focus::Console,
-            active_uart: UartPort::Uart0,
-            peripherals: None,
-            events: Vec::new(),
-            memory_range,
-            memory: Vec::new(),
-            execution: None,
-            command: None,
-            show_help: false,
-            command_paused: false,
-            motion: MotionDecoder::default(),
-            event_offset: 0,
+            focused: WidgetId::Console,
+            input: InputRouter::default(),
+            layout: SplitLayout::default(),
+            actions: VecDeque::new(),
+            quit: false,
+            resume_after_input: false,
+            suppress_input_resume: false,
+            last_pulse: Instant::now(),
+            terminal_area: Rect::default(),
+            dragging: None,
         };
-        app.refresh_runtime()?;
+        app.broadcast(AppEvent::Status(app.runtime.status().clone()));
+        app.broadcast(AppEvent::ViewChanged(View::Runtime));
+        app.process_actions();
         Ok(app)
     }
 
-    pub fn refresh(&mut self) -> Result<()> {
-        self.status = self.runtime.status();
-        match self.view {
-            View::Runtime => self.refresh_runtime(),
-            View::Introspection => self.refresh_introspection(),
+    pub fn tick(&mut self) -> Result<()> {
+        if let Some(status) = self.runtime.refresh_status() {
+            self.broadcast(AppEvent::Status(status));
+        }
+        for result in self.runtime.poll() {
+            match result {
+                PendingResult::Ready { target, inspection } => {
+                    self.target(target, AppEvent::Inspection(inspection));
+                }
+                PendingResult::Failed {
+                    target,
+                    request,
+                    error: detail,
+                } => {
+                    warn!(?target, ?request, error = %detail, "TUI inspection failed");
+                    self.show_message(DialogMessage::error(format!(
+                        "{request:?} failed: {detail}"
+                    )));
+                }
+            }
+        }
+        if self.last_pulse.elapsed() >= Duration::from_millis(100) {
+            self.last_pulse = Instant::now();
+            self.broadcast(AppEvent::Pulse);
+        }
+        self.process_actions();
+        if self.runtime.status().lifecycle == LifecycleState::Failed {
+            return Err(CliError::RuntimeSetup);
+        }
+        Ok(())
+    }
+
+    pub fn handle_event(&mut self, event: Event) {
+        if let Event::Mouse(mouse) = event {
+            self.handle_mouse(mouse);
+            self.process_actions();
+            return;
+        }
+        self.actions
+            .extend(self.input.route(event, self.focused, self.view));
+        self.process_actions();
+    }
+
+    pub fn render(&mut self, frame: &mut Frame) {
+        self.terminal_area = frame.area();
+        let areas = self.layout.areas(frame.area(), self.view, self.focused);
+        let input = self.input.display();
+        let context = RenderContext {
+            view: self.view,
+            mode: self.input.mode(),
+            focused: self.focused,
+            input: &input,
+            ticks: self.runtime.status().machine.ticks,
+        };
+        for widget in &self.widgets {
+            if widget.visible(self.view)
+                && let Some(area) = areas.get(&widget.id())
+            {
+                widget.render(frame, *area, &context);
+            }
         }
     }
 
-    pub fn handle_event(&mut self, event: Event) -> Result<bool> {
-        match event {
-            Event::Paste(text) if self.focus == Focus::Console && self.command.is_none() => {
-                self.runtime.send_uart(self.active_uart, text.as_bytes());
+    pub const fn should_quit(&self) -> bool {
+        self.quit
+    }
+
+    pub fn shutdown(&self) -> Result<()> {
+        self.runtime.shutdown().map_err(|error| {
+            error!(error = %error, "failed to shut down TUI runtime");
+            CliError::RuntimeSetup
+        })
+    }
+
+    fn process_actions(&mut self) {
+        while let Some(action) = self.actions.pop_front() {
+            debug!(?action, "processing TUI action");
+            self.process_action(action);
+        }
+    }
+
+    fn process_action(&mut self, action: Action) {
+        match action {
+            Action::Quit => {
+                self.suppress_input_resume = true;
+                self.quit = true;
             }
-            Event::Key(key) if key.kind == KeyEventKind::Press => return self.handle_key(key),
+            Action::SelectView(view) => self.select_view(view),
+            Action::ToggleView => self.select_view(self.view.toggled()),
+            Action::Focus(target) => {
+                if self.visible_focus(target) {
+                    self.focused = target;
+                }
+            }
+            Action::SetMode(mode) => self.set_mode(mode),
+            Action::ToggleRun => {
+                self.suppress_input_resume = true;
+                if self.resume_after_input {
+                    self.stop();
+                } else {
+                    match self.runtime.status().lifecycle {
+                        LifecycleState::Running => self.stop(),
+                        LifecycleState::Paused => self.start_emulation(),
+                        state => self.show_message(DialogMessage::error(format!(
+                            "cannot toggle emulation while {state:?}"
+                        ))),
+                    }
+                }
+            }
+            Action::Start => {
+                self.suppress_input_resume = true;
+                self.start_emulation();
+            }
+            Action::Stop => {
+                self.suppress_input_resume = true;
+                self.stop();
+            }
+            Action::Reset => {
+                self.suppress_input_resume = true;
+                if let Err(error) = self.runtime.reset() {
+                    self.runtime_error("reset", error.to_string());
+                } else {
+                    self.show_message(DialogMessage::info("emulator reset requested"));
+                    self.actions.push_back(Action::Refresh(WidgetId::Primary));
+                    self.actions.push_back(Action::Refresh(WidgetId::Secondary));
+                }
+            }
+            Action::SendUart(port, bytes) => self.runtime.send_uart(port, &bytes),
+            Action::RequestInspection { target, request } => {
+                if let Err(error) = self.runtime.request(target, request.clone()) {
+                    self.runtime_error(&format!("{request:?}"), error.to_string());
+                }
+            }
+            Action::WidgetKey { target, key } => {
+                let context = InputContext {
+                    mode: self.input.mode(),
+                };
+                if let Some(widget) = self.widgets.iter_mut().find(|widget| widget.id() == target) {
+                    self.actions.extend(widget.handle_key(key, &context));
+                }
+            }
+            Action::InsertText { target, text } => self.target(target, AppEvent::InsertText(text)),
+            Action::Navigate { target, motion } => {
+                self.target(target, AppEvent::Navigate(motion));
+            }
+            Action::Goto { target, value } => self.target(target, AppEvent::Goto(value)),
+            Action::SetUart(port) => {
+                self.broadcast(AppEvent::UartSelected(port));
+                self.show_message(DialogMessage::info(format!(
+                    "console input set to UART{}",
+                    if port == minemu_runtime::UartPort::Uart0 {
+                        0
+                    } else {
+                        1
+                    }
+                )));
+            }
+            Action::SetPrimary(subview) => self.broadcast(AppEvent::PrimarySelected(subview)),
+            Action::SetSecondary(subview) => {
+                self.broadcast(AppEvent::SecondarySelected(subview));
+            }
+            Action::Refresh(target) => self.target(target, AppEvent::Refresh),
+            Action::ShowMessage(message) => self.show_message(message),
+            Action::ShowHelp => self.show_help(),
+            Action::Resize { split, percent } => self.layout.resize(split, percent),
+        }
+    }
+
+    fn select_view(&mut self, view: View) {
+        if view == View::Inspect {
+            self.suppress_input_resume = true;
+        }
+        if self.view == view {
+            return;
+        }
+        info!(?view, "selecting TUI view");
+        self.view = view;
+        self.focused = match view {
+            View::Runtime => WidgetId::Console,
+            View::Inspect => WidgetId::Primary,
+        };
+        if view == View::Inspect && self.runtime.status().lifecycle == LifecycleState::Running {
+            self.suppress_input_resume = true;
+            self.stop();
+        }
+        self.broadcast(AppEvent::ViewChanged(view));
+    }
+
+    fn set_mode(&mut self, mode: InputMode) {
+        let previous = self.input.mode();
+        if previous == mode {
+            return;
+        }
+        if mode == InputMode::Command
+            && self.runtime.status().lifecycle == LifecycleState::Running
+            && self.runtime.pause().is_ok()
+        {
+            self.resume_after_input = true;
+            self.suppress_input_resume = false;
+        }
+        self.input.set_mode(mode);
+        if previous == InputMode::Command && mode == InputMode::Normal {
+            if self.resume_after_input && !self.suppress_input_resume {
+                self.start_emulation();
+            }
+            self.resume_after_input = false;
+            self.suppress_input_resume = false;
+        }
+    }
+
+    fn start_emulation(&mut self) {
+        if self.runtime.status().lifecycle != LifecycleState::Paused && !self.resume_after_input {
+            self.show_message(DialogMessage::error("emulation is not paused"));
+            return;
+        }
+        if let Err(error) = self.runtime.resume() {
+            self.runtime_error("start", error.to_string());
+        } else {
+            self.show_message(DialogMessage::info("emulation started"));
+        }
+    }
+
+    fn stop(&mut self) {
+        if self.runtime.status().lifecycle != LifecycleState::Running {
+            if self.runtime.status().lifecycle != LifecycleState::Paused {
+                self.show_message(DialogMessage::error("emulation is not running"));
+            }
+            return;
+        }
+        if let Err(error) = self.runtime.pause() {
+            self.runtime_error("stop", error.to_string());
+        } else {
+            self.show_message(DialogMessage::info("emulation stopped"));
+        }
+    }
+
+    fn target(&mut self, target: WidgetId, event: AppEvent) {
+        if let Some(widget) = self.widgets.iter_mut().find(|widget| widget.id() == target) {
+            self.actions.extend(widget.update(&event));
+        }
+    }
+
+    fn broadcast(&mut self, event: AppEvent) {
+        for widget in &mut self.widgets {
+            self.actions.extend(widget.update(&event));
+        }
+    }
+
+    fn show_message(&mut self, message: DialogMessage) {
+        self.target(WidgetId::Dialog, AppEvent::Dialog(message));
+    }
+
+    fn show_help(&mut self) {
+        self.show_message(DialogMessage::info(
+            "commands: :q :? :start :stop :s :reset :view [r|i] :set uart|primary|secondary :goto\nleader: <space> r|i|s   focus: ^c ^e ^d ^p ^s",
+        ));
+    }
+
+    fn runtime_error(&mut self, operation: &str, detail: String) {
+        error!(operation, error = %detail, "recoverable TUI runtime operation failed");
+        self.show_message(DialogMessage::error(format!(
+            "{operation} failed: {detail}"
+        )));
+    }
+
+    fn visible_focus(&self, target: WidgetId) -> bool {
+        matches!(
+            (self.view, target),
+            (
+                View::Runtime,
+                WidgetId::Console | WidgetId::Events | WidgetId::Dialog
+            ) | (
+                View::Inspect,
+                WidgetId::Primary | WidgetId::Secondary | WidgetId::Dialog
+            )
+        )
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left)
+                if mouse.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                let split = match self.view {
+                    View::Runtime => SplitId::RuntimeMain,
+                    View::Inspect => SplitId::InspectMain,
+                };
+                let column = self.layout.split_column(self.terminal_area, self.view);
+                if mouse.column.abs_diff(column) <= 2 {
+                    self.dragging = Some(split);
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.dragging.is_some() => {
+                let relative = mouse.column.saturating_sub(self.terminal_area.x);
+                if let Some(percent) = relative
+                    .saturating_mul(100)
+                    .checked_div(self.terminal_area.width)
+                {
+                    self.actions.push_back(Action::Resize {
+                        split: self.dragging.expect("checked drag split"),
+                        percent,
+                    });
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => self.dragging = None,
             _ => {}
         }
-        Ok(false)
-    }
-
-    fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
-        if self.show_help {
-            debug!(view = ?self.view, focus = ?self.focus, "dismissed TUI help overlay");
-            self.show_help = false;
-            return Ok(false);
-        }
-        if let Some(command) = &mut self.command {
-            match key.code {
-                KeyCode::Esc => {
-                    info!(command = %command, "cancelled TUI command");
-                    self.command = None;
-                    self.resume_after_command()?;
-                }
-                KeyCode::Enter => {
-                    let command = std::mem::take(command);
-                    self.command = None;
-                    return self.execute_command(&command);
-                }
-                KeyCode::Backspace => {
-                    command.pop();
-                }
-                KeyCode::Char(character) => command.push(character),
-                _ => {}
-            }
-            return Ok(false);
-        }
-        if self.focus == Focus::Console {
-            match key.code {
-                KeyCode::Esc => self.focus = Focus::Events,
-                KeyCode::Enter => self.runtime.send_uart(self.active_uart, b"\n"),
-                KeyCode::Backspace => self.runtime.send_uart(self.active_uart, &[8]),
-                KeyCode::Char(character) => {
-                    let mut bytes = [0; 4];
-                    self.runtime.send_uart(
-                        self.active_uart,
-                        character.encode_utf8(&mut bytes).as_bytes(),
-                    );
-                }
-                _ => {}
-            }
-            return Ok(false);
-        }
-        match key.code {
-            KeyCode::Char(':') => self.begin_command()?,
-            KeyCode::Esc => self.motion.reset(),
-            KeyCode::Tab => self.next_focus(),
-            code => {
-                if let Some(motion) = self.motion.push(code) {
-                    self.apply_motion(motion)?;
-                }
-            }
-        }
-        Ok(false)
-    }
-
-    fn execute_command(&mut self, command: &str) -> Result<bool> {
-        info!(
-            command,
-            view = ?self.view,
-            focus = ?self.focus,
-            lifecycle = ?self.status.lifecycle,
-            "executing TUI command"
-        );
-        let mut words = command.split_whitespace();
-        let mut resume_after_command = self.command_paused;
-        match words.next() {
-            Some("pause") => {
-                self.runtime
-                    .pause()
-                    .map_err(|error| self.runtime_error("pause command", error))?;
-                resume_after_command = false;
-            }
-            Some("resume") => {
-                self.runtime
-                    .resume()
-                    .map_err(|error| self.runtime_error("resume command", error))?;
-                resume_after_command = false;
-            }
-            Some("reset") => {
-                self.runtime
-                    .reset()
-                    .map_err(|error| self.runtime_error("reset command", error))?;
-                resume_after_command = false;
-            }
-            Some("quit") | Some("q") => return Ok(true),
-            Some("view") => match words.next() {
-                Some("runtime") => self.view = View::Runtime,
-                Some("inspect") | Some("introspection") => {
-                    self.enter_introspection()?;
-                    resume_after_command = false;
-                }
-                _ => return Err(CliError::Assertion("usage: :view runtime|inspect".into())),
-            },
-            Some("focus") => self.focus = parse_focus(words.next())?,
-            Some("mem") => {
-                let address = parse_address(words.next())?;
-                self.memory_range = PhysicalRange::new(PhysicalAddress::new(address), 256)
-                    .map_err(|_| CliError::Assertion("memory range is invalid".into()))?;
-                self.refresh_introspection()?;
-            }
-            Some("uart") => {
-                self.active_uart = match words.next() {
-                    Some("0") => UartPort::Uart0,
-                    Some("1") => UartPort::Uart1,
-                    _ => return Err(CliError::Assertion("usage: :uart 0|1".into())),
-                };
-            }
-            Some("help") => self.show_help = true,
-            Some(_) | None => return Err(CliError::Assertion("unknown TUI command".into())),
-        }
-        if resume_after_command {
-            debug!("resuming guest after non-lifecycle TUI command");
-            self.runtime
-                .resume()
-                .map_err(|error| self.runtime_error("resume after command", error))?;
-        }
-        self.command_paused = false;
-        self.refresh()?;
-        Ok(false)
-    }
-
-    fn begin_command(&mut self) -> Result<()> {
-        info!(
-            view = ?self.view,
-            focus = ?self.focus,
-            lifecycle = ?self.status.lifecycle,
-            "starting TUI command"
-        );
-        if self.status.lifecycle == LifecycleState::Running {
-            self.pause_and_wait()?;
-            self.command_paused = true;
-        }
-        self.command = Some(String::new());
-        Ok(())
-    }
-
-    fn resume_after_command(&mut self) -> Result<()> {
-        if self.command_paused {
-            debug!("resuming guest after cancelled TUI command");
-            self.runtime
-                .resume()
-                .map_err(|error| self.runtime_error("resume after command cancellation", error))?;
-            self.command_paused = false;
-        }
-        self.refresh()
-    }
-
-    fn enter_introspection(&mut self) -> Result<()> {
-        info!(
-            lifecycle = ?self.status.lifecycle,
-            tick = self.status.machine.ticks,
-            "entering TUI introspection view"
-        );
-        if self.status.lifecycle == LifecycleState::Running {
-            self.pause_and_wait()?;
-        }
-        self.view = View::Introspection;
-        self.focus = Focus::Memory;
-        self.refresh_introspection()
-    }
-
-    fn pause_and_wait(&mut self) -> Result<()> {
-        debug!("requesting guest pause for TUI operation");
-        self.runtime
-            .pause()
-            .map_err(|error| self.runtime_error("pause request", error))?;
-        for _ in 0..500 {
-            if self.runtime.status().lifecycle == LifecycleState::Paused {
-                self.status = self.runtime.status();
-                debug!(
-                    tick = self.status.machine.ticks,
-                    "guest paused for TUI operation"
-                );
-                return Ok(());
-            }
-            thread::sleep(Duration::from_millis(2));
-        }
-        warn!(lifecycle = ?self.runtime.status().lifecycle, "timed out waiting for guest pause");
-        Err(CliError::RuntimeSetup)
-    }
-
-    fn refresh_runtime(&mut self) -> Result<()> {
-        self.status = self.runtime.status();
-        debug!(
-            request = ?InspectionRequest::Peripherals,
-            lifecycle = ?self.status.lifecycle,
-            tick = self.status.machine.ticks,
-            "requesting TUI peripheral snapshot"
-        );
-        if let RuntimeInspection::Peripherals(peripherals) = self
-            .runtime
-            .inspect(InspectionRequest::Peripherals)
-            .map_err(|error| self.runtime_error("peripheral inspection", error))?
-        {
-            self.peripherals = Some(peripherals);
-        }
-        if let RuntimeInspection::Events(events) =
-            self.runtime
-                .inspect(InspectionRequest::Events)
-                .map_err(|error| self.runtime_error("event inspection", error))?
-        {
-            self.events = events;
-        }
-        Ok(())
-    }
-
-    fn refresh_introspection(&mut self) -> Result<()> {
-        self.status = self.runtime.status();
-        if self.status.lifecycle != LifecycleState::Paused {
-            return Ok(());
-        }
-        let memory_request = RuntimeInspectionRequest::LiveMemory(self.memory_range);
-        debug!(
-            request = ?memory_request,
-            tick = self.status.machine.ticks,
-            "requesting TUI live-memory snapshot"
-        );
-        if let RuntimeInspection::LiveMemory(range, bytes) = self
-            .runtime
-            .request_inspection(memory_request)
-            .map_err(|error| self.runtime_error("live-memory inspection request", error))?
-            .recv()
-            .map_err(|error| {
-                self.inspection_receive_error("live-memory inspection response", error)
-            })?
-            .map_err(|error| self.runtime_error("live-memory inspection", error))?
-        {
-            self.memory_range = range;
-            self.memory = bytes;
-        }
-        let execution_request = RuntimeInspectionRequest::Execution {
-            before: 32,
-            after: 96,
-        };
-        debug!(
-            request = ?execution_request,
-            tick = self.status.machine.ticks,
-            "requesting TUI execution snapshot"
-        );
-        if let RuntimeInspection::Execution(execution) = self
-            .runtime
-            .request_inspection(execution_request)
-            .map_err(|error| self.runtime_error("execution inspection request", error))?
-            .recv()
-            .map_err(|error| self.inspection_receive_error("execution inspection response", error))?
-            .map_err(|error| self.runtime_error("execution inspection", error))?
-        {
-            self.execution = Some(execution);
-        }
-        self.refresh_runtime()
-    }
-
-    fn runtime_error(&self, operation: &'static str, source: RuntimeError) -> CliError {
-        error!(
-            operation,
-            view = ?self.view,
-            focus = ?self.focus,
-            lifecycle = ?self.status.lifecycle,
-            tick = self.status.machine.ticks,
-            error = %source,
-            "TUI runtime operation failed"
-        );
-        CliError::RuntimeSetup
-    }
-
-    fn inspection_receive_error(
-        &self,
-        operation: &'static str,
-        source: std::sync::mpsc::RecvError,
-    ) -> CliError {
-        error!(
-            operation,
-            view = ?self.view,
-            lifecycle = ?self.status.lifecycle,
-            tick = self.status.machine.ticks,
-            error = %source,
-            "TUI inspection response channel closed"
-        );
-        CliError::RuntimeSetup
-    }
-
-    fn next_focus(&mut self) {
-        self.focus = match (self.view, self.focus) {
-            (View::Runtime, Focus::Console) => Focus::Events,
-            (View::Runtime, _) => Focus::Console,
-            (View::Introspection, Focus::Memory) => Focus::Disassembly,
-            (View::Introspection, Focus::Disassembly) => Focus::Cpu,
-            (View::Introspection, Focus::Cpu) => Focus::Hardware,
-            (View::Introspection, _) => Focus::Memory,
-        };
-    }
-
-    fn apply_motion(&mut self, motion: Motion) -> Result<()> {
-        match self.focus {
-            Focus::Events => nav_event_offset(&mut self.event_offset, self.events.len(), motion),
-            Focus::Memory => nav_memory_range(&mut self.memory_range, motion)?,
-            Focus::Disassembly => nav_memory_range(&mut self.memory_range, motion)?,
-            Focus::Cpu | Focus::Hardware => {}
-            Focus::Console => unreachable!("console motions are handled before decoding"),
-        }
-        if self.view == View::Introspection {
-            self.refresh_introspection()?;
-        }
-        Ok(())
-    }
-}
-
-fn parse_focus(value: Option<&str>) -> Result<Focus> {
-    match value {
-        Some("console") => Ok(Focus::Console),
-        Some("events") => Ok(Focus::Events),
-        Some("memory") => Ok(Focus::Memory),
-        Some("disasm") | Some("disassembly") => Ok(Focus::Disassembly),
-        Some("cpu") => Ok(Focus::Cpu),
-        Some("hardware") => Ok(Focus::Hardware),
-        _ => Err(CliError::Assertion("unknown focus pane".into())),
-    }
-}
-
-fn parse_address(value: Option<&str>) -> Result<u32> {
-    let value =
-        value.ok_or_else(|| CliError::Assertion("usage: :mem <physical-address>".into()))?;
-    let value = value.strip_prefix("0x").unwrap_or(value);
-    u32::from_str_radix(value, 16)
-        .map_err(|_| CliError::Assertion("invalid physical address".into()))
-}
-
-fn nav_event_offset(offset: &mut usize, length: usize, motion: Motion) {
-    let count = match motion {
-        Motion::Left(count)
-        | Motion::Down(count)
-        | Motion::Up(count)
-        | Motion::Right(count)
-        | Motion::NextItem(count)
-        | Motion::EndItem(count) => count,
-        Motion::Top => {
-            *offset = 0;
-            return;
-        }
-        Motion::Bottom => {
-            *offset = length.saturating_sub(1);
-            return;
-        }
-    };
-    match motion {
-        Motion::Up(_) | Motion::Left(_) => *offset = offset.saturating_sub(count),
-        _ => *offset = (*offset + count).min(length.saturating_sub(1)),
-    }
-}
-
-fn nav_memory_range(range: &mut PhysicalRange, motion: Motion) -> Result<()> {
-    let count = match motion {
-        Motion::Left(count)
-        | Motion::Down(count)
-        | Motion::Up(count)
-        | Motion::Right(count)
-        | Motion::NextItem(count)
-        | Motion::EndItem(count) => count as u32,
-        Motion::Top => {
-            *range = PhysicalRange::new(MemRegion::Ram.base(), range.length())
-                .map_err(|_| CliError::RuntimeSetup)?;
-            return Ok(());
-        }
-        Motion::Bottom => {
-            let start = MemRegion::Ram.base().get() + MemRegion::Ram.size() - range.length();
-            *range = PhysicalRange::new(PhysicalAddress::new(start), range.length())
-                .map_err(|_| CliError::RuntimeSetup)?;
-            return Ok(());
-        }
-    };
-    let step: u32 = match motion {
-        Motion::Left(_) | Motion::Right(_) => 1,
-        Motion::Up(_) | Motion::Down(_) => 16,
-        Motion::NextItem(_) | Motion::EndItem(_) => 4,
-        Motion::Top | Motion::Bottom => unreachable!(),
-    };
-    let min = MemRegion::Ram.base().get();
-    let max = min + MemRegion::Ram.size() - range.length();
-    let current = range.start().get();
-    let address = match motion {
-        Motion::Left(_) | Motion::Up(_) => {
-            current.saturating_sub(step.saturating_mul(count)).max(min)
-        }
-        Motion::EndItem(_) => (current / 4).saturating_mul(4).saturating_add(3).min(max),
-        _ => current.saturating_add(step.saturating_mul(count)).min(max),
-    };
-    *range = PhysicalRange::new(PhysicalAddress::new(address), range.length())
-        .map_err(|_| CliError::RuntimeSetup)?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use minemu_platform::{MemRegion, PhysicalRange};
-
-    use super::{Focus, Motion, nav_event_offset, nav_memory_range, parse_address, parse_focus};
-
-    #[test]
-    fn parses_tui_command_arguments() {
-        assert_eq!(parse_focus(Some("disasm")).unwrap(), Focus::Disassembly);
-        assert_eq!(parse_address(Some("0x40000010")).unwrap(), 0x4000_0010);
-        assert!(parse_focus(Some("unknown")).is_err());
-        assert!(parse_address(Some("not-an-address")).is_err());
-    }
-
-    #[test]
-    fn applies_pane_local_navigation() {
-        let mut range = PhysicalRange::new(MemRegion::Ram.base(), 32).unwrap();
-        nav_memory_range(&mut range, Motion::Down(2)).unwrap();
-        assert_eq!(range.start().get(), MemRegion::Ram.base().get() + 32);
-        nav_memory_range(&mut range, Motion::NextItem(3)).unwrap();
-        assert_eq!(range.start().get(), MemRegion::Ram.base().get() + 44);
-
-        let mut event_offset = 2;
-        nav_event_offset(&mut event_offset, 10, Motion::Top);
-        assert_eq!(event_offset, 0);
-        nav_event_offset(&mut event_offset, 10, Motion::Bottom);
-        assert_eq!(event_offset, 9);
     }
 }

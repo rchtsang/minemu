@@ -1,6 +1,5 @@
 use crossterm::event::KeyCode;
 
-/// Motions shared by all non-console panes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Motion {
     Left(usize),
@@ -13,7 +12,13 @@ pub enum Motion {
     Bottom,
 }
 
-/// Count-aware parser for the supported Vim motion subset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecodeResult {
+    Pending,
+    Motion(Motion),
+    Unhandled,
+}
+
 #[derive(Default)]
 pub struct MotionDecoder {
     count: Option<usize>,
@@ -21,7 +26,7 @@ pub struct MotionDecoder {
 }
 
 impl MotionDecoder {
-    pub fn push(&mut self, code: KeyCode) -> Option<Motion> {
+    pub fn push(&mut self, code: KeyCode) -> DecodeResult {
         match code {
             KeyCode::Char(digit @ '1'..='9') => {
                 self.count = Some(
@@ -30,27 +35,27 @@ impl MotionDecoder {
                         .saturating_mul(10)
                         .saturating_add(digit as usize - '0' as usize),
                 );
-                None
+                DecodeResult::Pending
             }
             KeyCode::Char('0') if self.count.is_some() => {
                 self.count = Some(self.count.unwrap_or(0).saturating_mul(10));
-                None
+                DecodeResult::Pending
             }
             KeyCode::Char('g') if self.pending_g => {
                 self.reset();
-                Some(Motion::Top)
+                DecodeResult::Motion(Motion::Top)
             }
             KeyCode::Char('g') => {
                 self.pending_g = true;
-                None
+                DecodeResult::Pending
             }
             KeyCode::Char('G') => {
                 self.reset();
-                Some(Motion::Bottom)
+                DecodeResult::Motion(Motion::Bottom)
             }
             KeyCode::Char(key) => {
                 let count = self.take_count();
-                match key {
+                let motion = match key {
                     'h' => Some(Motion::Left(count)),
                     'j' => Some(Motion::Down(count)),
                     'k' => Some(Motion::Up(count)),
@@ -58,11 +63,12 @@ impl MotionDecoder {
                     'w' => Some(Motion::NextItem(count)),
                     'e' => Some(Motion::EndItem(count)),
                     _ => None,
-                }
+                };
+                motion.map_or(DecodeResult::Unhandled, DecodeResult::Motion)
             }
             _ => {
                 self.reset();
-                None
+                DecodeResult::Unhandled
             }
         }
     }
@@ -83,16 +89,21 @@ impl MotionDecoder {
 mod tests {
     use crossterm::event::KeyCode;
 
-    use super::{Motion, MotionDecoder};
+    use super::{DecodeResult, Motion, MotionDecoder};
 
     #[test]
     fn parses_counts_and_double_g() {
         let mut decoder = MotionDecoder::default();
-        assert_eq!(decoder.push(KeyCode::Char('1')), None);
-        assert_eq!(decoder.push(KeyCode::Char('2')), None);
-        assert_eq!(decoder.push(KeyCode::Char('j')), Some(Motion::Down(12)));
-        assert_eq!(decoder.push(KeyCode::Char('g')), None);
-        assert_eq!(decoder.push(KeyCode::Char('g')), Some(Motion::Top));
-        assert_eq!(decoder.push(KeyCode::Char('G')), Some(Motion::Bottom));
+        assert_eq!(decoder.push(KeyCode::Char('1')), DecodeResult::Pending);
+        assert_eq!(decoder.push(KeyCode::Char('2')), DecodeResult::Pending);
+        assert_eq!(
+            decoder.push(KeyCode::Char('j')),
+            DecodeResult::Motion(Motion::Down(12))
+        );
+        assert_eq!(decoder.push(KeyCode::Char('g')), DecodeResult::Pending);
+        assert_eq!(
+            decoder.push(KeyCode::Char('g')),
+            DecodeResult::Motion(Motion::Top)
+        );
     }
 }

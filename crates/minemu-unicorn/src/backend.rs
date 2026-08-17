@@ -14,6 +14,8 @@ use unicorn_engine::{
 
 use crate::arm::{self, PendingCp15};
 
+const MEMORY_SEARCH_CHUNK_SIZE: usize = 1024 * 1024;
+
 /// An explicit reason why a bounded backend run stopped.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BackendStop {
@@ -57,6 +59,10 @@ pub enum BackendError {
     Unicorn(uc_error),
     #[error("inspection byte range is too large")]
     InspectionRange,
+    #[error("memory search pattern is empty")]
+    EmptySearchPattern,
+    #[error("memory search pattern exceeds the {maximum}-byte limit: {length} bytes")]
+    SearchPatternTooLarge { length: usize, maximum: usize },
 }
 
 type Result<T> = std::result::Result<T, BackendError>;
@@ -281,9 +287,64 @@ impl UnicornBackend {
         self.read_physical_memory(range.start(), range.length() as usize)
     }
 
+    /// Searches the authoritative physical RAM mapping in bounded, overlapping chunks.
+    pub fn search_memory(&self, pattern: &[u8]) -> Result<Option<PhysicalAddress>> {
+        if pattern.is_empty() {
+            warn!("cannot search Unicorn RAM for an empty pattern");
+            return Err(BackendError::EmptySearchPattern);
+        }
+        if pattern.len() > MEMORY_SEARCH_CHUNK_SIZE {
+            warn!(
+                pattern_length = pattern.len(),
+                maximum = MEMORY_SEARCH_CHUNK_SIZE,
+                "Unicorn RAM search pattern is too large"
+            );
+            return Err(BackendError::SearchPatternTooLarge {
+                length: pattern.len(),
+                maximum: MEMORY_SEARCH_CHUNK_SIZE,
+            });
+        }
+
+        let ram = MemRegion::Ram.range();
+        let ram_length = ram.length() as usize;
+        let overlap = pattern.len() - 1;
+        debug!(
+            physical_address = ram.start().get(),
+            length = ram.length(),
+            pattern_length = pattern.len(),
+            chunk_size = MEMORY_SEARCH_CHUNK_SIZE,
+            "searching authoritative Unicorn RAM"
+        );
+
+        for offset in (0..ram_length).step_by(MEMORY_SEARCH_CHUNK_SIZE) {
+            let length = (MEMORY_SEARCH_CHUNK_SIZE + overlap).min(ram_length - offset);
+            let address = PhysicalAddress::new(ram.start().get() + offset as u32);
+            let bytes = self.read_physical_memory(address, length)?;
+            if let Some(index) = bytes
+                .windows(pattern.len())
+                .position(|window| window == pattern)
+            {
+                let address = PhysicalAddress::new(address.get() + index as u32);
+                debug!(
+                    physical_address = address.get(),
+                    pattern_length = pattern.len(),
+                    "found byte pattern in Unicorn RAM"
+                );
+                return Ok(Some(address));
+            }
+        }
+
+        debug!(
+            pattern_length = pattern.len(),
+            "byte pattern was not found in Unicorn RAM"
+        );
+        Ok(None)
+    }
+
     /// Captures CPU state and virtual instruction bytes at one execution boundary.
     pub fn inspect_execution(
         &mut self,
+        address: Option<VirtualAddress>,
         before: usize,
         after: usize,
     ) -> Result<ExecutionInspection> {
@@ -291,7 +352,10 @@ impl UnicornBackend {
             warn!(before, after, error = %error, "Unicorn CPU inspection failed");
             error
         })?;
-        let start = cpu.registers[15].saturating_sub(before as u32);
+        let start = address
+            .map(VirtualAddress::get)
+            .unwrap_or(cpu.registers[15])
+            .saturating_sub(before as u32);
         let Some(length) = before.checked_add(after) else {
             warn!(
                 pc = cpu.registers[15],
@@ -705,7 +769,7 @@ mod tests {
     };
     use unicorn_engine::RegisterARM;
 
-    use super::{BackendStop, UnicornBackend};
+    use super::{BackendError, BackendStop, MEMORY_SEARCH_CHUNK_SIZE, UnicornBackend};
 
     #[test]
     fn cortex_a9_executes_one_a32_instruction() {
@@ -742,9 +806,48 @@ mod tests {
                 .unwrap(),
             instruction
         );
-        let execution = backend.inspect_execution(0, 4).unwrap();
+        let execution = backend.inspect_execution(None, 0, 4).unwrap();
         assert_eq!(execution.instruction_address.get(), start);
         assert_eq!(execution.instruction_bytes, instruction);
+    }
+
+    #[test]
+    fn memory_search_finds_a_match_crossing_a_chunk_boundary() {
+        let mut machine = Machine::default();
+        let pattern = [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe];
+        let address = MemRegion::Ram.base().get() + MEMORY_SEARCH_CHUNK_SIZE as u32 - 3;
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(address), &pattern)
+            .unwrap();
+        let backend = UnicornBackend::new(machine).unwrap();
+
+        assert_eq!(
+            backend.search_memory(&pattern).unwrap(),
+            Some(PhysicalAddress::new(address))
+        );
+    }
+
+    #[test]
+    fn memory_search_reports_no_match() {
+        let backend = UnicornBackend::new(Machine::default()).unwrap();
+
+        assert_eq!(
+            backend
+                .search_memory(&[0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe])
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn memory_search_rejects_an_empty_pattern() {
+        let backend = UnicornBackend::new(Machine::default()).unwrap();
+
+        assert!(matches!(
+            backend.search_memory(&[]),
+            Err(BackendError::EmptySearchPattern)
+        ));
     }
 
     #[test]
@@ -775,7 +878,7 @@ mod tests {
         assert_eq!(backend.machine().mmu.last_fault(), None);
         assert_eq!(
             backend
-                .inspect_execution(0, 4)
+                .inspect_execution(None, 0, 4)
                 .unwrap()
                 .instruction_address
                 .get(),
@@ -790,7 +893,7 @@ mod tests {
         let mut backend = UnicornBackend::new(machine).unwrap();
         backend.set_program_counter(0x2000).unwrap();
 
-        let inspection = backend.inspect_execution(0, 4).unwrap();
+        let inspection = backend.inspect_execution(None, 0, 4).unwrap();
         assert_eq!(inspection.registers[15], 0x2000);
         assert!(inspection.instruction_bytes.is_empty());
         assert!(inspection.instruction_error.is_some());

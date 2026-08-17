@@ -1,6 +1,7 @@
 use std::io::{self, Stdout};
 
 use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -16,14 +17,14 @@ impl TerminalSession {
     pub fn new() -> io::Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen) {
+        if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
             let _ = disable_raw_mode();
             return Err(error);
         }
         let terminal = match Terminal::new(CrosstermBackend::new(stdout)) {
             Ok(terminal) => terminal,
             Err(error) => {
-                let _ = execute!(io::stdout(), LeaveAlternateScreen);
+                let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
                 let _ = disable_raw_mode();
                 return Err(error);
             }
@@ -44,7 +45,11 @@ impl TerminalSession {
         }
         self.restored = true;
         let raw_mode = disable_raw_mode();
-        let alternate_screen = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let alternate_screen = execute!(
+            self.terminal.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
         let cursor = self.terminal.show_cursor();
         raw_mode.and(alternate_screen).and(cursor)
     }

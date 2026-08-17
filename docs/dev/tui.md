@@ -1,88 +1,104 @@
 # TUI
 
-`minemu run IMAGE` starts the terminal UI. Use `--headless --ticks N` for a
-bounded, noninteractive run suitable for scripts and CI.
+`minemu run IMAGE` starts the terminal UI. Use `--headless --ticks N` for
+bounded automation. The TUI owns raw mode, mouse capture, and the alternate
+screen and restores them on normal exit, errors, and panic unwinding.
 
-The TUI is an observability console, not a source-level debugger. The TUI
-thread owns Crossterm raw mode and the alternate screen; it communicates with
-the emulator only through `minemu-runtime` commands and immutable snapshots.
-Terminal state is restored on normal exit, errors, and panic unwinding.
+The internal controller/widget design is documented in
+`tui-architecture.md`; `tui-design.md` is the visual interaction reference.
 
 ## Views
 
-The initial **runtime** view prioritizes guest UART output and event history.
-The console is the initial focus and ordinary key presses and pasted text are
-queued to the selected UART. `Enter` and `Backspace` send their corresponding
-guest input bytes. Press `Esc` to leave console focus.
+The **runtime** view contains console, events, and dialog panes. The console is
+focused initially in normal mode. Press `i` to enter insert mode and forward
+ordinary keys, Enter, Backspace, and pasted text to the selected UART. `Esc`
+returns to normal mode.
 
-Use `:view inspect` to enter **introspection**. Entering it pauses a running
-guest before requesting its snapshot. It presents live Unicorn-backed physical
-RAM as hex/ASCII, A32 Capstone disassembly from the current PC, CPU registers,
-and interrupt/peripheral state. It is intentionally a paused inspection view:
-the runtime does not maintain a continuously copied 64 MiB RAM image. Use
-`:view runtime` to return; use `:resume` when execution should continue.
+The **inspect** view contains one selected primary subview, one selected
+secondary subview, and the dialog. Entering inspect pauses emulation before
+requesting live Unicorn-backed snapshots.
 
-At small terminal sizes, the active inspection pane is shown alone instead of
-compressing all panes into unusable columns.
+- Primary: memory or A32 disassembly.
+- Secondary: registers, peripherals, or pending fault/interrupt state.
+- Pending combines MMU last-fault state with interrupt pending, enabled, and
+  claimed state.
 
-The header presents `runtime` and `inspect` tabs, with the active view
-highlighted. Pane borders and titles are yellow; the focused pane uses a bold
-yellow outline and title. Entering `:` temporarily pauses a running guest while
-the command prompt is active. Cancelling the prompt or running a non-lifecycle
-command resumes that guest; `:pause`, `:reset`, and `:view inspect` leave it
-paused.
+Instruction-read failures do not close the TUI. Registers and other snapshots
+remain visible while the disassembly pane reports the original error.
+
+## Input Modes
+
+The persistent input bar displays the current input grammar:
+
+- Normal: pane navigation and global bindings.
+- Insert: focused-widget text input; currently supported by console.
+- Command: `:` command text.
+- Leader: Space followed by one command key.
+- ASCII search: `/pattern`.
+- Byte search: `\de ad be ef` using whitespace-separated hexadecimal pairs.
+- Goto: `>location` using pane-specific syntax.
+
+The hints bar changes with mode and focused pane. It also displays virtual ticks
+in hexadecimal.
 
 ## Controls
 
-While console focus is active, guest input takes precedence. After `Esc`, the
-following controls work in both views:
-
 | Input | Effect |
 |---|---|
-| `Tab` | Cycle panes in the current view. |
-| `h` `j` `k` `l` | Move by pane-local character, row, or byte/line units. |
-| `w` `e` | Advance by pane-local natural items: memory words, instructions, or rows. |
-| `gg` / `G` | Move to the first / last position in the focused pane. |
-| Count prefix | Applies a decimal count, for example `12j` or `4w`. |
-| `:` | Open a command prompt. |
-| `Esc` | Cancel a partial motion or command. |
+| Ctrl+C / Ctrl+E / Ctrl+D | Focus console, events, or dialog. |
+| Ctrl+P / Ctrl+S | Focus inspect primary or secondary. |
+| Space+r / Space+i | Select runtime or inspect. |
+| Space+s | Toggle emulation start/stop. |
+| `[#]h/j/k/l`, `w`, `e`, `gg`, `G` | Count-aware pane-local navigation. |
+| `Tab` | Switch the focused inspect pane's subview. |
+| `?` | Write help to the dialog. |
+| Ctrl+left-drag | Resize the main horizontal split. |
 
-The supported commands are:
+Memory and disassembly goto accept hexadecimal addresses, optionally prefixed
+with `0x`. Register goto accepts `pc`, `lr`, `sp`, `r0` through `r12`, `cpsr`,
+or `spsr`. ASCII and byte searches scan all physical RAM on the emulator thread
+in bounded overlapping chunks and move the memory window to a match.
+
+## Commands
 
 | Command | Effect |
 |---|---|
-| `:pause`, `:resume`, `:reset` | Control emulator lifecycle. |
-| `:quit` or `:q` | Shut down the runtime and exit. |
-| `:view runtime` / `:view inspect` | Change view. |
-| `:focus console|events|memory|disasm|cpu|hardware` | Select a pane. |
-| `:mem ADDRESS` | Inspect a 256-byte physical RAM window, with a hexadecimal address. |
-| `:uart 0` or `:uart 1` | Select the console input UART. |
-| `:help` | Display the command overlay. |
+| `:q`, `:quit` | Shut down and exit. |
+| `:?`, `:help` | Write help to dialog. |
+| `:start`, `:stop`, `:s` | Start, stop, or toggle emulation. |
+| `:reset` | Request an emulated power cycle. |
+| `:v`, `:view` | Toggle views. |
+| `:view r`, `:view runtime` | Select runtime. |
+| `:view i`, `:view inspect` | Select inspect and pause. |
+| `:set uart 0|1` | Select console UART. |
+| `:set primary mem|disasm` | Select primary inspect subview. |
+| `:set secondary reg|peri|pend` | Select secondary inspect subview. |
+| `:g LOCATION`, `:goto LOCATION` | Apply pane-specific goto. |
 
-## Snapshot Boundaries
+Opening the command bar temporarily pauses a running guest. Cancelling or
+executing a non-lifecycle command resumes it. Stop, reset, and selecting inspect
+leave it paused. Parse and runtime-operation failures are retained as bounded
+red messages in dialog rather than closing the terminal UI.
 
-Status, events, and platform peripherals are copied into immutable runtime
-responses. Live memory and current instruction bytes are read on the emulator
-thread only after the guest is paused, directly from Unicorn. This keeps
-inspection accurate after guest stores without making every rendered frame copy
-the complete RAM mapping.
+## Snapshots
+
+Widgets never access `RuntimeHandle` or Unicorn. They emit actions containing
+targeted `RuntimeInspectionRequest` values. The TUI runtime controller owns
+nonblocking response receivers and routes immutable results to the requesting
+widget.
+
+Runtime console and event snapshots update periodically. Paused inspection
+snapshots update on inspect entry, navigation, search/goto, subview changes,
+reset, and explicit refresh actions. The TUI never continuously copies all
+64 MiB of RAM.
 
 ## Diagnostic Log
 
-Use `--log-file` to keep structured diagnostics out of the TUI terminal. The
-file is appended to and `RUST_LOG` selects verbosity; the default filter is
-`warn`.
+Use `--log-file` to keep structured diagnostics out of the alternate screen.
+The file is appended to; `RUST_LOG` selects verbosity and defaults to `warn`.
 
 ```sh
 RUST_LOG=minemu=debug,minemu_runtime=debug,minemu_unicorn=trace \
 cargo run -p minemu -- --log-file /tmp/minemu.log run \
   minimum-template/system/build/minimum.img
 ```
-
-For a failed `:view inspect`, inspect `/tmp/minemu.log` for the TUI request,
-runtime inspection result, lifecycle, tick, PC, CPSR, requested virtual range,
-and the exact Unicorn error.
-
-If Unicorn cannot read instruction bytes at the paused PC, the TUI retains the
-CPU and peripheral snapshots and reports the error in the disassembly pane
-instead of exiting.

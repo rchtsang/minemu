@@ -270,10 +270,10 @@ impl Emulator {
         self.backend.machine_mut().status()
     }
 
-    fn inspect(&mut self, request: RuntimeInspectionRequest) -> Result<RuntimeInspection> {
+    fn inspect(&mut self, request: &RuntimeInspectionRequest) -> Result<RuntimeInspection> {
         match request {
             RuntimeInspectionRequest::Machine(request) => {
-                Ok(match self.backend.machine_mut().inspect(request)? {
+                Ok(match self.backend.machine_mut().inspect(*request)? {
                     InspectionResponse::Memory(bytes) => RuntimeInspection::Memory(bytes.to_vec()),
                     InspectionResponse::Mmu(mmu) => RuntimeInspection::Mmu(mmu),
                     InspectionResponse::Peripherals(peripherals) => {
@@ -283,11 +283,18 @@ impl Emulator {
                 })
             }
             RuntimeInspectionRequest::LiveMemory(range) => Ok(RuntimeInspection::LiveMemory(
-                range,
-                self.backend.inspect_live_memory(range)?,
+                *range,
+                self.backend.inspect_live_memory(*range)?,
             )),
-            RuntimeInspectionRequest::Execution { before, after } => Ok(
-                RuntimeInspection::Execution(self.backend.inspect_execution(before, after)?),
+            RuntimeInspectionRequest::Execution {
+                address,
+                before,
+                after,
+            } => Ok(RuntimeInspection::Execution(
+                self.backend.inspect_execution(*address, *before, *after)?,
+            )),
+            RuntimeInspectionRequest::SearchMemory { pattern } => Ok(
+                RuntimeInspection::SearchMemory(self.backend.search_memory(pattern)?),
             ),
         }
     }
@@ -497,7 +504,7 @@ impl Service {
                     tick,
                     "processing runtime inspection request"
                 );
-                let result = emulator.inspect(request);
+                let result = emulator.inspect(&request);
                 match &result {
                     Ok(_) => {
                         debug!(request = ?request, lifecycle = ?*lifecycle, tick, "completed runtime inspection request")

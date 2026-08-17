@@ -8,3 +8,4 @@ minemu-platform = { path = "../minemu-platform" }
 minemu-core = { path = "../minemu-core" }
 unicorn-engine = "2.1.5"
 thiserror = "2"
+tracing = "0.1.44"

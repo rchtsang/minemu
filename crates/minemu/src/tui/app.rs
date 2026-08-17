@@ -3,9 +3,10 @@ use std::{path::PathBuf, thread, time::Duration};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use minemu_platform::{InspectionRequest, MemRegion, PhysicalAddress, PhysicalRange};
 use minemu_runtime::{
-    ExecutionInspection, LifecycleState, RuntimeHandle, RuntimeInspection,
+    ExecutionInspection, LifecycleState, RuntimeError, RuntimeHandle, RuntimeInspection,
     RuntimeInspectionRequest, RuntimeStatus, UartPort,
 };
+use tracing::{debug, error, info, warn};
 
 use crate::{CliError, Result, runner::start_runtime};
 
@@ -93,12 +94,14 @@ impl App {
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         if self.show_help {
+            debug!(view = ?self.view, focus = ?self.focus, "dismissed TUI help overlay");
             self.show_help = false;
             return Ok(false);
         }
         if let Some(command) = &mut self.command {
             match key.code {
                 KeyCode::Esc => {
+                    info!(command = %command, "cancelled TUI command");
                     self.command = None;
                     self.resume_after_command()?;
                 }
@@ -145,19 +148,32 @@ impl App {
     }
 
     fn execute_command(&mut self, command: &str) -> Result<bool> {
+        info!(
+            command,
+            view = ?self.view,
+            focus = ?self.focus,
+            lifecycle = ?self.status.lifecycle,
+            "executing TUI command"
+        );
         let mut words = command.split_whitespace();
         let mut resume_after_command = self.command_paused;
         match words.next() {
             Some("pause") => {
-                self.runtime.pause().map_err(|_| CliError::RuntimeSetup)?;
+                self.runtime
+                    .pause()
+                    .map_err(|error| self.runtime_error("pause command", error))?;
                 resume_after_command = false;
             }
             Some("resume") => {
-                self.runtime.resume().map_err(|_| CliError::RuntimeSetup)?;
+                self.runtime
+                    .resume()
+                    .map_err(|error| self.runtime_error("resume command", error))?;
                 resume_after_command = false;
             }
             Some("reset") => {
-                self.runtime.reset().map_err(|_| CliError::RuntimeSetup)?;
+                self.runtime
+                    .reset()
+                    .map_err(|error| self.runtime_error("reset command", error))?;
                 resume_after_command = false;
             }
             Some("quit") | Some("q") => return Ok(true),
@@ -187,7 +203,10 @@ impl App {
             Some(_) | None => return Err(CliError::Assertion("unknown TUI command".into())),
         }
         if resume_after_command {
-            self.runtime.resume().map_err(|_| CliError::RuntimeSetup)?;
+            debug!("resuming guest after non-lifecycle TUI command");
+            self.runtime
+                .resume()
+                .map_err(|error| self.runtime_error("resume after command", error))?;
         }
         self.command_paused = false;
         self.refresh()?;
@@ -195,6 +214,12 @@ impl App {
     }
 
     fn begin_command(&mut self) -> Result<()> {
+        info!(
+            view = ?self.view,
+            focus = ?self.focus,
+            lifecycle = ?self.status.lifecycle,
+            "starting TUI command"
+        );
         if self.status.lifecycle == LifecycleState::Running {
             self.pause_and_wait()?;
             self.command_paused = true;
@@ -205,13 +230,21 @@ impl App {
 
     fn resume_after_command(&mut self) -> Result<()> {
         if self.command_paused {
-            self.runtime.resume().map_err(|_| CliError::RuntimeSetup)?;
+            debug!("resuming guest after cancelled TUI command");
+            self.runtime
+                .resume()
+                .map_err(|error| self.runtime_error("resume after command cancellation", error))?;
             self.command_paused = false;
         }
         self.refresh()
     }
 
     fn enter_introspection(&mut self) -> Result<()> {
+        info!(
+            lifecycle = ?self.status.lifecycle,
+            tick = self.status.machine.ticks,
+            "entering TUI introspection view"
+        );
         if self.status.lifecycle == LifecycleState::Running {
             self.pause_and_wait()?;
         }
@@ -221,30 +254,44 @@ impl App {
     }
 
     fn pause_and_wait(&mut self) -> Result<()> {
-        self.runtime.pause().map_err(|_| CliError::RuntimeSetup)?;
+        debug!("requesting guest pause for TUI operation");
+        self.runtime
+            .pause()
+            .map_err(|error| self.runtime_error("pause request", error))?;
         for _ in 0..500 {
             if self.runtime.status().lifecycle == LifecycleState::Paused {
                 self.status = self.runtime.status();
+                debug!(
+                    tick = self.status.machine.ticks,
+                    "guest paused for TUI operation"
+                );
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(2));
         }
+        warn!(lifecycle = ?self.runtime.status().lifecycle, "timed out waiting for guest pause");
         Err(CliError::RuntimeSetup)
     }
 
     fn refresh_runtime(&mut self) -> Result<()> {
         self.status = self.runtime.status();
+        debug!(
+            request = ?InspectionRequest::Peripherals,
+            lifecycle = ?self.status.lifecycle,
+            tick = self.status.machine.ticks,
+            "requesting TUI peripheral snapshot"
+        );
         if let RuntimeInspection::Peripherals(peripherals) = self
             .runtime
             .inspect(InspectionRequest::Peripherals)
-            .map_err(|_| CliError::RuntimeSetup)?
+            .map_err(|error| self.runtime_error("peripheral inspection", error))?
         {
             self.peripherals = Some(peripherals);
         }
-        if let RuntimeInspection::Events(events) = self
-            .runtime
-            .inspect(InspectionRequest::Events)
-            .map_err(|_| CliError::RuntimeSetup)?
+        if let RuntimeInspection::Events(events) =
+            self.runtime
+                .inspect(InspectionRequest::Events)
+                .map_err(|error| self.runtime_error("event inspection", error))?
         {
             self.events = events;
         }
@@ -256,31 +303,74 @@ impl App {
         if self.status.lifecycle != LifecycleState::Paused {
             return Ok(());
         }
+        let memory_request = RuntimeInspectionRequest::LiveMemory(self.memory_range);
+        debug!(
+            request = ?memory_request,
+            tick = self.status.machine.ticks,
+            "requesting TUI live-memory snapshot"
+        );
         if let RuntimeInspection::LiveMemory(range, bytes) = self
             .runtime
-            .request_inspection(RuntimeInspectionRequest::LiveMemory(self.memory_range))
-            .map_err(|_| CliError::RuntimeSetup)?
+            .request_inspection(memory_request)
+            .map_err(|error| self.runtime_error("live-memory inspection request", error))?
             .recv()
-            .map_err(|_| CliError::RuntimeSetup)?
-            .map_err(|_| CliError::RuntimeSetup)?
+            .map_err(|error| {
+                self.inspection_receive_error("live-memory inspection response", error)
+            })?
+            .map_err(|error| self.runtime_error("live-memory inspection", error))?
         {
             self.memory_range = range;
             self.memory = bytes;
         }
+        let execution_request = RuntimeInspectionRequest::Execution {
+            before: 32,
+            after: 96,
+        };
+        debug!(
+            request = ?execution_request,
+            tick = self.status.machine.ticks,
+            "requesting TUI execution snapshot"
+        );
         if let RuntimeInspection::Execution(execution) = self
             .runtime
-            .request_inspection(RuntimeInspectionRequest::Execution {
-                before: 32,
-                after: 96,
-            })
-            .map_err(|_| CliError::RuntimeSetup)?
+            .request_inspection(execution_request)
+            .map_err(|error| self.runtime_error("execution inspection request", error))?
             .recv()
-            .map_err(|_| CliError::RuntimeSetup)?
-            .map_err(|_| CliError::RuntimeSetup)?
+            .map_err(|error| self.inspection_receive_error("execution inspection response", error))?
+            .map_err(|error| self.runtime_error("execution inspection", error))?
         {
             self.execution = Some(execution);
         }
         self.refresh_runtime()
+    }
+
+    fn runtime_error(&self, operation: &'static str, source: RuntimeError) -> CliError {
+        error!(
+            operation,
+            view = ?self.view,
+            focus = ?self.focus,
+            lifecycle = ?self.status.lifecycle,
+            tick = self.status.machine.ticks,
+            error = %source,
+            "TUI runtime operation failed"
+        );
+        CliError::RuntimeSetup
+    }
+
+    fn inspection_receive_error(
+        &self,
+        operation: &'static str,
+        source: std::sync::mpsc::RecvError,
+    ) -> CliError {
+        error!(
+            operation,
+            view = ?self.view,
+            lifecycle = ?self.status.lifecycle,
+            tick = self.status.machine.ticks,
+            error = %source,
+            "TUI inspection response channel closed"
+        );
+        CliError::RuntimeSetup
     }
 
     fn next_focus(&mut self) {

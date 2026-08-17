@@ -29,6 +29,14 @@ pub enum CliError {
     },
     #[error("terminal operation failed: {0}")]
     Terminal(#[from] std::io::Error),
+    #[error("failed to open tracing output {path}: {source}")]
+    LogFile {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to initialize tracing: {0}")]
+    Tracing(String),
     #[error("invalid manifest {path}: {source}")]
     Manifest {
         path: std::path::PathBuf,

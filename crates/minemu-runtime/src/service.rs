@@ -12,6 +12,7 @@ use std::{
 use minemu_core::{BlockUpdate, MachineStatus, PhysicalMemoryAccess, UartUpdate};
 use minemu_platform::{InspectionRequest, InspectionResponse, Peripheral};
 use minemu_unicorn::{BackendStop, UnicornBackend};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection, RuntimeInspectionRequest,
@@ -50,6 +51,11 @@ impl RuntimeHandle {
         let service_status = Arc::clone(&status);
         let service_uart = Arc::clone(&uart);
         config.instruction_batch = config.instruction_batch.max(1);
+        info!(
+            entry = format_args!("{:#010x}", config.entry),
+            instruction_batch = config.instruction_batch,
+            "spawning emulator runtime"
+        );
         let thread = thread::Builder::new()
             .name("minemu-emulator".into())
             .spawn(move || {
@@ -73,17 +79,21 @@ impl RuntimeHandle {
     }
 
     pub fn pause(&self) -> Result<()> {
+        debug!("enqueueing runtime pause command");
         self.send(Command::Pause)
     }
     pub fn resume(&self) -> Result<()> {
+        debug!("enqueueing runtime resume command");
         self.send(Command::Resume)
     }
     pub fn reset(&self) -> Result<()> {
+        debug!("enqueueing runtime reset command");
         self.send(Command::Reset)
     }
 
     /// Queues shutdown and waits for the emulator thread to stop.
     pub fn shutdown(&self) -> Result<()> {
+        info!("enqueueing runtime shutdown command");
         let _ = self.send(Command::Shutdown);
         if let Some(thread) = self
             .thread
@@ -109,6 +119,13 @@ impl RuntimeHandle {
         &self,
         request: RuntimeInspectionRequest,
     ) -> Result<Receiver<InspectionResult>> {
+        let status = self.status();
+        debug!(
+            request = ?request,
+            lifecycle = ?status.lifecycle,
+            tick = status.machine.ticks,
+            "enqueueing runtime inspection request"
+        );
         let (sender, receiver) = mpsc::sync_channel(1);
         self.send(Command::Inspect(request, sender))?;
         Ok(receiver)
@@ -319,12 +336,18 @@ impl Service {
         let mut emulator = match Emulator::new(&self.config) {
             Ok(emulator) => emulator,
             Err(error) => {
+                error!(error = %error, "failed to initialize emulator runtime");
                 self.publish(LifecycleState::Failed, None, Some(error.to_string()), None);
                 return;
             }
         };
         let mut lifecycle = LifecycleState::Running;
         let mut last_publish = Instant::now();
+        info!(
+            lifecycle = ?lifecycle,
+            tick = emulator.backend.machine().ticks(),
+            "emulator runtime started"
+        );
         self.publish(lifecycle, None, None, Some(&mut emulator));
         loop {
             if !self.process_commands(&mut emulator, &mut lifecycle) {
@@ -416,6 +439,12 @@ impl Service {
     ) -> bool {
         match command {
             Command::Pause if *lifecycle == LifecycleState::Running => {
+                info!(
+                    from = ?*lifecycle,
+                    to = ?LifecycleState::Paused,
+                    tick = emulator.backend.machine().ticks(),
+                    "runtime lifecycle transition"
+                );
                 *lifecycle = LifecycleState::Paused;
                 self.publish(
                     *lifecycle,
@@ -425,6 +454,12 @@ impl Service {
                 );
             }
             Command::Resume if *lifecycle == LifecycleState::Paused => {
+                info!(
+                    from = ?*lifecycle,
+                    to = ?LifecycleState::Running,
+                    tick = emulator.backend.machine().ticks(),
+                    "runtime lifecycle transition"
+                );
                 *lifecycle = LifecycleState::Running;
                 self.publish(*lifecycle, None, None, Some(emulator));
             }
@@ -432,19 +467,46 @@ impl Service {
                 if matches!(*lifecycle, LifecycleState::Running | LifecycleState::Paused) =>
             {
                 let previous = *lifecycle;
+                info!(
+                    lifecycle = ?previous,
+                    tick = emulator.backend.machine().ticks(),
+                    "resetting emulator runtime"
+                );
                 match emulator.reset() {
                     Ok(()) => self.publish(previous, None, None, Some(emulator)),
                     Err(error) => {
+                        error!(error = %error, "emulator reset failed");
                         self.publish(previous, None, Some(error.to_string()), Some(emulator))
                     }
                 }
             }
             Command::Shutdown => {
+                info!(
+                    lifecycle = ?*lifecycle,
+                    tick = emulator.backend.machine().ticks(),
+                    "shutting down emulator runtime"
+                );
                 self.stop(emulator, None);
                 return false;
             }
             Command::Inspect(request, response) => {
-                let _ = response.try_send(emulator.inspect(request));
+                let tick = emulator.backend.machine().ticks();
+                debug!(
+                    request = ?request,
+                    lifecycle = ?*lifecycle,
+                    tick,
+                    "processing runtime inspection request"
+                );
+                let result = emulator.inspect(request);
+                match &result {
+                    Ok(_) => {
+                        debug!(request = ?request, lifecycle = ?*lifecycle, tick, "completed runtime inspection request")
+                    }
+                    Err(error) => {
+                        warn!(request = ?request, lifecycle = ?*lifecycle, tick, error = %error, "runtime inspection request failed")
+                    }
+                }
+                let _ = response.try_send(result);
             }
             _ => {}
         }
@@ -452,15 +514,30 @@ impl Service {
     }
 
     fn stop(&mut self, emulator: &mut Emulator, error: Option<String>) {
+        info!(
+            to = ?LifecycleState::Stopping,
+            tick = emulator.backend.machine().ticks(),
+            "runtime lifecycle transition"
+        );
         self.publish(LifecycleState::Stopping, None, error, Some(emulator));
         match emulator.flush() {
-            Ok(()) => self.publish(LifecycleState::Stopped, None, None, Some(emulator)),
-            Err(error) => self.publish(
-                LifecycleState::Failed,
-                None,
-                Some(error.to_string()),
-                Some(emulator),
-            ),
+            Ok(()) => {
+                info!(
+                    to = ?LifecycleState::Stopped,
+                    tick = emulator.backend.machine().ticks(),
+                    "runtime lifecycle transition"
+                );
+                self.publish(LifecycleState::Stopped, None, None, Some(emulator));
+            }
+            Err(error) => {
+                error!(error = %error, "runtime shutdown flush failed");
+                self.publish(
+                    LifecycleState::Failed,
+                    None,
+                    Some(error.to_string()),
+                    Some(emulator),
+                );
+            }
         }
     }
 

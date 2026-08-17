@@ -1,7 +1,12 @@
-use std::{fs, path::PathBuf, process::ExitCode};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use clap::{Parser, Subcommand};
 use minemu::{CliError, RunOptions, package_manifest, run_headless, run_image, run_tui};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(
@@ -11,6 +16,9 @@ use minemu::{CliError, RunOptions, package_manifest, run_headless, run_image, ru
     after_help = "Examples:\n  minemu image minimum-template/system/minimum.toml --output build/minimum.img\n  minemu run build/minimum.img --ticks 100000\n  minemu test minimum-template/system/minimum-test.toml"
 )]
 struct Cli {
+    /// Write structured diagnostics to a file instead of the terminal.
+    #[arg(long, global = true, value_name = "PATH")]
+    log_file: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -50,13 +58,35 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    match execute(Cli::parse().command) {
+    let cli = Cli::parse();
+    match init_logging(cli.log_file.as_deref()).and_then(|()| execute(cli.command)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("minemu: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn init_logging(path: Option<&Path>) -> minemu::Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|source| CliError::LogFile {
+            path: path.into(),
+            source,
+        })?;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_env_filter(filter)
+        .with_writer(file)
+        .try_init()
+        .map_err(|error| CliError::Tracing(error.to_string()))
 }
 
 fn execute(command: Command) -> minemu::Result<()> {

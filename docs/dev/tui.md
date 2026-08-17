@@ -66,3 +66,18 @@ responses. Live memory and current instruction bytes are read on the emulator
 thread only after the guest is paused, directly from Unicorn. This keeps
 inspection accurate after guest stores without making every rendered frame copy
 the complete RAM mapping.
+
+## Diagnostic Log
+
+Use `--log-file` to keep structured diagnostics out of the TUI terminal. The
+file is appended to and `RUST_LOG` selects verbosity; the default filter is
+`warn`.
+
+```sh
+RUST_LOG=minemu=debug,minemu_runtime=debug \
+cargo run -p minemu -- --log-file /tmp/minemu.log run \
+  minimum-template/system/build/minimum.img
+```
+
+For a failed `:view inspect`, inspect `/tmp/minemu.log` for the TUI request,
+runtime inspection result, lifecycle, tick, and the original runtime error.

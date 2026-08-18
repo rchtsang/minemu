@@ -241,7 +241,14 @@ impl PrimaryWidget {
                 u64::from(execution.instruction_address.get()),
             )
             .map(|instructions| {
-                let mut lines = vec![Line::raw("  virtual     raw          disasm")];
+                let address_label = if execution.mmu_enabled {
+                    "vaddr"
+                } else {
+                    "paddr"
+                };
+                let mut lines = vec![Line::raw(format!(
+                    "  {address_label:<10} raw          disasm"
+                ))];
                 let pc = u64::from(execution.registers[15]);
                 let selected = Style::default()
                     .fg(Color::Black)
@@ -569,7 +576,8 @@ fn motion_count(motion: Motion) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use minemu_platform::{MemRegion, PhysicalAddress};
+    use minemu_platform::{MemRegion, PhysicalAddress, VirtualAddress};
+    use minemu_runtime::ExecutionInspection;
     use ratatui::layout::Rect;
 
     use super::{PrimaryWidget, memory_address_at, memory_linear_offset};
@@ -615,5 +623,35 @@ mod tests {
         widget.update_memory_geometry(Rect::new(0, 0, 40, 20));
         assert_eq!(widget.memory_columns, 4);
         assert_eq!(widget.memory_range.length(), 16 * 4);
+    }
+
+    #[test]
+    fn disassembly_address_label_follows_mmu_state() {
+        let mut widget = PrimaryWidget {
+            execution: Some(ExecutionInspection {
+                registers: [0; 16],
+                cpsr: 0,
+                spsr: 0,
+                mmu_enabled: false,
+                instruction_address: VirtualAddress::new(0),
+                instruction_bytes: vec![0, 0, 0xa0, 0xe1],
+                instruction_error: None,
+            }),
+            ..PrimaryWidget::default()
+        };
+        let heading = widget.render_disassembly().lines[0]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(heading.contains("paddr"));
+
+        widget.execution.as_mut().unwrap().mmu_enabled = true;
+        let heading = widget.render_disassembly().lines[0]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(heading.contains("vaddr"));
     }
 }

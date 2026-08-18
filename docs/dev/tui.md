@@ -41,11 +41,12 @@ shift the visible window. Physical navigation skips unmapped and MMIO gaps. The
 byte request expands or contracts to fill every visible data row. Wide panes
 display eight bytes per row and narrow panes display four. Addresses omit the
 `0x` prefix to preserve byte columns. Disassembly labels its address column as
-virtual, labels instruction bytes as raw, and highlights the current PC when it
-is visible. Scrollable panes include an inset vertical position indicator that
-does not replace border corners. Pane content reserves one blank column before
-the right border so clipped text remains apparent. Narrow register panes omit
-decimal values and retain hexadecimal values.
+`paddr` while the MMU is disabled and `vaddr` while it is enabled, labels
+instruction bytes as raw, and highlights the current PC when it is visible.
+Scrollable panes include an inset vertical position indicator that does not
+replace border corners. Pane content reserves one blank column before the right
+border so clipped text remains apparent. Narrow register panes omit decimal
+values and retain hexadecimal values.
 
 ## Input Modes
 

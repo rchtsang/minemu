@@ -45,6 +45,7 @@ pub struct ExecutionInspection {
     pub registers: [u32; 16],
     pub cpsr: u32,
     pub spsr: u32,
+    pub mmu_enabled: bool,
     pub instruction_address: VirtualAddress,
     pub instruction_bytes: Vec<u8>,
     pub instruction_error: Option<String>,
@@ -419,7 +420,7 @@ impl UnicornBackend {
         Ok(None)
     }
 
-    /// Captures CPU state and virtual instruction bytes at one execution boundary.
+    /// Captures CPU state and instruction bytes at one execution boundary.
     pub fn inspect_execution(
         &mut self,
         address: Option<VirtualAddress>,
@@ -430,6 +431,7 @@ impl UnicornBackend {
             warn!(before, after, error = %error, "Unicorn CPU inspection failed");
             error
         })?;
+        let mmu_enabled = self.machine().mmu.enabled();
         let start = address
             .map(VirtualAddress::get)
             .unwrap_or(cpu.registers[15])
@@ -466,6 +468,7 @@ impl UnicornBackend {
             registers: cpu.registers,
             cpsr: cpu.cpsr,
             spsr: cpu.spsr,
+            mmu_enabled,
             instruction_address: VirtualAddress::new(start),
             instruction_bytes,
             instruction_error,
@@ -918,6 +921,7 @@ mod tests {
             instruction
         );
         let execution = backend.inspect_execution(None, 0, 4).unwrap();
+        assert!(!execution.mmu_enabled);
         assert_eq!(execution.instruction_address.get(), start);
         assert_eq!(execution.instruction_bytes, instruction);
     }
@@ -1098,6 +1102,7 @@ mod tests {
         backend.set_program_counter(0xc003_0264).unwrap();
 
         let inspection = backend.inspect_execution(None, 4, 4).unwrap();
+        assert!(inspection.mmu_enabled);
         assert_eq!(inspection.instruction_address.get(), 0xc003_0260);
         assert_eq!(inspection.instruction_bytes, instructions);
         assert_eq!(inspection.instruction_error, None);

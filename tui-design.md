@@ -169,7 +169,8 @@ Subviews:
   - Normal Mode:
     - Goto Address: >`[addr]`
 - disassembly (primary)
-  - labels addresses as virtual and highlights the current PC
+  - labels addresses as physical or virtual according to MMU state and
+    highlights the current PC
   - Normal Mode:
     - Goto Address: >`[addr]`
 - registers (secondary)

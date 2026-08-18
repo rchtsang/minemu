@@ -412,6 +412,7 @@ mod tests {
                 registers: [0; 16],
                 cpsr: 0,
                 spsr: 0,
+                mmu_enabled: false,
                 instruction_address: VirtualAddress::new(0),
                 instruction_bytes: Vec::new(),
                 instruction_error: None,

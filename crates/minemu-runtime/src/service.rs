@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     fs,
+    num::NonZeroU64,
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
@@ -22,7 +23,7 @@ use crate::{
 
 enum Command {
     Pause,
-    Resume,
+    Resume(Option<NonZeroU64>),
     Reset,
     Shutdown,
     Inspect(RuntimeInspectionRequest, SyncSender<InspectionResult>),
@@ -84,7 +85,14 @@ impl RuntimeHandle {
     }
     pub fn resume(&self) -> Result<()> {
         debug!("enqueueing runtime resume command");
-        self.send(Command::Resume)
+        self.send(Command::Resume(None))
+    }
+    pub fn resume_for(&self, instructions: NonZeroU64) -> Result<()> {
+        debug!(
+            instructions = instructions.get(),
+            "enqueueing bounded runtime resume command"
+        );
+        self.send(Command::Resume(Some(instructions)))
     }
     pub fn reset(&self) -> Result<()> {
         debug!("enqueueing runtime reset command");
@@ -207,9 +215,9 @@ impl Emulator {
         })
     }
 
-    fn run_batch(&mut self) -> Result<BackendStop> {
+    fn run_batch(&mut self, instruction_budget: usize) -> Result<BackendStop> {
         let start = self.backend.program_counter().unwrap_or(self.entry);
-        Ok(self.backend.run(start, self.end, self.instruction_batch))
+        Ok(self.backend.run(start, self.end, instruction_budget))
     }
 
     fn reset(&mut self) -> Result<()> {
@@ -332,6 +340,7 @@ struct Service {
     commands: Receiver<Command>,
     status: Arc<Mutex<RuntimeStatus>>,
     uart: Arc<Mutex<UartInbox>>,
+    remaining_instructions: Option<u64>,
 }
 
 impl Service {
@@ -346,6 +355,7 @@ impl Service {
             commands,
             status,
             uart,
+            remaining_instructions: None,
         }
     }
 
@@ -372,7 +382,28 @@ impl Service {
             }
             if lifecycle == LifecycleState::Running {
                 emulator.drain_uart(&self.uart);
-                match emulator.run_batch() {
+                let instruction_budget =
+                    self.remaining_instructions
+                        .map_or(emulator.instruction_batch, |remaining| {
+                            usize::try_from(remaining)
+                                .unwrap_or(usize::MAX)
+                                .min(emulator.instruction_batch)
+                        });
+                let ticks_before = emulator.backend.machine().ticks();
+                let result = emulator.run_batch(instruction_budget);
+                let executed = emulator
+                    .backend
+                    .machine()
+                    .ticks()
+                    .saturating_sub(ticks_before);
+                let instruction_limit_reached =
+                    self.remaining_instructions
+                        .as_mut()
+                        .is_some_and(|remaining| {
+                            *remaining = remaining.saturating_sub(executed);
+                            *remaining == 0
+                        });
+                match result {
                     Ok(BackendStop::Unicorn(error)) => {
                         let flush_error = emulator.flush().err();
                         let detail = flush_error
@@ -393,7 +424,21 @@ impl Service {
                             tick = emulator.backend.machine().ticks(),
                             "emulator batch stopped"
                         );
-                        if last_publish.elapsed() >= self.config.status_period {
+                        if instruction_limit_reached {
+                            lifecycle = LifecycleState::Paused;
+                            self.remaining_instructions = None;
+                            info!(
+                                tick = emulator.backend.machine().ticks(),
+                                "bounded runtime execution completed"
+                            );
+                            self.publish(
+                                lifecycle,
+                                Some(format!("instruction limit reached ({stop:?})")),
+                                emulator.flush().err().map(|error| error.to_string()),
+                                Some(&mut emulator),
+                            );
+                            last_publish = Instant::now();
+                        } else if last_publish.elapsed() >= self.config.status_period {
                             self.publish(
                                 lifecycle,
                                 Some(format!("{stop:?}")),
@@ -470,6 +515,7 @@ impl Service {
                     "runtime lifecycle transition"
                 );
                 *lifecycle = LifecycleState::Paused;
+                self.remaining_instructions = None;
                 self.publish(
                     *lifecycle,
                     None,
@@ -477,13 +523,14 @@ impl Service {
                     Some(emulator),
                 );
             }
-            Command::Resume if *lifecycle == LifecycleState::Paused => {
+            Command::Resume(instruction_limit) if *lifecycle == LifecycleState::Paused => {
                 info!(
                     from = ?*lifecycle,
                     to = ?LifecycleState::Running,
                     tick = emulator.backend.machine().ticks(),
                     "runtime lifecycle transition"
                 );
+                self.remaining_instructions = instruction_limit.map(NonZeroU64::get);
                 *lifecycle = LifecycleState::Running;
                 self.publish(*lifecycle, None, None, Some(emulator));
             }

@@ -1,3 +1,5 @@
+use std::num::NonZeroU64;
+
 use crossterm::event::KeyEvent;
 use minemu_runtime::{RuntimeInspectionRequest, UartPort};
 
@@ -14,7 +16,7 @@ pub enum Action {
     Focus(WidgetId),
     SetMode(InputMode),
     ToggleRun,
-    Start,
+    Start(Option<NonZeroU64>),
     Stop,
     Reset,
     SendUart(UartPort, Vec<u8>),

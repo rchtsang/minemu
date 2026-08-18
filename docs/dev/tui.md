@@ -11,7 +11,9 @@ The internal controller/widget design is documented in
 ## Views
 
 The **runtime** view contains console, events, and dialog panes. The TUI opens
-with emulation paused; use `:start`, `:s`, or Space+s to begin execution. The
+with emulation paused; use `:start`, `:s`, or Space+s to begin execution. Use
+`:start COUNT` or `:s COUNT` to execute exactly that many instructions and
+automatically pause again. The
 console is focused initially in normal mode. Press `i` to enter insert mode and forward
 ordinary keys, Enter, Backspace, and pasted text to the selected UART. `Esc`
 returns to normal mode.
@@ -95,7 +97,9 @@ in bounded overlapping chunks and move the memory window to a match.
 |---|---|
 | `:q`, `:quit` | Shut down and exit. |
 | `:?`, `:help` | Open the help popup. |
-| `:start`, `:stop`, `:s` | Start, stop, or toggle emulation. |
+| `:start [COUNT]` | Start continuously, or execute COUNT instructions and pause. |
+| `:s [COUNT]` | Toggle without COUNT, or execute COUNT instructions and pause. |
+| `:stop` | Stop emulation. |
 | `:reset` | Request an emulated power cycle. |
 | `:v`, `:view` | Toggle views. |
 | `:view r`, `:view runtime` | Select runtime. |

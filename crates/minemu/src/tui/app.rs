@@ -104,7 +104,12 @@ impl App {
 
     pub fn tick(&mut self) -> Result<()> {
         if let Some(status) = self.runtime.refresh_status() {
+            let paused = status.lifecycle == LifecycleState::Paused;
             self.broadcast(AppEvent::Status(status));
+            if paused {
+                self.actions.push_back(Action::Refresh(WidgetId::Primary));
+                self.actions.push_back(Action::Refresh(WidgetId::Secondary));
+            }
         }
         for result in self.runtime.poll() {
             match result {
@@ -216,16 +221,16 @@ impl App {
                 } else {
                     match self.runtime.status().lifecycle {
                         LifecycleState::Running => self.stop(),
-                        LifecycleState::Paused => self.start_emulation(),
+                        LifecycleState::Paused => self.start_emulation(None),
                         state => self.show_message(DialogMessage::error(format!(
                             "cannot toggle emulation while {state:?}"
                         ))),
                     }
                 }
             }
-            Action::Start => {
+            Action::Start(instruction_limit) => {
                 self.suppress_input_resume = true;
-                self.start_emulation();
+                self.start_emulation(instruction_limit);
             }
             Action::Stop => {
                 self.suppress_input_resume = true;
@@ -317,22 +322,26 @@ impl App {
         self.input.set_mode(mode);
         if previous == InputMode::Command && mode == InputMode::Normal {
             if self.resume_after_input && !self.suppress_input_resume {
-                self.start_emulation();
+                self.start_emulation(None);
             }
             self.resume_after_input = false;
             self.suppress_input_resume = false;
         }
     }
 
-    fn start_emulation(&mut self) {
+    fn start_emulation(&mut self, instruction_limit: Option<std::num::NonZeroU64>) {
         if self.runtime.status().lifecycle != LifecycleState::Paused && !self.resume_after_input {
             self.show_message(DialogMessage::error("emulation is not paused"));
             return;
         }
-        if let Err(error) = self.runtime.resume() {
+        if let Err(error) = self.runtime.resume(instruction_limit) {
             self.runtime_error("start", error.to_string());
         } else {
-            self.show_message(DialogMessage::info("emulation started"));
+            let message = instruction_limit.map_or_else(
+                || "emulation started".into(),
+                |count| format!("emulation started for {} instructions", count.get()),
+            );
+            self.show_message(DialogMessage::info(message));
         }
     }
 

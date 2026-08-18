@@ -1,4 +1,4 @@
-use std::{thread, time::Duration};
+use std::{num::NonZeroU64, thread, time::Duration};
 
 use minemu_core::{Machine, PhysicalMemoryAccess};
 use minemu_platform::{InspectionRequest, MemRegion, PhysicalAddress, PhysicalRange};
@@ -44,6 +44,38 @@ fn lifecycle_commands_run_on_the_emulator_thread() {
     wait_for(&runtime, LifecycleState::Running);
     runtime.shutdown().unwrap();
     assert_eq!(runtime.status().lifecycle, LifecycleState::Stopped);
+}
+
+#[test]
+fn bounded_resume_executes_exact_instruction_count_and_pauses() {
+    let runtime = running_runtime();
+    wait_for(&runtime, LifecycleState::Running);
+    runtime.pause().unwrap();
+    wait_for(&runtime, LifecycleState::Paused);
+    let initial_ticks = runtime.status().machine.ticks;
+
+    runtime.resume_for(NonZeroU64::new(7).unwrap()).unwrap();
+    for _ in 0..500 {
+        let status = runtime.status();
+        if status.lifecycle == LifecycleState::Paused && status.machine.ticks == initial_ticks + 7 {
+            assert!(
+                status
+                    .last_stop
+                    .as_deref()
+                    .is_some_and(|stop| stop.contains("instruction limit reached"))
+            );
+            runtime.shutdown().unwrap();
+            return;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    let status = runtime.status();
+    panic!(
+        "bounded runtime stopped at lifecycle {:?}, tick {} instead of {}",
+        status.lifecycle,
+        status.machine.ticks,
+        initial_ticks + 7
+    );
 }
 
 #[test]

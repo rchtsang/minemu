@@ -40,8 +40,13 @@ impl TuiWidget for HelpWidget {
             ),
             command("Space s", "Toggle emulation start/stop", description_width),
             command(
-                ":start / :stop",
-                "Start or stop emulation",
+                ":start [COUNT]",
+                "Run continuously or for COUNT instructions",
+                description_width,
+            ),
+            command(
+                ":s [COUNT] / :stop",
+                "Toggle, run COUNT instructions, or stop",
                 description_width,
             ),
             command(

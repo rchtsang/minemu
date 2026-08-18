@@ -1,3 +1,4 @@
+use std::num::NonZeroU64;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use minemu_runtime::{
@@ -109,8 +110,11 @@ impl RuntimeController {
         self.handle.pause()
     }
 
-    pub fn resume(&self) -> Result<(), RuntimeError> {
-        self.handle.resume()
+    pub fn resume(&self, instruction_limit: Option<NonZeroU64>) -> Result<(), RuntimeError> {
+        match instruction_limit {
+            Some(limit) => self.handle.resume_for(limit),
+            None => self.handle.resume(),
+        }
     }
 
     pub fn reset(&self) -> Result<(), RuntimeError> {

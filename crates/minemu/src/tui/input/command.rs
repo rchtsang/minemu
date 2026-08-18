@@ -1,3 +1,5 @@
+use std::num::NonZeroU64;
+
 use minemu_platform::VirtualAddress;
 use minemu_runtime::{RuntimeInspectionRequest, UartPort};
 
@@ -15,9 +17,12 @@ pub fn parse(command: &str, target: WidgetId) -> Result<Vec<Action>, String> {
     let actions = match name {
         "q" | "quit" => vec![Action::Quit],
         "?" | "help" => vec![Action::ShowHelp],
-        "start" => vec![Action::Start],
+        "start" => vec![Action::Start(parse_instruction_limit(words.next())?)],
         "stop" => vec![Action::Stop],
-        "s" => vec![Action::ToggleRun],
+        "s" => match words.next() {
+            None => vec![Action::ToggleRun],
+            Some(value) => vec![Action::Start(parse_instruction_limit(Some(value))?)],
+        },
         "reset" => vec![Action::Reset],
         "v" | "view" => match words.next() {
             None => vec![Action::ToggleView],
@@ -52,6 +57,18 @@ pub fn parse(command: &str, target: WidgetId) -> Result<Vec<Action>, String> {
         return Err("too many command arguments".into());
     }
     Ok(actions)
+}
+
+fn parse_instruction_limit(value: Option<&str>) -> Result<Option<NonZeroU64>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    value
+        .parse::<u64>()
+        .ok()
+        .and_then(NonZeroU64::new)
+        .map(Some)
+        .ok_or_else(|| "instruction count must be a positive decimal integer".into())
 }
 
 fn parse_set(key: Option<&str>, value: Option<&str>) -> Result<Vec<Action>, String> {
@@ -97,6 +114,19 @@ mod tests {
             parse("s", WidgetId::Dialog).unwrap().as_slice(),
             [Action::ToggleRun]
         ));
+        assert!(matches!(
+            parse("start", WidgetId::Dialog).unwrap().as_slice(),
+            [Action::Start(None)]
+        ));
+        assert!(matches!(
+            parse("start 25", WidgetId::Dialog).unwrap().as_slice(),
+            [Action::Start(Some(count))] if count.get() == 25
+        ));
+        assert!(matches!(
+            parse("s 7", WidgetId::Dialog).unwrap().as_slice(),
+            [Action::Start(Some(count))] if count.get() == 7
+        ));
+        assert!(parse("start 0", WidgetId::Dialog).is_err());
         assert!(matches!(
             parse("v", WidgetId::Dialog).unwrap().as_slice(),
             [Action::ToggleView]

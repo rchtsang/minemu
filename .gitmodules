@@ -1,0 +1,3 @@
+[submodule "minimum-template"]
+	path = minimum-template
+	url = git@github.com:rchtsang/minimum-template.git

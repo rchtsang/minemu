@@ -22,7 +22,7 @@ impl TuiWidget for InputBarWidget {
         true
     }
 
-    fn render(&self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
         frame.render_widget(
             Paragraph::new(format!(" {}", context.input))
                 .style(Style::default().fg(Color::White).bg(Color::Rgb(35, 35, 50))),

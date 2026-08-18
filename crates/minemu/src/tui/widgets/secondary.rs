@@ -11,7 +11,9 @@ use crate::tui::{
     widget::{InputContext, RenderContext, TuiWidget},
 };
 
-use super::pane_block;
+use super::{pane_block, render_scrollbar};
+
+const REGISTER_COUNT: usize = 18;
 
 pub struct SecondaryWidget {
     subview: SecondarySubview,
@@ -19,6 +21,7 @@ pub struct SecondaryWidget {
     peripherals: Option<PeripheralsInspection>,
     mmu: Option<MmuInspection>,
     row: usize,
+    max_row: usize,
     active: bool,
 }
 
@@ -30,6 +33,7 @@ impl Default for SecondaryWidget {
             peripherals: None,
             mmu: None,
             row: 0,
+            max_row: REGISTER_COUNT - 1,
             active: false,
         }
     }
@@ -69,7 +73,7 @@ impl SecondaryWidget {
         }
     }
 
-    fn registers(&self) -> String {
+    fn registers(&self, show_decimal: bool) -> String {
         let Some(execution) = &self.execution else {
             return "register snapshot unavailable".into();
         };
@@ -81,13 +85,18 @@ impl SecondaryWidget {
         values.extend((0..13).map(|index| (format!("r{index}"), execution.registers[index])));
         values.push(("cpsr".into(), execution.cpsr));
         values.push(("spsr".into(), execution.spsr));
-        let mut lines = vec!["       hex          decimal".into()];
-        lines.extend(
-            values
-                .into_iter()
-                .skip(self.row)
-                .map(|(name, value)| format!("{name:<5} 0x{value:08x}  {value:>10}")),
-        );
+        let mut lines = vec![if show_decimal {
+            "       hex          decimal".into()
+        } else {
+            "       hex".into()
+        }];
+        lines.extend(values.into_iter().skip(self.row).map(|(name, value)| {
+            if show_decimal {
+                format!("{name:<5} 0x{value:08x}  {value:>10}")
+            } else {
+                format!("{name:<5} 0x{value:08x}")
+            }
+        }));
         lines.join("\n")
     }
 
@@ -174,19 +183,37 @@ impl TuiWidget for SecondaryWidget {
         view == View::Inspect
     }
 
-    fn render(&self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
-        let (name, text) = match self.subview {
-            SecondarySubview::Registers => ("registers", self.registers()),
-            SecondarySubview::Peripherals => ("peripherals", self.peripherals()),
-            SecondarySubview::Pending => ("pending", self.pending()),
+    fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
+        let viewport = usize::from(area.height.saturating_sub(3)).max(1);
+        let (name, text, content_length, sticky_header) = match self.subview {
+            SecondarySubview::Registers => (
+                "registers",
+                self.registers(area.width >= 34),
+                REGISTER_COUNT,
+                true,
+            ),
+            SecondarySubview::Peripherals => {
+                let text = self.peripherals();
+                let length = text.lines().count();
+                ("peripherals", text, length, false)
+            }
+            SecondarySubview::Pending => {
+                let text = self.pending();
+                let length = text.lines().count();
+                ("pending", text, length, false)
+            }
         };
+        self.max_row = content_length.saturating_sub(viewport);
+        self.row = self.row.min(self.max_row);
+        let scroll = if sticky_header { 0 } else { self.row as u16 };
         frame.render_widget(
-            Paragraph::new(text).block(pane_block(
+            Paragraph::new(text).scroll((scroll, 0)).block(pane_block(
                 format!("[^s] secondary ({name})"),
                 context.focused == self.id(),
             )),
             area,
         );
+        render_scrollbar(frame, area, content_length, viewport, self.row);
     }
 
     fn handle_key(&mut self, key: KeyEvent, context: &InputContext) -> Vec<Action> {
@@ -240,11 +267,11 @@ impl TuiWidget for SecondaryWidget {
                         0
                     }
                     Motion::Bottom => {
-                        self.row = 17;
+                        self.row = self.max_row;
                         0
                     }
                 };
-                self.row = self.row.saturating_add(count).min(17);
+                self.row = self.row.saturating_add(count).min(self.max_row);
             }
             AppEvent::Goto(value) if self.subview == SecondarySubview::Registers => {
                 return self.goto_register(value);
@@ -252,5 +279,44 @@ impl TuiWidget for SecondaryWidget {
             _ => {}
         }
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use minemu_platform::VirtualAddress;
+    use minemu_runtime::ExecutionInspection;
+
+    use super::SecondaryWidget;
+    use crate::tui::{event::AppEvent, input::Motion, widget::TuiWidget};
+
+    #[test]
+    fn narrow_register_format_omits_decimal_values() {
+        let widget = SecondaryWidget {
+            execution: Some(ExecutionInspection {
+                registers: [0; 16],
+                cpsr: 0,
+                spsr: 0,
+                instruction_address: VirtualAddress::new(0),
+                instruction_bytes: Vec::new(),
+                instruction_error: None,
+            }),
+            ..SecondaryWidget::default()
+        };
+        let text = widget.registers(false);
+        assert!(!text.contains("decimal"));
+        assert!(!text.contains("          0"));
+    }
+
+    #[test]
+    fn register_scroll_is_clamped_to_the_last_full_page() {
+        let mut widget = SecondaryWidget {
+            max_row: 4,
+            ..SecondaryWidget::default()
+        };
+        widget.update(&AppEvent::Navigate(Motion::Down(100)));
+        assert_eq!(widget.row, 4);
+        widget.update(&AppEvent::Navigate(Motion::Bottom));
+        assert_eq!(widget.row, 4);
     }
 }

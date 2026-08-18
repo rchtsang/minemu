@@ -2,7 +2,13 @@ use capstone::prelude::*;
 use crossterm::event::{KeyCode, KeyEvent};
 use minemu_platform::{MemRegion, PhysicalAddress, PhysicalRange, VirtualAddress};
 use minemu_runtime::{ExecutionInspection, RuntimeInspection, RuntimeInspectionRequest};
-use ratatui::{Frame, layout::Rect, widgets::Paragraph};
+use ratatui::{
+    Frame,
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
+    widgets::Paragraph,
+};
 
 use crate::tui::{
     action::Action,
@@ -12,12 +18,17 @@ use crate::tui::{
     widget::{InputContext, RenderContext, TuiWidget},
 };
 
-use super::pane_block;
+use super::{pane_block, render_scrollbar};
+
+const MEMORY_REGIONS: [MemRegion; 3] = [MemRegion::BootRom, MemRegion::SystemRom, MemRegion::Ram];
+const MEMORY_WINDOW: u32 = 256;
 
 pub struct PrimaryWidget {
     subview: PrimarySubview,
     memory_range: PhysicalRange,
     memory: Vec<u8>,
+    memory_cursor: PhysicalAddress,
+    memory_columns: usize,
     execution: Option<ExecutionInspection>,
     disassembly_address: Option<VirtualAddress>,
     active: bool,
@@ -30,6 +41,8 @@ impl Default for PrimaryWidget {
             memory_range: PhysicalRange::new(MemRegion::Ram.base(), 256)
                 .expect("fixed RAM inspection range"),
             memory: Vec::new(),
+            memory_cursor: MemRegion::Ram.base(),
+            memory_columns: 8,
             execution: None,
             disassembly_address: None,
             active: false,
@@ -54,26 +67,25 @@ impl PrimaryWidget {
     }
 
     fn nav_memory(&mut self, motion: Motion) {
-        let count = motion_count(motion) as u32;
-        let step: u32 = match motion {
+        let count = motion_count(motion);
+        let step = match motion {
             Motion::Left(_) | Motion::Right(_) => 1,
-            Motion::Up(_) | Motion::Down(_) => 8,
+            Motion::Up(_) | Motion::Down(_) => self.memory_columns,
             Motion::NextItem(_) | Motion::EndItem(_) => 4,
             Motion::Top | Motion::Bottom => 0,
         };
-        let min = MemRegion::Ram.base().get();
-        let max = min + MemRegion::Ram.size() - self.memory_range.length();
-        let current = self.memory_range.start().get();
-        let address = match motion {
-            Motion::Top => min,
-            Motion::Bottom => max,
+        let current = memory_linear_offset(self.memory_cursor).unwrap_or(0);
+        let maximum = memory_map_size().saturating_sub(1);
+        let linear = match motion {
+            Motion::Top => 0,
+            Motion::Bottom => maximum,
             Motion::Left(_) | Motion::Up(_) => current.saturating_sub(step.saturating_mul(count)),
             Motion::EndItem(_) => current / 4 * 4 + 3,
             _ => current.saturating_add(step.saturating_mul(count)),
         }
-        .clamp(min, max);
-        self.memory_range = PhysicalRange::new(PhysicalAddress::new(address), 256)
-            .expect("navigation remains in RAM");
+        .min(maximum);
+        self.memory_cursor = memory_address_at(linear);
+        self.ensure_cursor_visible();
     }
 
     fn nav_disassembly(&mut self, motion: Motion) {
@@ -100,31 +112,60 @@ impl PrimaryWidget {
         self.disassembly_address = Some(VirtualAddress::new(address & !3));
     }
 
-    fn render_memory(&self) -> String {
+    fn render_memory(&self) -> Text<'static> {
+        let columns = self.memory_columns;
         let mut lines = vec![
-            "  address             offset                    ascii".into(),
-            "                     +0 +1 +2 +3 +4 +5 +6 +7".into(),
+            Line::raw(format!(
+                "{:<12}{:<width$} ascii",
+                "address",
+                "offset",
+                width = columns * 3
+            )),
+            Line::raw(format!(
+                "{}{offsets}",
+                " ".repeat(12),
+                offsets = (0..columns)
+                    .map(|offset| format!("+{offset} "))
+                    .collect::<String>()
+            )),
         ];
-        for (index, bytes) in self.memory.chunks(8).enumerate() {
-            let address = self.memory_range.start().get() + (index * 8) as u32;
-            let hex = bytes
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let ascii = bytes
-                .iter()
-                .map(|byte| {
-                    if byte.is_ascii_graphic() || *byte == b' ' {
-                        *byte as char
-                    } else {
-                        '.'
-                    }
-                })
-                .collect::<String>();
-            lines.push(format!("0x{address:08x}: {hex:<23}  {ascii}"));
+        let selected = Style::default()
+            .fg(Color::Black)
+            .bg(Color::LightYellow)
+            .add_modifier(Modifier::BOLD);
+        for (row, bytes) in self.memory.chunks(columns).enumerate() {
+            let address = self.memory_range.start().get() + (row * columns) as u32;
+            let mut spans = vec![Span::raw(format!("0x{address:08x}: "))];
+            for (column, byte) in bytes.iter().enumerate() {
+                let byte_address = address + column as u32;
+                let style = if byte_address == self.memory_cursor.get() {
+                    selected
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(format!("{byte:02x}"), style));
+                spans.push(Span::raw(" "));
+            }
+            for _ in bytes.len()..columns {
+                spans.push(Span::raw("   "));
+            }
+            spans.push(Span::raw(" "));
+            for (column, byte) in bytes.iter().enumerate() {
+                let character = if byte.is_ascii_graphic() || *byte == b' ' {
+                    *byte as char
+                } else {
+                    '.'
+                };
+                let style = if address + column as u32 == self.memory_cursor.get() {
+                    selected
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(character.to_string(), style));
+            }
+            lines.push(Line::from(spans));
         }
-        lines.join("\n")
+        Text::from(lines)
     }
 
     fn render_disassembly(&self) -> String {
@@ -177,21 +218,41 @@ impl PrimaryWidget {
         };
         match self.subview {
             PrimarySubview::Memory => {
-                let min = MemRegion::Ram.base().get();
-                let max = min + MemRegion::Ram.size() - 256;
-                if !(min..=max + 255).contains(&address) {
+                let address = PhysicalAddress::new(address);
+                if memory_region(address).is_none() {
                     return vec![Action::ShowMessage(DialogMessage::error(
-                        "memory address is outside physical RAM",
+                        "address is outside Boot ROM, system ROM, and RAM",
                     ))];
                 }
-                self.memory_range = PhysicalRange::new(PhysicalAddress::new(address.min(max)), 256)
-                    .expect("validated RAM range");
+                self.memory_cursor = address;
+                self.ensure_cursor_visible();
             }
             PrimarySubview::Disassembly => {
                 self.disassembly_address = Some(VirtualAddress::new(address & !3));
             }
         }
         self.refresh()
+    }
+
+    fn ensure_cursor_visible(&mut self) {
+        let region = memory_region(self.memory_cursor).expect("cursor remains in mapped memory");
+        let base = region.base().get();
+        let last_start = base + region.size() - MEMORY_WINDOW;
+        let cursor = self.memory_cursor.get();
+        let current_start = self.memory_range.start().get();
+        let current_end = current_start + self.memory_range.length();
+        let same_region = memory_region(self.memory_range.start()) == Some(region);
+        let start = if same_region && (current_start..current_end).contains(&cursor) {
+            current_start
+        } else if cursor < current_start || !same_region {
+            (cursor - (cursor - base) % self.memory_columns as u32).min(last_start)
+        } else {
+            cursor
+                .saturating_sub(MEMORY_WINDOW - self.memory_columns as u32)
+                .min(last_start)
+        };
+        self.memory_range = PhysicalRange::new(PhysicalAddress::new(start), MEMORY_WINDOW)
+            .expect("cursor window remains in mapped memory");
     }
 }
 
@@ -204,22 +265,52 @@ impl TuiWidget for PrimaryWidget {
         view == View::Inspect
     }
 
-    fn render(&self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
         let name = match self.subview {
             PrimarySubview::Memory => "memory",
             PrimarySubview::Disassembly => "disassembly",
         };
-        let text = match self.subview {
-            PrimarySubview::Memory => self.render_memory(),
-            PrimarySubview::Disassembly => self.render_disassembly(),
-        };
-        frame.render_widget(
-            Paragraph::new(text).block(pane_block(
-                format!("[^p] primary ({name})"),
-                context.focused == self.id(),
-            )),
-            area,
-        );
+        match self.subview {
+            PrimarySubview::Memory => {
+                self.memory_columns = if area.width >= 50 { 8 } else { 4 };
+                self.ensure_cursor_visible();
+                frame.render_widget(
+                    Paragraph::new(self.render_memory()).block(pane_block(
+                        format!("[^p] primary ({name})"),
+                        context.focused == self.id(),
+                    )),
+                    area,
+                );
+                render_scrollbar(
+                    frame,
+                    area,
+                    memory_map_size(),
+                    MEMORY_WINDOW as usize,
+                    memory_linear_offset(self.memory_cursor).unwrap_or(0),
+                );
+            }
+            PrimarySubview::Disassembly => {
+                frame.render_widget(
+                    Paragraph::new(self.render_disassembly()).block(pane_block(
+                        format!("[^p] primary ({name})"),
+                        context.focused == self.id(),
+                    )),
+                    area,
+                );
+                let position = self
+                    .execution
+                    .as_ref()
+                    .map(|execution| execution.instruction_address.get() as usize / 4)
+                    .unwrap_or(0);
+                render_scrollbar(
+                    frame,
+                    area,
+                    u32::MAX as usize / 4,
+                    usize::from(area.height.saturating_sub(2)),
+                    position,
+                );
+            }
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent, context: &InputContext) -> Vec<Action> {
@@ -249,10 +340,8 @@ impl TuiWidget for PrimaryWidget {
                 self.execution = Some(execution.clone());
             }
             AppEvent::Inspection(RuntimeInspection::SearchMemory(Some(address))) => {
-                let max = MemRegion::Ram.base().get() + MemRegion::Ram.size() - 256;
-                self.memory_range =
-                    PhysicalRange::new(PhysicalAddress::new(address.get().min(max)), 256)
-                        .expect("search result lies in RAM");
+                self.memory_cursor = *address;
+                self.ensure_cursor_visible();
                 return vec![
                     Action::SetPrimary(PrimarySubview::Memory),
                     Action::ShowMessage(DialogMessage::info(format!(
@@ -294,6 +383,41 @@ impl TuiWidget for PrimaryWidget {
     }
 }
 
+fn memory_map_size() -> usize {
+    MEMORY_REGIONS
+        .iter()
+        .map(|region| region.size() as usize)
+        .sum()
+}
+
+fn memory_region(address: PhysicalAddress) -> Option<MemRegion> {
+    MEMORY_REGIONS
+        .into_iter()
+        .find(|region| region.range().contains_address(address))
+}
+
+fn memory_linear_offset(address: PhysicalAddress) -> Option<usize> {
+    let mut offset = 0usize;
+    for region in MEMORY_REGIONS {
+        if region.range().contains_address(address) {
+            return Some(offset + (address.get() - region.base().get()) as usize);
+        }
+        offset += region.size() as usize;
+    }
+    None
+}
+
+fn memory_address_at(mut offset: usize) -> PhysicalAddress {
+    for region in MEMORY_REGIONS {
+        if offset < region.size() as usize {
+            return PhysicalAddress::new(region.base().get() + offset as u32);
+        }
+        offset -= region.size() as usize;
+    }
+    let region = MemRegion::Ram;
+    PhysicalAddress::new(region.base().get() + region.size() - 1)
+}
+
 fn motion_count(motion: Motion) -> usize {
     match motion {
         Motion::Left(count)
@@ -303,5 +427,43 @@ fn motion_count(motion: Motion) -> usize {
         | Motion::NextItem(count)
         | Motion::EndItem(count) => count,
         Motion::Top | Motion::Bottom => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use minemu_platform::{MemRegion, PhysicalAddress};
+
+    use super::{PrimaryWidget, memory_address_at, memory_linear_offset};
+    use crate::tui::input::Motion;
+
+    #[test]
+    fn linear_memory_map_includes_both_roms_and_ram() {
+        assert_eq!(memory_linear_offset(MemRegion::BootRom.base()), Some(0));
+        assert_eq!(
+            memory_linear_offset(MemRegion::SystemRom.base()),
+            Some(MemRegion::BootRom.size() as usize)
+        );
+        assert_eq!(
+            memory_address_at(MemRegion::BootRom.size() as usize),
+            MemRegion::SystemRom.base()
+        );
+    }
+
+    #[test]
+    fn cursor_skips_the_gap_between_rom_regions() {
+        let mut widget = PrimaryWidget {
+            memory_cursor: PhysicalAddress::new(
+                MemRegion::BootRom.base().get() + MemRegion::BootRom.size() - 1,
+            ),
+            ..PrimaryWidget::default()
+        };
+        widget.ensure_cursor_visible();
+        widget.nav_memory(Motion::Right(1));
+        assert_eq!(widget.memory_cursor, MemRegion::SystemRom.base());
+        assert_eq!(
+            Option::<MemRegion>::from(widget.memory_range.start()),
+            Some(MemRegion::SystemRom)
+        );
     }
 }

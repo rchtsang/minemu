@@ -15,7 +15,7 @@ use crate::tui::{
     widget::{InputContext, RenderContext, TuiWidget},
 };
 
-use super::{pane_block, scroll_offset};
+use super::{pane_block, render_scrollbar, scroll_offset};
 
 pub struct ConsoleWidget {
     uart: UartPort,
@@ -57,13 +57,15 @@ impl TuiWidget for ConsoleWidget {
         view == View::Runtime
     }
 
-    fn render(&self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
         let output = self.output();
         let lines = output.lines().count();
+        let viewport = usize::from(area.height.saturating_sub(2));
+        let offset = scroll_offset(lines, area.height, self.from_bottom);
         frame.render_widget(
             Paragraph::new(output)
                 .wrap(Wrap { trim: false })
-                .scroll((scroll_offset(lines, area.height, self.from_bottom), 0))
+                .scroll((offset, 0))
                 .block(pane_block(
                     format!(
                         "[^c] console (uart {})",
@@ -73,6 +75,7 @@ impl TuiWidget for ConsoleWidget {
                 )),
             area,
         );
+        render_scrollbar(frame, area, lines, viewport, usize::from(offset));
     }
 
     fn handle_key(&mut self, key: KeyEvent, context: &InputContext) -> Vec<Action> {

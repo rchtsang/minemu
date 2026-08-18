@@ -28,7 +28,7 @@ impl TuiWidget for HeaderWidget {
         true
     }
 
-    fn render(&self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
         let columns = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(24), Constraint::Min(1)])

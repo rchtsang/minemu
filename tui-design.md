@@ -72,6 +72,8 @@ Notes:
 - the `<input>` bar should have a different background color.
   it should show the user's key inputs and be cleared when a command or action is detected and taken.
 - the `<hints>` bar should show a list of hints depending on the active pane.
+- the hints and tick sections are separated by a vertical border
+- scrollable panes show a vertical scrollbar
 
 Panes:
 - console
@@ -144,6 +146,9 @@ Subviews:
   memory/disassembly rows above illustrate both primary formats rather than two
   simultaneously visible panes
 - memory (primary)
+  - covers Boot ROM, system ROM, and RAM while skipping unmapped/MMIO gaps
+  - movement selects bytes with a cursor and scrolls the memory window
+  - shows eight bytes per row when wide enough and four bytes otherwise
   - Normal Mode:
     - Search ASCII: /[pattern]
     - Search Bytes: \\[pattern]
@@ -156,6 +161,10 @@ Subviews:
     - Goto Register: >`[reg]`
 - peripherals (secondary)
 - pending (secondary)
+
+The dialog wraps messages and prefixes each new message with `>`. Help is shown
+in a popup rather than appended to dialog history. Narrow register panes omit
+decimal conversion and do not scroll beyond the last full page of registers.
 
 Memory searches scan all physical RAM. ASCII search uses UTF-8 input and byte
 search uses whitespace-separated hexadecimal pairs such as `\de ad be ef`.

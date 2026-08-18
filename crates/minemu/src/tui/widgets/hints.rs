@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
-    widgets::Paragraph,
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::tui::{
@@ -22,10 +22,10 @@ impl TuiWidget for HintsWidget {
         true
     }
 
-    fn render(&self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
         let columns = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(1), Constraint::Length(27)])
+            .constraints([Constraint::Min(1), Constraint::Length(28)])
             .split(area);
         let hints = match context.mode {
             InputMode::Insert => "Normal: <esc>",
@@ -43,7 +43,9 @@ impl TuiWidget for HintsWidget {
         let style = Style::default().fg(Color::DarkGray);
         frame.render_widget(Paragraph::new(hints).style(style), columns[0]);
         frame.render_widget(
-            Paragraph::new(format!("ticks: 0x{:016x}", context.ticks)).style(style),
+            Paragraph::new(format!(" ticks: 0x{:016x}", context.ticks))
+                .style(style)
+                .block(Block::default().borders(Borders::LEFT).border_style(style)),
             columns[1],
         );
     }

@@ -26,6 +26,13 @@ requesting live Unicorn-backed snapshots.
 Instruction-read failures do not close the TUI. Registers and other snapshots
 remain visible while the disassembly pane reports the original error.
 
+Memory inspection covers the readable physical byte map: Boot ROM, system ROM,
+and RAM. A highlighted cursor selects one byte; motions move the cursor and
+automatically shift the 256-byte window across region boundaries while skipping
+unmapped and MMIO gaps. Wide panes display eight bytes per row and narrow panes
+display four. Scrollable panes include a vertical position indicator. Narrow
+register panes omit decimal values and retain hexadecimal values.
+
 ## Input Modes
 
 The persistent input bar displays the current input grammar:
@@ -51,7 +58,7 @@ in hexadecimal.
 | Space+s | Toggle emulation start/stop. |
 | `[#]h/j/k/l`, `w`, `e`, `gg`, `G` | Count-aware pane-local navigation. |
 | `Tab` | Switch the focused inspect pane's subview. |
-| `?` | Write help to the dialog. |
+| `?` | Open the help popup. |
 | Ctrl+left-drag | Resize the main horizontal split. |
 
 Memory and disassembly goto accept hexadecimal addresses, optionally prefixed
@@ -64,7 +71,7 @@ in bounded overlapping chunks and move the memory window to a match.
 | Command | Effect |
 |---|---|
 | `:q`, `:quit` | Shut down and exit. |
-| `:?`, `:help` | Write help to dialog. |
+| `:?`, `:help` | Open the help popup. |
 | `:start`, `:stop`, `:s` | Start, stop, or toggle emulation. |
 | `:reset` | Request an emulated power cycle. |
 | `:v`, `:view` | Toggle views. |
@@ -79,6 +86,9 @@ Opening the command bar temporarily pauses a running guest. Cancelling or
 executing a non-lifecycle command resumes it. Stop, reset, and selecting inspect
 leave it paused. Parse and runtime-operation failures are retained as bounded
 red messages in dialog rather than closing the terminal UI.
+
+Dialog messages wrap to the pane width and begin with `>` so message boundaries
+remain visible while scrolling.
 
 ## Snapshots
 

@@ -25,6 +25,7 @@ pub enum WidgetId {
     Secondary,
     InputBar,
     Hints,
+    Help,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

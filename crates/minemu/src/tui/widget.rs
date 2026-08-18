@@ -22,7 +22,7 @@ pub struct RenderContext<'a> {
 pub trait TuiWidget {
     fn id(&self) -> WidgetId;
     fn visible(&self, view: View) -> bool;
-    fn render(&self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>);
+    fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>);
     fn handle_key(&mut self, _key: KeyEvent, _context: &InputContext) -> Vec<Action> {
         Vec::new()
     }

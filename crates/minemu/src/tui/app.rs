@@ -4,7 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use minemu_runtime::LifecycleState;
 use ratatui::{Frame, layout::Rect};
 use tracing::{debug, error, info, warn};
@@ -20,8 +22,8 @@ use super::{
     types::{DialogMessage, InputMode, SplitId, View, WidgetId},
     widget::{InputContext, RenderContext, TuiWidget},
     widgets::{
-        ConsoleWidget, DialogWidget, EventsWidget, HeaderWidget, HintsWidget, InputBarWidget,
-        PrimaryWidget, SecondaryWidget,
+        ConsoleWidget, DialogWidget, EventsWidget, HeaderWidget, HelpWidget, HintsWidget,
+        InputBarWidget, PrimaryWidget, SecondaryWidget,
     },
 };
 
@@ -39,6 +41,7 @@ pub struct App {
     last_pulse: Instant,
     terminal_area: Rect,
     dragging: Option<SplitId>,
+    help_visible: bool,
 }
 
 impl App {
@@ -56,6 +59,7 @@ impl App {
                 Box::new(DialogWidget::default()),
                 Box::new(InputBarWidget),
                 Box::new(HintsWidget),
+                Box::new(HelpWidget),
             ],
             view: View::Runtime,
             focused: WidgetId::Console,
@@ -68,6 +72,7 @@ impl App {
             last_pulse: Instant::now(),
             terminal_area: Rect::default(),
             dragging: None,
+            help_visible: false,
         };
         app.broadcast(AppEvent::Status(app.runtime.status().clone()));
         app.broadcast(AppEvent::ViewChanged(View::Runtime));
@@ -108,6 +113,11 @@ impl App {
     }
 
     pub fn handle_event(&mut self, event: Event) {
+        if self.help_visible && matches!(event, Event::Key(key) if key.kind == KeyEventKind::Press)
+        {
+            self.help_visible = false;
+            return;
+        }
         if let Event::Mouse(mouse) = event {
             self.handle_mouse(mouse);
             self.process_actions();
@@ -129,7 +139,10 @@ impl App {
             input: &input,
             ticks: self.runtime.status().machine.ticks,
         };
-        for widget in &self.widgets {
+        for widget in &mut self.widgets {
+            if widget.id() == WidgetId::Help && !self.help_visible {
+                continue;
+            }
             if widget.visible(self.view)
                 && let Some(area) = areas.get(&widget.id())
             {
@@ -328,9 +341,7 @@ impl App {
     }
 
     fn show_help(&mut self) {
-        self.show_message(DialogMessage::info(
-            "commands: :q :? :start :stop :s :reset :view [r|i] :set uart|primary|secondary :goto\nleader: <space> r|i|s   focus: ^c ^e ^d ^p ^s",
-        ));
+        self.help_visible = true;
     }
 
     fn runtime_error(&mut self, operation: &str, detail: String) {

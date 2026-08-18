@@ -9,7 +9,7 @@ use crate::tui::{
     widget::{RenderContext, TuiWidget},
 };
 
-use super::{nav_scroll, pane_block, scroll_offset};
+use super::{nav_scroll, pane_block, render_scrollbar, scroll_offset};
 
 #[derive(Default)]
 pub struct EventsWidget {
@@ -27,18 +27,21 @@ impl TuiWidget for EventsWidget {
         view == View::Runtime
     }
 
-    fn render(&self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
         let lines = self
             .events
             .iter()
             .map(|event| format!("{event:?}"))
             .collect::<Vec<_>>();
+        let viewport = usize::from(area.height.saturating_sub(2));
+        let offset = scroll_offset(lines.len(), area.height, self.from_bottom);
         frame.render_widget(
             Paragraph::new(lines.join("\n"))
-                .scroll((scroll_offset(lines.len(), area.height, self.from_bottom), 0))
+                .scroll((offset, 0))
                 .block(pane_block("[^e] events", context.focused == self.id())),
             area,
         );
+        render_scrollbar(frame, area, lines.len(), viewport, usize::from(offset));
     }
 
     fn update(&mut self, event: &AppEvent) -> Vec<Action> {

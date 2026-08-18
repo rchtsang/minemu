@@ -1,6 +1,5 @@
 //! Command-line orchestration for image construction and headless execution.
 
-mod boot_rom;
 mod manifest;
 mod runner;
 mod tui;
@@ -43,6 +42,12 @@ pub enum CliError {
         path: std::path::PathBuf,
         #[source]
         source: toml::de::Error,
+    },
+    #[error("invalid Boot ROM size for {path}: expected {expected} bytes, found {actual}")]
+    InvalidBootRomSize {
+        path: std::path::PathBuf,
+        expected: usize,
+        actual: usize,
     },
     #[error("image validation failed: {0}")]
     Image(#[from] minemu_image::ImageError),

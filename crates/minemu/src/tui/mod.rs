@@ -19,8 +19,8 @@ use app::App;
 use terminal::TerminalSession;
 
 /// Runs the interactive terminal UI for one system image.
-pub fn run_tui(image: PathBuf, block_media: Option<PathBuf>) -> Result<()> {
-    let mut app = App::start(image, block_media)?;
+pub fn run_tui(image: PathBuf, boot_rom: PathBuf, block_media: Option<PathBuf>) -> Result<()> {
+    let mut app = App::start(image, boot_rom, block_media)?;
     let result = run_loop(&mut app);
     let _ = app.shutdown();
     result

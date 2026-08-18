@@ -30,15 +30,17 @@ format documented in `emulator.md`.
 
 ## Interactive And Headless Runs
 
-`minemu run` validates and maps the system image, maps the fixed platform boot
-ROM, and opens the interactive TUI in the paused reset state with `PC = 0`.
-Starting emulation executes the boot ROM; the host does not prepopulate kernel
-RAM. Use the command prompt to start, pause, resume, reset, inspect the paused
-machine, or quit. See `tui.md` for controls.
+`minemu run` validates and maps the system image and the explicitly supplied
+64-KiB Boot ROM, then opens the interactive TUI in the paused reset state with
+`PC = 0`. Starting emulation executes the Boot ROM; the host does not
+prepopulate kernel RAM. Use the command prompt to start, pause, resume, reset,
+inspect the paused machine, or quit. See `tui.md` for controls.
 
 ```sh
-minemu run minimum-template/system/build/minimum.img
 minemu run minimum-template/system/build/minimum.img \
+  --boot-rom minimum-template/bootrom/minemu-bootrom.bin
+minemu run minimum-template/system/build/minimum.img \
+  --boot-rom minimum-template/bootrom/minemu-bootrom.bin \
   --block-media build/disk.img
 ```
 
@@ -46,7 +48,9 @@ For CI or scripts, `--headless` stops after the requested virtual-tick budget.
 UART0 output is sent to standard output and UART1 output to standard error.
 
 ```sh
-minemu run minimum-template/system/build/minimum.img --headless --ticks 100000
+minemu run minimum-template/system/build/minimum.img \
+  --boot-rom minimum-template/bootrom/minemu-bootrom.bin \
+  --headless --ticks 100000
 ```
 
 The optional media file is copied into write-back device state. The runtime
@@ -56,10 +60,11 @@ terminal backend failure.
 ## Test Manifests
 
 `minemu test` runs a TOML manifest with scheduled UART input and assertions.
-The image path is relative to the test manifest.
+The image and Boot ROM paths are relative to the test manifest.
 
 ```toml
 image = "build/minimum.img"
+boot_rom = "../bootrom/minemu-bootrom.bin"
 max_ticks = 100
 
 [[inputs]]

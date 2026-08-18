@@ -41,7 +41,11 @@ impl TuiWidget for HintsWidget {
             },
         };
         let style = Style::default().fg(Color::DarkGray);
-        frame.render_widget(Paragraph::new(hints).style(style), columns[0]);
+        let hint_area = Rect {
+            width: columns[0].width.saturating_sub(1),
+            ..columns[0]
+        };
+        frame.render_widget(Paragraph::new(hints).style(style), hint_area);
         frame.render_widget(
             Paragraph::new(format!(" ticks: 0x{:016x}", context.ticks))
                 .style(style)

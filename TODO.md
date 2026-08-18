@@ -148,9 +148,9 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Reject Thumb entries, unsupported relocations, overlapping segments,
   invalid ranges, duplicate module names, and ROM overflow.
 - [x] Produce byte-identical images for identical inputs.
-- [x] Execute a fixed guest Boot ROM from reset PC zero for multi-segment kernel
-  copy, BSS zeroing, boot-info publication, physical trampoline entry, and
-  high-half handoff; do not host-apply those hardware behaviors.
+- [x] Execute a platform-supplied guest Boot ROM from reset PC zero for
+  multi-segment kernel copy, BSS zeroing, boot-info publication, physical
+  trampoline entry, and high-half handoff; do not host-apply those behaviors.
 - [x] Add corrupt/truncated/version-mismatched image parser tests. Boot-time
   image integrity validation is intentionally deferred.
 

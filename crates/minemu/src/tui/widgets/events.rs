@@ -38,7 +38,11 @@ impl TuiWidget for EventsWidget {
         frame.render_widget(
             Paragraph::new(lines.join("\n"))
                 .scroll((offset, 0))
-                .block(pane_block("[^e] events", context.focused == self.id())),
+                .block(pane_block(
+                    "[^e] events",
+                    context.focused == self.id(),
+                    area.width,
+                )),
             area,
         );
         render_scrollbar(frame, area, lines.len(), viewport, usize::from(offset));

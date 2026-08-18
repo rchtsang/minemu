@@ -13,7 +13,7 @@ use tracing_subscriber::EnvFilter;
     name = "minemu",
     about = "Package, boot, and test A32 teaching-platform images.",
     long_about = "Package independently linked A32 kernel and user ELFs into a system image, then boot it headlessly through the same deterministic runtime used by tests.",
-    after_help = "Examples:\n  minemu image minimum-template/system/minimum.toml --output build/minimum.img\n  minemu run build/minimum.img --ticks 100000\n  minemu test minimum-template/system/minimum-test.toml"
+    after_help = "Examples:\n  minemu image minimum-template/system/minimum.toml --output build/minimum.img\n  minemu run build/minimum.img --boot-rom minimum-template/bootrom/minemu-bootrom.bin\n  minemu test minimum-template/system/minimum-test.toml"
 )]
 struct Cli {
     /// Write structured diagnostics to a file instead of the terminal.
@@ -39,6 +39,9 @@ enum Command {
         /// Versioned system-ROM image produced by `minemu image`.
         #[arg(value_name = "IMAGE")]
         image: PathBuf,
+        /// Raw 64-KiB platform firmware mapped at the reset vector.
+        #[arg(long, value_name = "BOOT_ROM")]
+        boot_rom: PathBuf,
         /// Optional host raw-disk file attached as write-back block media.
         #[arg(short = 'm', long)]
         block_media: Option<PathBuf>,
@@ -100,15 +103,17 @@ fn execute(command: Command) -> minemu::Result<()> {
         }
         Command::Run {
             image,
+            boot_rom,
             block_media,
             ticks,
             headless,
         } => {
             if !headless {
-                return run_tui(image, block_media);
+                return run_tui(image, boot_rom, block_media);
             }
             let result = run_image(RunOptions {
                 image,
+                boot_rom,
                 block_media_path: block_media,
                 max_ticks: ticks,
                 inputs: Vec::new(),

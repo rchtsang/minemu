@@ -1,8 +1,9 @@
 # TUI
 
-`minemu run IMAGE` starts the terminal UI. Use `--headless --ticks N` for
-bounded automation. The TUI owns raw mode, mouse capture, and the alternate
-screen and restores them on normal exit, errors, and panic unwinding.
+`minemu run IMAGE --boot-rom BOOT_ROM` starts the terminal UI. Use `--headless
+--ticks N` for bounded automation. The TUI owns raw mode, mouse capture, and
+the alternate screen and restores them on normal exit, errors, and panic
+unwinding.
 
 The internal controller/widget design is documented in
 `tui-architecture.md`; `tui-design.md` is the visual interaction reference.
@@ -31,10 +32,12 @@ Memory inspection covers the readable physical byte map: Boot ROM, system ROM,
 and RAM. Physical `00000000` contains the platform reset vector and boot
 firmware, while the packaged system image begins at `08000000`. A highlighted
 cursor selects one byte; motions move the cursor and automatically shift the
-256-byte window across region boundaries while skipping unmapped and MMIO gaps.
-Wide panes display eight bytes per row and narrow panes display four. Addresses
-omit the `0x` prefix to preserve byte columns. Scrollable panes include an inset
-vertical position indicator that does not replace border corners. Narrow
+visible window across region boundaries while skipping unmapped and MMIO gaps.
+The byte request expands or contracts to fill every visible data row. Wide panes
+display eight bytes per row and narrow panes display four. Addresses omit the
+`0x` prefix to preserve byte columns. Scrollable panes include an inset vertical
+position indicator that does not replace border corners. Pane content reserves
+one blank column before the right border so clipped text remains apparent. Narrow
 register panes omit decimal values and retain hexadecimal values.
 
 ## Input Modes
@@ -92,7 +95,8 @@ leave it paused. Parse and runtime-operation failures are retained as bounded
 red messages in dialog rather than closing the terminal UI.
 
 Dialog messages wrap to the pane width and begin with `>` so message boundaries
-remain visible while scrolling.
+remain visible while scrolling. Help descriptions wrap within their table cells,
+and the close hint is rendered separately on the popup's bottom border.
 
 ## Snapshots
 
@@ -114,5 +118,6 @@ The file is appended to; `RUST_LOG` selects verbosity and defaults to `warn`.
 ```sh
 RUST_LOG=minemu=debug,minemu_runtime=debug,minemu_unicorn=trace \
 cargo run -p minemu -- --log-file /tmp/minemu.log run \
-  minimum-template/system/build/minimum.img
+  minimum-template/system/build/minimum.img \
+  --boot-rom minimum-template/bootrom/minemu-bootrom.bin
 ```

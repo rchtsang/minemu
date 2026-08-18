@@ -188,7 +188,7 @@ impl TuiWidget for SecondaryWidget {
         let (name, text, content_length, sticky_header) = match self.subview {
             SecondarySubview::Registers => (
                 "registers",
-                self.registers(area.width >= 34),
+                self.registers(area.width >= 35),
                 REGISTER_COUNT,
                 true,
             ),
@@ -210,6 +210,7 @@ impl TuiWidget for SecondaryWidget {
             Paragraph::new(text).scroll((scroll, 0)).block(pane_block(
                 format!("[^s] secondary ({name})"),
                 context.focused == self.id(),
+                area.width,
             )),
             area,
         );

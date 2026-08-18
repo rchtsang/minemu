@@ -21,7 +21,7 @@ use crate::tui::{
 use super::{pane_block, render_scrollbar};
 
 const MEMORY_REGIONS: [MemRegion; 3] = [MemRegion::BootRom, MemRegion::SystemRom, MemRegion::Ram];
-const MEMORY_WINDOW: u32 = 256;
+const DEFAULT_MEMORY_WINDOW: u32 = 256;
 
 pub struct PrimaryWidget {
     subview: PrimarySubview,
@@ -29,6 +29,8 @@ pub struct PrimaryWidget {
     memory: Vec<u8>,
     memory_cursor: PhysicalAddress,
     memory_columns: usize,
+    memory_window: u32,
+    memory_dirty: bool,
     execution: Option<ExecutionInspection>,
     disassembly_address: Option<VirtualAddress>,
     active: bool,
@@ -38,11 +40,13 @@ impl Default for PrimaryWidget {
     fn default() -> Self {
         Self {
             subview: PrimarySubview::Memory,
-            memory_range: PhysicalRange::new(MemRegion::Ram.base(), 256)
+            memory_range: PhysicalRange::new(MemRegion::Ram.base(), DEFAULT_MEMORY_WINDOW)
                 .expect("fixed RAM inspection range"),
             memory: Vec::new(),
             memory_cursor: MemRegion::Ram.base(),
             memory_columns: 8,
+            memory_window: DEFAULT_MEMORY_WINDOW,
+            memory_dirty: false,
             execution: None,
             disassembly_address: None,
             active: false,
@@ -237,22 +241,37 @@ impl PrimaryWidget {
     fn ensure_cursor_visible(&mut self) {
         let region = memory_region(self.memory_cursor).expect("cursor remains in mapped memory");
         let base = region.base().get();
-        let last_start = base + region.size() - MEMORY_WINDOW;
+        let window = self.memory_window.min(region.size());
+        let last_start = base + region.size() - window;
         let cursor = self.memory_cursor.get();
         let current_start = self.memory_range.start().get();
         let current_end = current_start + self.memory_range.length();
         let same_region = memory_region(self.memory_range.start()) == Some(region);
         let start = if same_region && (current_start..current_end).contains(&cursor) {
-            current_start
+            current_start.min(last_start)
         } else if cursor < current_start || !same_region {
             (cursor - (cursor - base) % self.memory_columns as u32).min(last_start)
         } else {
             cursor
-                .saturating_sub(MEMORY_WINDOW - self.memory_columns as u32)
+                .saturating_sub(window - self.memory_columns as u32)
                 .min(last_start)
         };
-        self.memory_range = PhysicalRange::new(PhysicalAddress::new(start), MEMORY_WINDOW)
+        self.memory_range = PhysicalRange::new(PhysicalAddress::new(start), window)
             .expect("cursor window remains in mapped memory");
+    }
+
+    fn update_memory_geometry(&mut self, area: Rect) {
+        let columns = if area.width >= 46 { 8 } else { 4 };
+        let rows = area.height.saturating_sub(4).max(1);
+        let window = u32::from(rows) * columns as u32;
+        if self.memory_columns == columns && self.memory_window == window {
+            return;
+        }
+        self.memory_columns = columns;
+        self.memory_window = window;
+        self.ensure_cursor_visible();
+        self.memory.clear();
+        self.memory_dirty = true;
     }
 }
 
@@ -272,12 +291,12 @@ impl TuiWidget for PrimaryWidget {
         };
         match self.subview {
             PrimarySubview::Memory => {
-                self.memory_columns = if area.width >= 45 { 8 } else { 4 };
-                self.ensure_cursor_visible();
+                self.update_memory_geometry(area);
                 frame.render_widget(
                     Paragraph::new(self.render_memory()).block(pane_block(
                         format!("[^p] primary ({name})"),
                         context.focused == self.id(),
+                        area.width,
                     )),
                     area,
                 );
@@ -285,8 +304,8 @@ impl TuiWidget for PrimaryWidget {
                     frame,
                     area,
                     memory_map_size(),
-                    MEMORY_WINDOW as usize,
-                    memory_linear_offset(self.memory_cursor).unwrap_or(0),
+                    self.memory_window as usize,
+                    memory_linear_offset(self.memory_range.start()).unwrap_or(0),
                 );
             }
             PrimarySubview::Disassembly => {
@@ -294,6 +313,7 @@ impl TuiWidget for PrimaryWidget {
                     Paragraph::new(self.render_disassembly()).block(pane_block(
                         format!("[^p] primary ({name})"),
                         context.focused == self.id(),
+                        area.width,
                     )),
                     area,
                 );
@@ -333,8 +353,10 @@ impl TuiWidget for PrimaryWidget {
     fn update(&mut self, event: &AppEvent) -> Vec<Action> {
         match event {
             AppEvent::Inspection(RuntimeInspection::LiveMemory(range, bytes)) => {
-                self.memory_range = *range;
-                self.memory = bytes.clone();
+                if *range == self.memory_range {
+                    self.memory = bytes.clone();
+                    self.memory_dirty = false;
+                }
             }
             AppEvent::Inspection(RuntimeInspection::Execution(execution)) => {
                 self.execution = Some(execution.clone());
@@ -363,6 +385,10 @@ impl TuiWidget for PrimaryWidget {
                 }
             }
             AppEvent::Refresh if self.active => return self.refresh(),
+            AppEvent::Pulse if self.active && self.memory_dirty => {
+                self.memory_dirty = false;
+                return self.refresh();
+            }
             AppEvent::PrimarySelected(subview) => {
                 self.subview = *subview;
                 if self.active {
@@ -433,6 +459,7 @@ fn motion_count(motion: Motion) -> usize {
 #[cfg(test)]
 mod tests {
     use minemu_platform::{MemRegion, PhysicalAddress};
+    use ratatui::layout::Rect;
 
     use super::{PrimaryWidget, memory_address_at, memory_linear_offset};
     use crate::tui::input::Motion;
@@ -465,5 +492,17 @@ mod tests {
             Option::<MemRegion>::from(widget.memory_range.start()),
             Some(MemRegion::SystemRom)
         );
+    }
+
+    #[test]
+    fn memory_window_fills_visible_data_rows() {
+        let mut widget = PrimaryWidget::default();
+        widget.update_memory_geometry(Rect::new(0, 0, 60, 20));
+        assert_eq!(widget.memory_columns, 8);
+        assert_eq!(widget.memory_range.length(), 16 * 8);
+
+        widget.update_memory_geometry(Rect::new(0, 0, 40, 20));
+        assert_eq!(widget.memory_columns, 4);
+        assert_eq!(widget.memory_range.length(), 16 * 4);
     }
 }

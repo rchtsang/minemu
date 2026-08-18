@@ -46,8 +46,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn start(image: PathBuf, block_media: Option<PathBuf>) -> Result<Self> {
-        let handle = start_runtime(&image, block_media)?;
+    pub fn start(image: PathBuf, boot_rom: PathBuf, block_media: Option<PathBuf>) -> Result<Self> {
+        let handle = start_runtime(&image, &boot_rom, block_media)?;
         let mut runtime = RuntimeController::new(handle);
         runtime.pause().map_err(|error| {
             error!(error = %error, "failed to request initial TUI pause");

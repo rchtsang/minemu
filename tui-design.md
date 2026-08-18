@@ -2,6 +2,12 @@
 
 - errors should generally not crash the tui, but be displayed with red text in the dialog pane
 - emulation starts paused in TUI mode and requires an explicit start action
+- clipped pane content leaves one blank column before the right border
+
+# header
+
+- a single top border is titled `minemu`
+- the selected view tab is surrounded by square brackets
 
 # commands and controls
 
@@ -152,6 +158,7 @@ Subviews:
   - movement selects bytes with a cursor and scrolls the memory window
   - shows eight bytes per row when wide enough and four bytes otherwise
   - addresses omit the `0x` prefix to preserve space for byte columns
+  - the requested byte window fills every available data row
   - Normal Mode:
     - Search ASCII: /[pattern]
     - Search Bytes: \\[pattern]
@@ -167,7 +174,8 @@ Subviews:
 
 The dialog wraps messages and prefixes each new message with `>`. Help is shown
 as a white command/description table in a green-bordered popup rather than
-appended to dialog history. Narrow register panes omit
+appended to dialog history. Descriptions wrap and the close hint is aligned with
+the bottom border. Narrow register panes omit
 decimal conversion and do not scroll beyond the last full page of registers.
 
 Memory searches scan all physical RAM. ASCII search uses UTF-8 input and byte

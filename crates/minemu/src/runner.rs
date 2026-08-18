@@ -6,18 +6,21 @@ use std::{
 };
 
 use minemu_core::{Machine, PhysicalMemory};
-use minemu_platform::{BOOT_ROM_BASE, InspectionRequest, MmuInspection, ObservableEvent};
+use minemu_platform::{
+    BOOT_ROM_BASE, BOOT_ROM_SIZE, InspectionRequest, MmuInspection, ObservableEvent,
+};
 use minemu_runtime::{
     LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeStatus, UartPort,
 };
 use serde::Deserialize;
 
-use crate::{CliError, Result, boot_rom::BOOT_ROM};
+use crate::{CliError, Result};
 
 /// Options for bounded headless execution of a system image.
 #[derive(Clone, Debug)]
 pub struct RunOptions {
     pub image: PathBuf,
+    pub boot_rom: PathBuf,
     pub block_media_path: Option<PathBuf>,
     pub max_ticks: u64,
     pub inputs: Vec<HeadlessInput>,
@@ -35,6 +38,7 @@ pub struct HeadlessInput {
 #[derive(Debug, Deserialize)]
 pub struct HeadlessTest {
     pub image: PathBuf,
+    pub boot_rom: PathBuf,
     #[serde(default = "default_max_ticks")]
     pub max_ticks: u64,
     #[serde(default)]
@@ -76,7 +80,7 @@ pub struct RunResult {
 
 /// Loads a system image and runs it headlessly for a bounded virtual-time budget.
 pub fn run_image(options: RunOptions) -> Result<RunResult> {
-    let runtime = start_runtime(&options.image, options.block_media_path)?;
+    let runtime = start_runtime(&options.image, &options.boot_rom, options.block_media_path)?;
     let mut inputs = options.inputs;
     inputs.sort_by_key(|input| input.at_tick);
     let mut next_input = 0;
@@ -142,10 +146,19 @@ pub fn run_image(options: RunOptions) -> Result<RunResult> {
 
 pub(crate) fn start_runtime(
     image_path: &Path,
+    boot_rom_path: &Path,
     block_media_path: Option<PathBuf>,
 ) -> Result<RuntimeHandle> {
     let image = minemu_image::SystemImage::parse(&read(image_path)?)?;
-    let config = runtime_config(&image, block_media_path)?;
+    let boot_rom = read(boot_rom_path)?;
+    if boot_rom.len() != BOOT_ROM_SIZE as usize {
+        return Err(CliError::InvalidBootRomSize {
+            path: boot_rom_path.into(),
+            expected: BOOT_ROM_SIZE as usize,
+            actual: boot_rom.len(),
+        });
+    }
+    let config = runtime_config(&boot_rom, &image, block_media_path)?;
     RuntimeHandle::spawn(config).map_err(|_| CliError::RuntimeSetup)
 }
 
@@ -163,6 +176,7 @@ pub fn run_headless(path: impl AsRef<Path>) -> Result<RunResult> {
     let root = path.parent().unwrap_or_else(|| Path::new("."));
     let result = run_image(RunOptions {
         image: resolve(root, &test.image),
+        boot_rom: resolve(root, &test.boot_rom),
         block_media_path: None,
         max_ticks: test.max_ticks,
         inputs: test.inputs,
@@ -172,11 +186,12 @@ pub fn run_headless(path: impl AsRef<Path>) -> Result<RunResult> {
 }
 
 fn runtime_config(
+    boot_rom: &[u8],
     image: &minemu_image::SystemImage,
     block_media_path: Option<PathBuf>,
 ) -> Result<RuntimeConfig> {
     let memory =
-        PhysicalMemory::with_roms(BOOT_ROM, image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
+        PhysicalMemory::with_roms(boot_rom, image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
     let mut config = RuntimeConfig::new(Machine::new(memory, 4096), BOOT_ROM_BASE);
     config.block_media_path = block_media_path;
     Ok(config)
@@ -287,14 +302,13 @@ const fn default_max_ticks() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use minemu_core::{MachineStatus, PhysicalMemoryAccess};
+    use minemu_core::MachineStatus;
     use minemu_image::SystemImage;
     use minemu_platform::{
-        BOOT_INFO_PADDR, BOOT_INFO_SIZE, BOOT_ROM_BASE, BOOTSTRAP_ENTRY_PADDR, IMAGE_HEADER_SIZE,
+        BOOT_INFO_PADDR, BOOT_ROM_BASE, BOOT_ROM_SIZE, BOOTSTRAP_ENTRY_PADDR, IMAGE_HEADER_SIZE,
         ImageHeader, KERNEL_SEGMENT_SIZE, KernelSegment, PhysicalAddress, PhysicalRange,
         VirtualAddress,
     };
-    use minemu_unicorn::UnicornBackend;
 
     use super::{HeadlessAssertion, RunResult, assert_result, runtime_config};
     use crate::CliError;
@@ -349,51 +363,12 @@ mod tests {
     }
 
     #[test]
-    fn boot_rom_loads_the_kernel_and_hands_off_from_reset() {
-        let image = boot_test_image();
-        let mut config = runtime_config(&image, None).unwrap();
+    fn image_reset_returns_to_boot_rom_with_clear_ram() {
+        let boot_rom = test_boot_rom();
+        let config = runtime_config(&boot_rom, &boot_test_image(), None).unwrap();
         assert_eq!(config.entry, BOOT_ROM_BASE);
         assert!(config.initial_ram_writes.is_empty());
-
-        let bootstrap = PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR);
-        config
-            .machine
-            .memory
-            .write_range(PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR + 4), &[0xaa; 4])
-            .unwrap();
-        let mut backend = UnicornBackend::new(config.machine).unwrap();
-        backend.set_program_counter(config.entry).unwrap();
-        backend.run(config.entry, u32::MAX, 4096);
-
-        assert_eq!(backend.program_counter().unwrap(), BOOTSTRAP_ENTRY_PADDR);
-        assert_eq!(backend.cpu_state().unwrap().registers[0], 0xc000_7000);
-
-        let mut loaded = [0; 8];
-        backend
-            .machine()
-            .memory
-            .read_range(PhysicalRange::new(bootstrap, 8).unwrap(), &mut loaded)
-            .unwrap();
-        assert_eq!(loaded, [0xfe, 0xff, 0xff, 0xea, 0, 0, 0, 0]);
-
-        let expected_boot_info = image.boot_plan().unwrap().boot_info;
-        let mut boot_info = [0; BOOT_INFO_SIZE];
-        backend
-            .machine()
-            .memory
-            .read_range(
-                PhysicalRange::new(PhysicalAddress::new(BOOT_INFO_PADDR), BOOT_INFO_SIZE as u32)
-                    .unwrap(),
-                &mut boot_info,
-            )
-            .unwrap();
-        assert_eq!(boot_info, expected_boot_info);
-    }
-
-    #[test]
-    fn image_reset_returns_to_boot_rom_with_clear_ram() {
-        let runtime =
-            RuntimeHandle::spawn(runtime_config(&boot_test_image(), None).unwrap()).unwrap();
+        let runtime = RuntimeHandle::spawn(config).unwrap();
         runtime.pause().unwrap();
         super::wait_for(&runtime, LifecycleState::Paused).unwrap();
         runtime.reset().unwrap();
@@ -415,6 +390,19 @@ mod tests {
 
         let RuntimeInspection::LiveMemory(_, bytes) = runtime
             .request_inspection(RuntimeInspectionRequest::LiveMemory(
+                PhysicalRange::new(PhysicalAddress::new(BOOT_ROM_BASE), 4).unwrap(),
+            ))
+            .unwrap()
+            .recv()
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("live-memory request has a fixed response type");
+        };
+        assert_eq!(bytes, [0xfe, 0xff, 0xff, 0xea]);
+
+        let RuntimeInspection::LiveMemory(_, bytes) = runtime
+            .request_inspection(RuntimeInspectionRequest::LiveMemory(
                 PhysicalRange::new(PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR), 8).unwrap(),
             ))
             .unwrap()
@@ -426,6 +414,12 @@ mod tests {
         };
         assert_eq!(bytes, [0; 8]);
         runtime.shutdown().unwrap();
+    }
+
+    fn test_boot_rom() -> Vec<u8> {
+        let mut bytes = vec![0; BOOT_ROM_SIZE as usize];
+        bytes[..4].copy_from_slice(&[0xfe, 0xff, 0xff, 0xea]); // b .
+        bytes
     }
 
     fn boot_test_image() -> SystemImage {

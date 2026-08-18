@@ -52,7 +52,7 @@ impl SplitLayout {
         result.insert(WidgetId::Header, rows[0]);
         result.insert(WidgetId::InputBar, rows[2]);
         result.insert(WidgetId::Hints, rows[3]);
-        result.insert(WidgetId::Help, centered(area, 78, 80));
+        result.insert(WidgetId::Help, centered(area, 90, 34));
 
         if rows[1].width < 70 || rows[1].height < 12 {
             let visible = match (view, focused) {
@@ -94,15 +94,13 @@ impl SplitLayout {
     }
 }
 
-fn centered(area: Rect, width_percent: u16, height_percent: u16) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - height_percent) / 2),
-            Constraint::Percentage(height_percent),
-            Constraint::Percentage((100 - height_percent) / 2),
-        ])
-        .split(area);
+fn centered(area: Rect, width_percent: u16, maximum_height: u16) -> Rect {
+    let height = maximum_height.min(area.height.saturating_sub(2));
+    let vertical = Rect {
+        y: area.y + area.height.saturating_sub(height) / 2,
+        height,
+        ..area
+    };
     Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -110,7 +108,7 @@ fn centered(area: Rect, width_percent: u16, height_percent: u16) -> Rect {
             Constraint::Percentage(width_percent),
             Constraint::Percentage((100 - width_percent) / 2),
         ])
-        .split(vertical[1])[1]
+        .split(vertical)[1]
 }
 
 #[cfg(test)]

@@ -22,10 +22,16 @@ use ratatui::{
     Frame,
     layout::{Margin, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState, block::Padding},
 };
 
-pub fn pane_block(title: impl Into<String>, focused: bool) -> Block<'static> {
+pub fn pane_block(title: impl Into<String>, focused: bool, width: u16) -> Block<'static> {
+    let mut title = title.into();
+    let maximum = width.saturating_sub(4) as usize;
+    if title.chars().count() > maximum {
+        title = title.chars().take(maximum).collect();
+        title.push(' ');
+    }
     let style = if focused {
         Style::default()
             .fg(Color::LightYellow)
@@ -35,7 +41,8 @@ pub fn pane_block(title: impl Into<String>, focused: bool) -> Block<'static> {
     };
     Block::default()
         .borders(Borders::ALL)
-        .title(title.into())
+        .padding(Padding::right(1))
+        .title(title)
         .title_style(style)
         .border_style(style)
 }

@@ -17,6 +17,3 @@ crossterm = "0.28.1"
 capstone = "0.13.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
-
-[dev-dependencies]
-minemu-unicorn = { path = "../minemu-unicorn" }

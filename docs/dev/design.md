@@ -36,7 +36,8 @@ replacement policy central without requiring ARM VMSA descriptor details.
 ### ROM, RAM, and Process Creation
 
 The image packer produces an immutable system-ROM image from separately linked
-kernel and user ELF files. Reset starts at a fixed, guest-executed boot ROM,
+kernel and user ELF files. `minimum-template` supplies the separately built Boot
+ROM as an explicit emulator input. Reset starts at that guest-executed firmware,
 which copies the kernel into RAM rather than relying on host-side initialization.
 User programs remain immutable ROM modules until the student kernel creates a
 process by allocating RAM and copying a module into it.
@@ -78,7 +79,7 @@ The project should begin as a small Cargo workspace.
 | `minemu-image` | Versioned system-ROM image parsing and packing |
 | `minemu-runtime` | Emulator-thread lifecycle, bounded commands, disk flush, and status publication |
 | `minemu` | CLI, headless test runner, and Ratatui/Crossterm TUI |
-| `minimum-template/` | Student headers, linker scripts, startup/vector assembly, runtime, examples, and starter projects |
+| `minimum-template/` | Boot firmware, student headers, linker scripts, startup/vector assembly, runtime, examples, and starter projects |
 
 The primary Rust dependencies are `unicorn-engine`, `object`, `ratatui`,
 `crossterm`, `clap`, `serde`, and an error library such as `thiserror`.
@@ -139,7 +140,8 @@ work only:
 
 ```sh
 minemu image system/minimum.toml --output build/system.img
-minemu run build/system.img --block-media build/disk.img --ticks 100000
+minemu run build/system.img --boot-rom bootrom/minemu-bootrom.bin \
+  --block-media build/disk.img --ticks 100000
 minemu test system/minimum-test.toml
 ```
 

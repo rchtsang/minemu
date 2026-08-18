@@ -62,7 +62,7 @@ impl TuiWidget for DialogWidget {
 
     fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
         let lines = self.lines();
-        let inner_width = usize::from(area.width.saturating_sub(2)).max(1);
+        let inner_width = usize::from(area.width.saturating_sub(3)).max(1);
         let wrapped_lines = lines
             .iter()
             .map(|line| line.width().max(1).div_ceil(inner_width))
@@ -73,7 +73,11 @@ impl TuiWidget for DialogWidget {
             Paragraph::new(Text::from(lines.clone()))
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
-                .block(pane_block("[^d] dialog", context.focused == self.id())),
+                .block(pane_block(
+                    "[^d] dialog",
+                    context.focused == self.id(),
+                    area.width,
+                )),
             area,
         );
         render_scrollbar(frame, area, wrapped_lines, viewport, usize::from(offset));

@@ -72,6 +72,7 @@ impl TuiWidget for ConsoleWidget {
                         if self.uart == UartPort::Uart0 { 0 } else { 1 }
                     ),
                     context.focused == self.id(),
+                    area.width,
                 )),
             area,
         );

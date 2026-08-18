@@ -63,10 +63,12 @@ VA 0xc000_0000..0xc3ff_ffff -> PA 0x4000_0000..0x43ff_ffff
 ```
 
 Reset enters privileged A32 state at `PC = 0x0000_0000` with translation
-disabled. The host packer requires `bootstrap_entry_paddr = 0x4000_8000`. The
-guest-executed boot ROM reads the image from system ROM, copies kernel segments
-to their declared physical addresses, clears each trailing BSS range, writes
-boot info, and starts that entry with translation disabled and
+disabled. The emulator maps the exact 64-KiB raw Boot ROM supplied by the
+platform project; `minimum-template/bootrom` owns the reference firmware. The
+host packer requires `bootstrap_entry_paddr = 0x4000_8000`. The guest-executed
+Boot ROM reads the image from system ROM, copies kernel segments to their
+declared physical addresses, clears each trailing BSS range, writes boot info,
+and starts that entry with translation disabled and
 `r0 = 0xc000_7000`. The bootstrap code
 creates the initial page tables, installs TTBR0, enables SCTLR.M, sets VBAR to
 the kernel vector base, and branches to `kernel_entry_vaddr` in the high-half
@@ -492,6 +494,7 @@ a material state change. CPU-register, MMU-walk, memory, and detailed device
 inspection are requested explicitly and are not continuously copied into every
 status update.
 
-`minemu test` runs a completed system-ROM image with scheduled input and
-assertions over console output, events, faults, and selected machine state. It
-uses the same machine and runtime contract as interactive execution.
+`minemu test` runs an explicitly supplied Boot ROM and completed system-ROM
+image with scheduled input and assertions over console output, events, faults,
+and selected machine state. It uses the same machine and runtime contract as
+interactive execution.

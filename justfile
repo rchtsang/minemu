@@ -23,17 +23,13 @@ lint:
 fmt:
   {{ cargo }} fmt --all -- --check
 
-# rebuild and compare the checked platform boot ROM
-bootrom:
-  make -C "{{ root }}/crates/minemu/bootrom" check
-
 # build and boot-test the freestanding minimum template and reference examples
 template:
   make -C "{{ root }}/minimum-template"
   make -C "{{ root }}/minimum-template" MINEMU="{{ cargo }} run --manifest-path {{ root }}/Cargo.toml -p minemu --" system-test
 
 # ci pipeline
-ci: fmt check lint test bootrom template
+ci: fmt check lint test template
 
 # cargo clean
 clean:

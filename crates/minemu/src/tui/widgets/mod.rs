@@ -81,8 +81,9 @@ pub fn render_scrollbar(
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .track_style(Style::default().fg(Color::DarkGray))
         .thumb_style(Style::default().fg(Color::LightYellow));
-    let mut state = ScrollbarState::new(content_length)
-        .position(position)
+    let maximum_position = content_length.saturating_sub(viewport_length);
+    let mut state = ScrollbarState::new(maximum_position + 1)
+        .position(position.min(maximum_position))
         .viewport_content_length(viewport_length);
     let track_area = area.inner(Margin {
         horizontal: 0,

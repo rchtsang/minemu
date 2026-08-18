@@ -20,25 +20,32 @@ The **inspect** view contains one selected primary subview, one selected
 secondary subview, and the dialog. Entering inspect pauses emulation before
 requesting live Unicorn-backed snapshots.
 
-- Primary: memory or A32 disassembly.
-- Secondary: registers, peripherals, or pending fault/interrupt state.
+- Primary: physical memory, virtual memory, or A32 disassembly.
+- Secondary: registers, MMU system state, peripherals, or pending
+  fault/interrupt state.
 - Pending combines MMU last-fault state with interrupt pending, enabled, and
   claimed state.
 
 Instruction-read failures do not close the TUI. Registers and other snapshots
 remain visible while the disassembly pane reports the original error.
 
-Memory inspection covers the readable physical byte map: Boot ROM, system ROM,
+Physical memory inspection covers the readable byte map: Boot ROM, system ROM,
 and RAM. Physical `00000000` contains the platform reset vector and boot
-firmware, while the packaged system image begins at `08000000`. A highlighted
-cursor selects one byte; motions move the cursor and automatically shift the
-visible window across region boundaries while skipping unmapped and MMIO gaps.
-The byte request expands or contracts to fill every visible data row. Wide panes
+firmware, while the packaged system image begins at `08000000`. Virtual memory
+inspection translates each page through the guest's live MMU state. It rejects
+device mappings so inspection cannot trigger MMIO side effects. Both memory
+views have independent cursors and visible windows.
+
+A highlighted cursor selects one byte; motions move the cursor and automatically
+shift the visible window. Physical navigation skips unmapped and MMIO gaps. The
+byte request expands or contracts to fill every visible data row. Wide panes
 display eight bytes per row and narrow panes display four. Addresses omit the
-`0x` prefix to preserve byte columns. Scrollable panes include an inset vertical
-position indicator that does not replace border corners. Pane content reserves
-one blank column before the right border so clipped text remains apparent. Narrow
-register panes omit decimal values and retain hexadecimal values.
+`0x` prefix to preserve byte columns. Disassembly labels its address column as
+virtual, labels instruction bytes as raw, and highlights the current PC when it
+is visible. Scrollable panes include an inset vertical position indicator that
+does not replace border corners. Pane content reserves one blank column before
+the right border so clipped text remains apparent. Narrow register panes omit
+decimal values and retain hexadecimal values.
 
 ## Input Modes
 
@@ -68,7 +75,7 @@ in hexadecimal.
 | `?` | Open the green-bordered help table. |
 | Ctrl+left-drag | Resize the main horizontal split. |
 
-Memory and disassembly goto accept hexadecimal addresses, optionally prefixed
+Physical memory, virtual memory, and disassembly goto accept hexadecimal addresses, optionally prefixed
 with `0x`. Register goto accepts `pc`, `lr`, `sp`, `r0` through `r12`, `cpsr`,
 or `spsr`. ASCII and byte searches scan all physical RAM on the emulator thread
 in bounded overlapping chunks and move the memory window to a match.
@@ -85,8 +92,9 @@ in bounded overlapping chunks and move the memory window to a match.
 | `:view r`, `:view runtime` | Select runtime. |
 | `:view i`, `:view inspect` | Select inspect and pause. |
 | `:set uart 0|1` | Select console UART. |
-| `:set primary mem|disasm` | Select primary inspect subview. |
-| `:set secondary reg|peri|pend` | Select secondary inspect subview. |
+| `:set primary pmem|vmem|disasm` | Select primary inspect subview. |
+| `:set secondary reg|sys|peri|pend` | Select secondary inspect subview. |
+| `:translate ADDRESS`, `:xlate ADDRESS` | Translate a virtual address through the live MMU. |
 | `:g LOCATION`, `:goto LOCATION` | Apply pane-specific goto. |
 
 Opening the command bar temporarily pauses a running guest. Cancelling or

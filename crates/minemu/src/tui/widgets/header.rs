@@ -43,12 +43,12 @@ impl TuiWidget for HeaderWidget {
 
         let columns = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(24), Constraint::Min(1)])
+            .constraints([Constraint::Length(25), Constraint::Min(1)])
             .split(inner);
         let selected = usize::from(context.view == View::Inspect);
         let titles = match context.view {
-            View::Runtime => ["[ runtime ]", "inspect"],
-            View::Inspect => ["runtime", "[ inspect ]"],
+            View::Runtime => ["[ runtime ]", "  inspect  "],
+            View::Inspect => ["  runtime  ", "[ inspect ]"],
         };
         frame.render_widget(
             Tabs::new(titles)

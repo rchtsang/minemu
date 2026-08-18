@@ -1,7 +1,9 @@
-use minemu_runtime::UartPort;
+use minemu_platform::VirtualAddress;
+use minemu_runtime::{RuntimeInspectionRequest, UartPort};
 
 use crate::tui::{
     action::Action,
+    input::parse_hex_address,
     types::{PrimarySubview, SecondarySubview, View, WidgetId},
 };
 
@@ -33,6 +35,17 @@ pub fn parse(command: &str, target: WidgetId) -> Result<Vec<Action>, String> {
                 value: value.into(),
             }]
         }
+        "translate" | "xlate" => {
+            let value = words
+                .next()
+                .ok_or_else(|| "usage: :translate <virtual-address>".to_string())?;
+            vec![Action::RequestInspection {
+                target: WidgetId::Dialog,
+                request: RuntimeInspectionRequest::Translate(VirtualAddress::new(
+                    parse_hex_address(value)?,
+                )),
+            }]
+        }
         value => return Err(format!("unknown command: {value}")),
     };
     if words.next().is_some() {
@@ -45,12 +58,20 @@ fn parse_set(key: Option<&str>, value: Option<&str>) -> Result<Vec<Action>, Stri
     let action = match (key, value) {
         (Some("uart"), Some("0")) => Action::SetUart(UartPort::Uart0),
         (Some("uart"), Some("1")) => Action::SetUart(UartPort::Uart1),
-        (Some("primary"), Some("mem" | "memory")) => Action::SetPrimary(PrimarySubview::Memory),
+        (Some("primary"), Some("pmem" | "physical" | "mem" | "memory")) => {
+            Action::SetPrimary(PrimarySubview::PhysicalMemory)
+        }
+        (Some("primary"), Some("vmem" | "virtual")) => {
+            Action::SetPrimary(PrimarySubview::VirtualMemory)
+        }
         (Some("primary"), Some("disasm" | "disassembly")) => {
             Action::SetPrimary(PrimarySubview::Disassembly)
         }
         (Some("secondary"), Some("reg" | "registers")) => {
             Action::SetSecondary(SecondarySubview::Registers)
+        }
+        (Some("secondary"), Some("sys" | "system")) => {
+            Action::SetSecondary(SecondarySubview::System)
         }
         (Some("secondary"), Some("peri" | "peripherals")) => {
             Action::SetSecondary(SecondarySubview::Peripherals)
@@ -65,6 +86,8 @@ fn parse_set(key: Option<&str>, value: Option<&str>) -> Result<Vec<Action>, Stri
 
 #[cfg(test)]
 mod tests {
+    use minemu_runtime::RuntimeInspectionRequest;
+
     use super::parse;
     use crate::tui::{action::Action, types::WidgetId};
 
@@ -79,5 +102,15 @@ mod tests {
             [Action::ToggleView]
         ));
         assert!(parse("set secondary pend", WidgetId::Dialog).is_ok());
+        assert!(parse("set primary vmem", WidgetId::Dialog).is_ok());
+        assert!(matches!(
+            parse("translate 0xc0030264", WidgetId::Primary)
+                .unwrap()
+                .as_slice(),
+            [Action::RequestInspection {
+                target: WidgetId::Dialog,
+                request: RuntimeInspectionRequest::Translate(address),
+            }] if address.get() == 0xc003_0264
+        ));
     }
 }

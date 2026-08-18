@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use minemu_core::{CoreError, Machine, MachineStatus};
 use minemu_platform::{
     InspectionRequest, MmuInspection, ObservableEvent, PeripheralsInspection, PhysicalAddress,
-    PhysicalRange,
+    PhysicalRange, VirtualAddress,
 };
 use minemu_unicorn::{BackendError, ExecutionInspection};
 use thiserror::Error;
@@ -52,6 +52,8 @@ pub enum RuntimeInspection {
     Peripherals(PeripheralsInspection),
     Events(Vec<ObservableEvent>),
     LiveMemory(PhysicalRange, Vec<u8>),
+    VirtualMemory(VirtualAddress, Vec<u8>),
+    Translation(VirtualAddress, PhysicalAddress),
     Execution(ExecutionInspection),
     SearchMemory(Option<PhysicalAddress>),
 }
@@ -63,6 +65,13 @@ pub enum RuntimeInspectionRequest {
     Machine(InspectionRequest),
     /// Reads the authoritative physical RAM mapping from Unicorn.
     LiveMemory(PhysicalRange),
+    /// Reads virtual data memory through the active MMU without invoking MMIO.
+    VirtualMemory {
+        address: VirtualAddress,
+        length: usize,
+    },
+    /// Translates one virtual address through the active MMU.
+    Translate(VirtualAddress),
     /// Captures CPU state and instruction bytes from Unicorn.
     Execution {
         address: Option<minemu_platform::VirtualAddress>,

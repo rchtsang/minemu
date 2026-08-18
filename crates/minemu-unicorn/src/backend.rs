@@ -63,6 +63,8 @@ pub enum BackendError {
     EmptySearchPattern,
     #[error("memory search pattern exceeds the {maximum}-byte limit: {length} bytes")]
     SearchPatternTooLarge { length: usize, maximum: usize },
+    #[error("virtual memory inspection resolves to device address 0x{0:08x}")]
+    VirtualInspectionDevice(u32),
 }
 
 type Result<T> = std::result::Result<T, BackendError>;
@@ -263,11 +265,46 @@ impl UnicornBackend {
         address: VirtualAddress,
         length: usize,
     ) -> Result<Vec<u8>> {
+        self.read_translated_memory(address, length, Prot::EXEC, false)
+    }
+
+    /// Reads virtual data bytes without allowing inspection to trigger MMIO reads.
+    pub fn inspect_virtual_memory(
+        &mut self,
+        address: VirtualAddress,
+        length: usize,
+    ) -> Result<Vec<u8>> {
+        self.read_translated_memory(address, length, Prot::READ, true)
+    }
+
+    /// Translates one virtual address using read permissions and current MMU state.
+    pub fn translate_virtual_address(
+        &mut self,
+        address: VirtualAddress,
+    ) -> Result<PhysicalAddress> {
+        let physical = self
+            .engine
+            .vmem_translate(u64::from(address.get()), Prot::READ)
+            .map_err(BackendError::Unicorn)?;
+        let physical = u32::try_from(physical).map_err(|_| BackendError::InspectionRange)?;
+        Ok(PhysicalAddress::new(physical))
+    }
+
+    fn read_translated_memory(
+        &mut self,
+        address: VirtualAddress,
+        length: usize,
+        protection: Prot,
+        reject_devices: bool,
+    ) -> Result<Vec<u8>> {
+        let access = if protection == Prot::EXEC {
+            "execute"
+        } else {
+            "read"
+        };
         trace!(
             virtual_address = address.get(),
-            length,
-            access = "execute",
-            "reading translated Unicorn instruction bytes for inspection"
+            length, access, "reading translated Unicorn instruction bytes for inspection"
         );
         let mut bytes = vec![0; length];
         let mut offset = 0;
@@ -281,17 +318,25 @@ impl UnicornBackend {
             let count = (length - offset).min(page_remaining as usize);
             let physical_address = self
                 .engine
-                .vmem_translate(u64::from(virtual_address), Prot::EXEC)
+                .vmem_translate(u64::from(virtual_address), protection)
                 .map_err(|error| {
                     warn!(
                         virtual_address,
                         length = count,
-                        access = "execute",
+                        access,
                         error = ?error,
                         "Unicorn virtual inspection translation failed"
                     );
                     BackendError::Unicorn(error)
                 })?;
+            let physical_u32 =
+                u32::try_from(physical_address).map_err(|_| BackendError::InspectionRange)?;
+            if reject_devices
+                && Option::<MemRegion>::from(PhysicalAddress::new(physical_u32))
+                    .is_some_and(MemRegion::is_device)
+            {
+                return Err(BackendError::VirtualInspectionDevice(physical_u32));
+            }
             self.engine
                 .mem_read(physical_address, &mut bytes[offset..offset + count])
                 .map_err(|error| {
@@ -299,7 +344,7 @@ impl UnicornBackend {
                         virtual_address,
                         physical_address,
                         length = count,
-                        access = "execute",
+                        access,
                         error = ?error,
                         "Unicorn translated physical inspection read failed"
                     );
@@ -1024,6 +1069,13 @@ mod tests {
                 next_physical_page | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE,
             )
             .unwrap();
+        machine
+            .memory
+            .write_u32(
+                PhysicalAddress::new(ram + 0x1000 + (table_index + 2) * 4),
+                MemRegion::Uart0.base().get() | PTE_VALID | PTE_READABLE,
+            )
+            .unwrap();
         let instructions = [
             0x00, 0xf0, 0x20, 0xe3, // nop
             0xfd, 0xff, 0xff, 0xea, // b 0xc0030260
@@ -1051,10 +1103,27 @@ mod tests {
         assert_eq!(inspection.instruction_error, None);
         assert_eq!(
             backend
+                .translate_virtual_address(VirtualAddress::new(virtual_page + 0xffc))
+                .unwrap(),
+            PhysicalAddress::new(physical_page + 0xffc)
+        );
+        assert_eq!(
+            backend
+                .inspect_virtual_memory(VirtualAddress::new(virtual_page + 0xffc), 8)
+                .unwrap(),
+            [1, 2, 3, 4, 5, 6, 7, 8]
+        );
+        assert_eq!(
+            backend
                 .read_virtual_memory(VirtualAddress::new(virtual_page + 0xffc), 8)
                 .unwrap(),
             [1, 2, 3, 4, 5, 6, 7, 8]
         );
+        assert!(matches!(
+            backend.inspect_virtual_memory(VirtualAddress::new(virtual_page + 0x2000), 1),
+            Err(BackendError::VirtualInspectionDevice(address))
+                if address == MemRegion::Uart0.base().get()
+        ));
     }
 
     #[test]

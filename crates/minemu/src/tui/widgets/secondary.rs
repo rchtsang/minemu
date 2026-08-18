@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use minemu_platform::{MmuInspection, PeripheralsInspection};
+use minemu_platform::{FaultCause, MmuInspection, PeripheralsInspection};
 use minemu_runtime::{ExecutionInspection, RuntimeInspection, RuntimeInspectionRequest};
 use ratatui::{Frame, layout::Rect, widgets::Paragraph};
 
@@ -14,14 +14,15 @@ use crate::tui::{
 use super::{pane_block, render_scrollbar};
 
 const REGISTER_COUNT: usize = 18;
+const SECONDARY_VIEW_COUNT: usize = 4;
 
 pub struct SecondaryWidget {
     subview: SecondarySubview,
     execution: Option<ExecutionInspection>,
     peripherals: Option<PeripheralsInspection>,
     mmu: Option<MmuInspection>,
-    row: usize,
-    max_row: usize,
+    rows: [usize; SECONDARY_VIEW_COUNT],
+    max_rows: [usize; SECONDARY_VIEW_COUNT],
     active: bool,
 }
 
@@ -32,8 +33,8 @@ impl Default for SecondaryWidget {
             execution: None,
             peripherals: None,
             mmu: None,
-            row: 0,
-            max_row: REGISTER_COUNT - 1,
+            rows: [0; SECONDARY_VIEW_COUNT],
+            max_rows: [REGISTER_COUNT - 1, 0, 0, 0],
             active: false,
         }
     }
@@ -49,6 +50,10 @@ impl SecondaryWidget {
                     before: 0,
                     after: 4,
                 },
+            }],
+            SecondarySubview::System => vec![Action::RequestInspection {
+                target: self.id(),
+                request: RuntimeInspectionRequest::Machine(minemu_platform::InspectionRequest::Mmu),
             }],
             SecondarySubview::Peripherals => vec![Action::RequestInspection {
                 target: self.id(),
@@ -73,6 +78,10 @@ impl SecondaryWidget {
         }
     }
 
+    fn row(&self) -> usize {
+        self.rows[self.subview.index()]
+    }
+
     fn registers(&self, show_decimal: bool) -> String {
         let Some(execution) = &self.execution else {
             return "register snapshot unavailable".into();
@@ -90,7 +99,7 @@ impl SecondaryWidget {
         } else {
             "       hex".into()
         }];
-        lines.extend(values.into_iter().skip(self.row).map(|(name, value)| {
+        lines.extend(values.into_iter().skip(self.row()).map(|(name, value)| {
             if show_decimal {
                 format!("{name:<5} 0x{value:08x}  {value:>10}")
             } else {
@@ -100,52 +109,112 @@ impl SecondaryWidget {
         lines.join("\n")
     }
 
+    fn system(&self) -> String {
+        self.mmu.map_or_else(
+            || "MMU:\n  snapshot unavailable".into(),
+            |mmu| {
+                format!(
+                    "MMU:\n  enabled: {}\n  ttbr0:   0x{:08x}\n  vbar:    0x{:08x}",
+                    yes_no(mmu.enabled),
+                    mmu.ttbr0.get(),
+                    mmu.vector_base.get()
+                )
+            },
+        )
+    }
+
     fn peripherals(&self) -> String {
         self.peripherals.as_ref().map_or_else(
-            || "peripheral snapshot unavailable".into(),
+            || "Peripherals:\n  snapshot unavailable".into(),
             |p| {
+                let latest_trace = p.trace.last().map_or_else(
+                    || "  latest:  none".to_string(),
+                    |event| {
+                        format!(
+                            "  tick:    0x{:016x}\n  value:   0x{:08x}",
+                            event.tick, event.value
+                        )
+                    },
+                );
                 format!(
-                    "UART0 status 0x{:08x} control 0x{:08x}\nUART1 status 0x{:08x} control 0x{:08x}\nSysTick period {} control 0x{:08x} status 0x{:08x}\nBlock lba {} sectors {} dma 0x{:08x}\nBlock status 0x{:08x} error {}\nRNG state 0x{:08x}",
+                    "UART0:\n  status:  0x{:08x}\n  control: 0x{:08x}\n  rx:      {}\n  rx irq:  {}\n  tx:      {} bytes\n\
+UART1:\n  status:  0x{:08x}\n  control: 0x{:08x}\n  rx:      {}\n  rx irq:  {}\n  tx:      {} bytes\n\
+SysTick:\n  period:  {}\n  control: 0x{:08x}\n  status:  0x{:08x}\n\
+Block:\n  lba:     {}\n  sectors: {}\n  dma:     0x{:08x}\n  control: 0x{:08x}\n  status:  0x{:08x}\n  error:   0x{:08x}\n  dirty:   {}\n  media:   {}\n\
+RNG:\n  state:   0x{:08x}\n\
+Trace:\n  events:  {}\n{}",
                     p.uart0.status,
                     p.uart0.control,
+                    p.uart0.rx_queued,
+                    enabled_disabled(p.uart0.rx_irq_enabled),
+                    p.uart0.tx_history.len(),
                     p.uart1.status,
                     p.uart1.control,
+                    p.uart1.rx_queued,
+                    enabled_disabled(p.uart1.rx_irq_enabled),
+                    p.uart1.tx_history.len(),
                     p.systick.period,
                     p.systick.control,
                     p.systick.status,
                     p.block.lba,
                     p.block.sector_count,
                     p.block.dma_address,
+                    p.block.control,
                     p.block.status,
                     p.block.error,
+                    p.block.dirty_sector_count,
+                    if p.block.media_attached { "attached" } else { "none" },
                     p.rng.state,
+                    p.trace.len(),
+                    latest_trace
                 )
             },
         )
     }
 
     fn pending(&self) -> String {
-        let irq = self.peripherals.as_ref().map(|p| {
-            format!(
-                "IRQ pending 0x{:08x}\nIRQ enabled 0x{:08x}\nIRQ claim {:?}",
-                p.interrupts.pending, p.interrupts.enabled, p.interrupts.claim
-            )
-        });
-        let mmu = self.mmu.map(|m| {
-            format!(
-                "MMU enabled {}\nlast fault address {:?}\nlast fault status {:?}",
-                m.enabled, m.last_fault_address, m.last_fault_status
-            )
-        });
-        [irq, mmu]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join("\n")
+        let interrupts = self.peripherals.as_ref().map_or_else(
+            || "Interrupts:\n  snapshot unavailable".into(),
+            |p| {
+                format!(
+                    "Interrupts:\n  pending: 0x{:08x}\n  enabled: 0x{:08x}\n  claim:   {}\n  priorities:\n    systick: {}\n    uart0:   {}\n    uart1:   {}\n    block:   {}",
+                    p.interrupts.pending,
+                    p.interrupts.enabled,
+                    p.interrupts.claim.map_or_else(
+                        || "none".into(),
+                        |claim| format!("{} ({claim})", interrupt_name(claim))
+                    ),
+                    p.interrupts.priorities[0],
+                    p.interrupts.priorities[1],
+                    p.interrupts.priorities[2],
+                    p.interrupts.priorities[3],
+                )
+            },
+        );
+        let fault = self.mmu.map_or_else(
+            || "Fault:\n  snapshot unavailable".into(),
+            |mmu| match (mmu.last_fault_address, mmu.last_fault_status) {
+                (Some(address), Some(status)) => format!(
+                    "Fault:\n  address: 0x{address:08x}\n  status:  0x{:08x}\n  cause:   {}\n  origin:  {}\n  access:  {}",
+                    status.raw(),
+                    fault_cause(status.cause()),
+                    if status.from_user() { "user" } else { "supervisor" },
+                    if status.is_fetch() {
+                        "fetch"
+                    } else if status.is_write() {
+                        "write"
+                    } else {
+                        "read"
+                    }
+                ),
+                _ => "Fault:\n  none".into(),
+            },
+        );
+        format!("{interrupts}\n{fault}")
     }
 
     fn goto_register(&mut self, value: &str) -> Vec<Action> {
-        self.row = match value.to_ascii_lowercase().as_str() {
+        let row = match value.to_ascii_lowercase().as_str() {
             "pc" => 0,
             "lr" => 1,
             "sp" => 2,
@@ -170,6 +239,7 @@ impl SecondaryWidget {
                 ))];
             }
         };
+        self.rows[SecondarySubview::Registers.index()] = row;
         Vec::new()
     }
 }
@@ -184,28 +254,41 @@ impl TuiWidget for SecondaryWidget {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
-        let viewport = usize::from(area.height.saturating_sub(3)).max(1);
-        let (name, text, content_length, sticky_header) = match self.subview {
+        let (name, text, content_length, sticky_header_rows) = match self.subview {
             SecondarySubview::Registers => (
                 "registers",
                 self.registers(area.width >= 35),
                 REGISTER_COUNT,
-                true,
+                1,
             ),
+            SecondarySubview::System => {
+                let text = self.system();
+                let length = text.lines().count();
+                ("system", text, length, 0)
+            }
             SecondarySubview::Peripherals => {
                 let text = self.peripherals();
                 let length = text.lines().count();
-                ("peripherals", text, length, false)
+                ("peripherals", text, length, 0)
             }
             SecondarySubview::Pending => {
                 let text = self.pending();
                 let length = text.lines().count();
-                ("pending", text, length, false)
+                ("pending", text, length, 0)
             }
         };
-        self.max_row = content_length.saturating_sub(viewport);
-        self.row = self.row.min(self.max_row);
-        let scroll = if sticky_header { 0 } else { self.row as u16 };
+        let viewport = usize::from(area.height.saturating_sub(2))
+            .saturating_sub(sticky_header_rows)
+            .max(1);
+        let index = self.subview.index();
+        self.max_rows[index] = content_length.saturating_sub(viewport);
+        self.rows[index] = self.rows[index].min(self.max_rows[index]);
+        let row = self.rows[index];
+        let scroll = if sticky_header_rows == 0 {
+            row as u16
+        } else {
+            0
+        };
         frame.render_widget(
             Paragraph::new(text).scroll((scroll, 0)).block(pane_block(
                 format!("[^s] secondary ({name})"),
@@ -214,7 +297,7 @@ impl TuiWidget for SecondaryWidget {
             )),
             area,
         );
-        render_scrollbar(frame, area, content_length, viewport, self.row);
+        render_scrollbar(frame, area, content_length, viewport, row);
     }
 
     fn handle_key(&mut self, key: KeyEvent, context: &InputContext) -> Vec<Action> {
@@ -248,15 +331,15 @@ impl TuiWidget for SecondaryWidget {
             AppEvent::Refresh if self.active => return self.refresh(),
             AppEvent::SecondarySelected(subview) => {
                 self.subview = *subview;
-                self.row = 0;
                 if self.active {
                     return self.refresh();
                 }
             }
             AppEvent::Navigate(motion) => {
+                let index = self.subview.index();
                 let count = match motion {
                     Motion::Up(count) | Motion::Left(count) => {
-                        self.row = self.row.saturating_sub(*count);
+                        self.rows[index] = self.rows[index].saturating_sub(*count);
                         0
                     }
                     Motion::Down(count)
@@ -264,15 +347,17 @@ impl TuiWidget for SecondaryWidget {
                     | Motion::NextItem(count)
                     | Motion::EndItem(count) => *count,
                     Motion::Top => {
-                        self.row = 0;
+                        self.rows[index] = 0;
                         0
                     }
                     Motion::Bottom => {
-                        self.row = self.max_row;
+                        self.rows[index] = self.max_rows[index];
                         0
                     }
                 };
-                self.row = self.row.saturating_add(count).min(self.max_row);
+                self.rows[index] = self.rows[index]
+                    .saturating_add(count)
+                    .min(self.max_rows[index]);
             }
             AppEvent::Goto(value) if self.subview == SecondarySubview::Registers => {
                 return self.goto_register(value);
@@ -283,13 +368,42 @@ impl TuiWidget for SecondaryWidget {
     }
 }
 
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
+fn enabled_disabled(value: bool) -> &'static str {
+    if value { "enabled" } else { "disabled" }
+}
+
+fn interrupt_name(source: u32) -> &'static str {
+    match source {
+        0 => "systick",
+        1 => "uart0",
+        2 => "uart1",
+        3 => "block",
+        _ => "unknown",
+    }
+}
+
+fn fault_cause(cause: Option<FaultCause>) -> &'static str {
+    match cause {
+        Some(FaultCause::Translation) => "translation",
+        Some(FaultCause::ReadProtection) => "read protection",
+        Some(FaultCause::WriteProtection) => "write protection",
+        Some(FaultCause::ExecuteProtection) => "execute protection",
+        Some(FaultCause::DeviceAccess) => "device access",
+        None => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use minemu_platform::VirtualAddress;
     use minemu_runtime::ExecutionInspection;
 
     use super::SecondaryWidget;
-    use crate::tui::{event::AppEvent, input::Motion, widget::TuiWidget};
+    use crate::tui::{event::AppEvent, input::Motion, types::SecondarySubview, widget::TuiWidget};
 
     #[test]
     fn narrow_register_format_omits_decimal_values() {
@@ -311,13 +425,24 @@ mod tests {
 
     #[test]
     fn register_scroll_is_clamped_to_the_last_full_page() {
+        let mut widget = SecondaryWidget::default();
+        let index = SecondarySubview::Registers.index();
+        widget.max_rows[index] = 4;
+        widget.update(&AppEvent::Navigate(Motion::Down(100)));
+        assert_eq!(widget.rows[index], 4);
+        widget.update(&AppEvent::Navigate(Motion::Bottom));
+        assert_eq!(widget.rows[index], 4);
+    }
+
+    #[test]
+    fn secondary_views_keep_independent_rows() {
         let mut widget = SecondaryWidget {
-            max_row: 4,
+            subview: SecondarySubview::System,
+            rows: [1, 2, 3, 4],
+            max_rows: [10; 4],
             ..SecondaryWidget::default()
         };
-        widget.update(&AppEvent::Navigate(Motion::Down(100)));
-        assert_eq!(widget.row, 4);
-        widget.update(&AppEvent::Navigate(Motion::Bottom));
-        assert_eq!(widget.row, 4);
+        widget.update(&AppEvent::Navigate(Motion::Up(1)));
+        assert_eq!(widget.rows, [1, 1, 3, 4]);
     }
 }

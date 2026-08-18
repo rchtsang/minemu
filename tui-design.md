@@ -151,9 +151,9 @@ Panes:
 
 Subviews:
 - only the selected primary and secondary subviews are rendered; the stacked
-  memory/disassembly rows above illustrate both primary formats rather than two
-  simultaneously visible panes
-- memory (primary)
+  memory/disassembly rows above illustrate formats rather than simultaneously
+  visible panes
+- physical memory (primary)
   - covers Boot ROM, system ROM, and RAM while skipping unmapped/MMIO gaps
   - movement selects bytes with a cursor and scrolls the memory window
   - shows eight bytes per row when wide enough and four bytes otherwise
@@ -163,12 +163,20 @@ Subviews:
     - Search ASCII: /[pattern]
     - Search Bytes: \\[pattern]
     - Goto Address: >`[addr]`
+- virtual memory (primary)
+  - translates through the live MMU without reading device mappings
+  - has cursor and scroll state independent from physical memory
+  - Normal Mode:
+    - Goto Address: >`[addr]`
 - disassembly (primary)
+  - labels addresses as virtual and highlights the current PC
   - Normal Mode:
     - Goto Address: >`[addr]`
 - registers (secondary)
   - Normal Mode:
     - Goto Register: >`[reg]`
+- system (secondary)
+  - shows MMU enable state, TTBR0, and VBAR
 - peripherals (secondary)
 - pending (secondary)
 
@@ -177,6 +185,7 @@ as a white command/description table in a green-bordered popup rather than
 appended to dialog history. Descriptions wrap and the close hint is aligned with
 the bottom border. Narrow register panes omit
 decimal conversion and do not scroll beyond the last full page of registers.
+Secondary subviews retain independent scroll positions.
 
 Memory searches scan all physical RAM. ASCII search uses UTF-8 input and byte
 search uses whitespace-separated hexadecimal pairs such as `\de ad be ef`.

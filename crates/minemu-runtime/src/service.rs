@@ -286,6 +286,16 @@ impl Emulator {
                 *range,
                 self.backend.inspect_live_memory(*range)?,
             )),
+            RuntimeInspectionRequest::VirtualMemory { address, length } => {
+                Ok(RuntimeInspection::VirtualMemory(
+                    *address,
+                    self.backend.inspect_virtual_memory(*address, *length)?,
+                ))
+            }
+            RuntimeInspectionRequest::Translate(address) => Ok(RuntimeInspection::Translation(
+                *address,
+                self.backend.translate_virtual_address(*address)?,
+            )),
             RuntimeInspectionRequest::Execution {
                 address,
                 before,

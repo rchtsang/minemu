@@ -15,8 +15,9 @@ This is the architecture implemented for the redesign specified by
 Widgets own the snapshots and local navigation state they render. The
 registry contains header, console, events, dialog, primary inspector, secondary
 inspector, input bar, and hints widgets. The console owns selected UART and
-scroll state; the primary inspector owns memory/disassembly state; the secondary
-inspector owns registers/peripherals/pending state; the dialog owns bounded UI
+scroll state; the primary inspector owns independent physical-memory,
+virtual-memory, and disassembly state; the secondary inspector owns independent
+registers/system/peripherals/pending scroll state; the dialog owns bounded UI
 messages.
 
 Widgets must not own `RuntimeHandle`, request Unicorn data directly, or mutate
@@ -51,10 +52,10 @@ new owned runtime inspection request containing the byte pattern; it scans
 Unicorn RAM in overlapping bounded chunks and returns only a physical address.
 
 `AppEvent` transports immutable runtime status, peripheral/event/MMU snapshots,
-live memory, execution snapshots, search results, and recoverable errors. The
-controller turns ordinary action failures into red dialog events. Only terminal
-I/O failures, explicit quit, and irrecoverable runtime termination close the
-TUI.
+physical and translated virtual memory, address translations, execution
+snapshots, search results, and recoverable errors. The controller turns ordinary
+action failures into red dialog events. Only terminal I/O failures, explicit
+quit, and irrecoverable runtime termination close the TUI.
 
 ## Input Routing
 
@@ -86,6 +87,8 @@ widgets only render into their assigned rectangle. This keeps mouse geometry
 pure and unit-testable.
 
 The runtime layout uses console, events, and dialog panes. The inspect layout
-uses one selected primary subview (memory or disassembly), one selected
-secondary subview (registers, peripherals, or pending), and dialog. Pending
-combines MMU last-fault data with interrupt pending/enabled/claim state.
+uses one selected primary subview (physical memory, virtual memory, or
+disassembly), one selected secondary subview (registers, system, peripherals, or
+pending), and dialog. Pending combines MMU last-fault data with interrupt
+pending/enabled/claim state. System renders live guest MMU state, including
+TTBR0 and VBAR.

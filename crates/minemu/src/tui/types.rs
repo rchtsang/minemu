@@ -41,15 +41,17 @@ pub enum InputMode {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PrimarySubview {
-    Memory,
+    PhysicalMemory,
+    VirtualMemory,
     Disassembly,
 }
 
 impl PrimarySubview {
-    pub const fn toggled(self) -> Self {
+    pub const fn next(self) -> Self {
         match self {
-            Self::Memory => Self::Disassembly,
-            Self::Disassembly => Self::Memory,
+            Self::PhysicalMemory => Self::VirtualMemory,
+            Self::VirtualMemory => Self::Disassembly,
+            Self::Disassembly => Self::PhysicalMemory,
         }
     }
 }
@@ -57,6 +59,7 @@ impl PrimarySubview {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SecondarySubview {
     Registers,
+    System,
     Peripherals,
     Pending,
 }
@@ -64,9 +67,19 @@ pub enum SecondarySubview {
 impl SecondarySubview {
     pub const fn next(self) -> Self {
         match self {
-            Self::Registers => Self::Peripherals,
+            Self::Registers => Self::System,
+            Self::System => Self::Peripherals,
             Self::Peripherals => Self::Pending,
             Self::Pending => Self::Registers,
+        }
+    }
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Registers => 0,
+            Self::System => 1,
+            Self::Peripherals => 2,
+            Self::Pending => 3,
         }
     }
 }

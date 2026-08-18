@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use minemu_runtime::RuntimeInspection;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -33,6 +34,14 @@ impl Default for DialogWidget {
 }
 
 impl DialogWidget {
+    fn push_message(&mut self, message: DialogMessage) {
+        if self.messages.len() == self.capacity {
+            self.messages.pop_front();
+        }
+        self.messages.push_back(message);
+        self.from_bottom = 0;
+    }
+
     fn lines(&self) -> Vec<Line<'static>> {
         self.messages
             .iter()
@@ -85,12 +94,13 @@ impl TuiWidget for DialogWidget {
 
     fn update(&mut self, event: &AppEvent) -> Vec<Action> {
         match event {
-            AppEvent::Dialog(message) => {
-                if self.messages.len() == self.capacity {
-                    self.messages.pop_front();
-                }
-                self.messages.push_back(message.clone());
-                self.from_bottom = 0;
+            AppEvent::Dialog(message) => self.push_message(message.clone()),
+            AppEvent::Inspection(RuntimeInspection::Translation(virtual_address, physical)) => {
+                self.push_message(DialogMessage::info(format!(
+                    "0x{:08x} -> 0x{:08x}",
+                    virtual_address.get(),
+                    physical.get()
+                )));
             }
             AppEvent::Navigate(motion) => nav_scroll(&mut self.from_bottom, *motion),
             _ => {}

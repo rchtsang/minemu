@@ -4,6 +4,17 @@ mod search;
 
 pub use motion::{DecodeResult, Motion, MotionDecoder};
 
+pub fn parse_hex_address(value: &str) -> Result<u32, String> {
+    let value = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    if value.is_empty() {
+        return Err("address must be hexadecimal".into());
+    }
+    u32::from_str_radix(value, 16).map_err(|_| "address must be hexadecimal".into())
+}
+
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use minemu_runtime::RuntimeInspectionRequest;
 

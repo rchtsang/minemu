@@ -100,10 +100,19 @@ impl TuiWidget for HelpWidget {
                 "Select console input UART",
                 description_width,
             ),
-            command(":set primary", "Select mem or disasm", description_width),
+            command(
+                ":set primary",
+                "Select pmem, vmem, or disasm",
+                description_width,
+            ),
             command(
                 ":set secondary",
-                "Select reg, peri, or pend",
+                "Select reg, sys, peri, or pend",
+                description_width,
+            ),
+            command(
+                ":translate ADDR",
+                "Translate a virtual address",
                 description_width,
             ),
             command(":q", "Quit minemu", description_width),

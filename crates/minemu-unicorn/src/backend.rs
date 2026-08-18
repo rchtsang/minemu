@@ -2,8 +2,8 @@
 
 use minemu_core::{ExceptionPlan, InstructionOutcome, Machine, MmuFault};
 use minemu_platform::{
-    Access, FaultCause, FaultStatus, MemRegion, MmioTransaction, MmioWidth, PhysicalAddress,
-    PhysicalRange, VirtualAddress,
+    Access, FaultCause, FaultStatus, MemRegion, MmioTransaction, MmioWidth, PAGE_SIZE,
+    PhysicalAddress, PhysicalRange, VirtualAddress,
 };
 use thiserror::Error;
 use tracing::{debug, debug_span, trace, warn};
@@ -270,22 +270,44 @@ impl UnicornBackend {
             "reading translated Unicorn instruction bytes for inspection"
         );
         let mut bytes = vec![0; length];
-        match self
-            .engine
-            .vmem_read(u64::from(address.get()), Prot::EXEC, &mut bytes)
-        {
-            Ok(()) => Ok(bytes),
-            Err(error) => {
-                warn!(
-                    virtual_address = address.get(),
-                    length,
-                    access = "execute",
-                    error = ?error,
-                    "Unicorn virtual inspection read failed"
-                );
-                Err(BackendError::Unicorn(error))
-            }
+        let mut offset = 0;
+        while offset < length {
+            let offset_u32 = u32::try_from(offset).map_err(|_| BackendError::InspectionRange)?;
+            let virtual_address = address
+                .get()
+                .checked_add(offset_u32)
+                .ok_or(BackendError::InspectionRange)?;
+            let page_remaining = PAGE_SIZE - virtual_address % PAGE_SIZE;
+            let count = (length - offset).min(page_remaining as usize);
+            let physical_address = self
+                .engine
+                .vmem_translate(u64::from(virtual_address), Prot::EXEC)
+                .map_err(|error| {
+                    warn!(
+                        virtual_address,
+                        length = count,
+                        access = "execute",
+                        error = ?error,
+                        "Unicorn virtual inspection translation failed"
+                    );
+                    BackendError::Unicorn(error)
+                })?;
+            self.engine
+                .mem_read(physical_address, &mut bytes[offset..offset + count])
+                .map_err(|error| {
+                    warn!(
+                        virtual_address,
+                        physical_address,
+                        length = count,
+                        access = "execute",
+                        error = ?error,
+                        "Unicorn translated physical inspection read failed"
+                    );
+                    BackendError::Unicorn(error)
+                })?;
+            offset += count;
         }
+        Ok(bytes)
     }
 
     /// Captures the authoritative physical bytes currently mapped by Unicorn.
@@ -797,7 +819,7 @@ mod tests {
     use minemu_core::{InterruptUpdate, Machine, PhysicalMemoryAccess, UartUpdate};
     use minemu_platform::{
         MemRegion, PTE_EXECUTABLE, PTE_READABLE, PTE_VALID, Peripheral, PhysicalAddress,
-        PhysicalRange,
+        PhysicalRange, VirtualAddress,
         peripherals::{interrupt, uart},
     };
     use unicorn_engine::RegisterARM;
@@ -966,13 +988,72 @@ mod tests {
         assert_eq!(backend.run(0, 4, 1), BackendStop::InstructionBudget);
         assert_eq!(backend.register(RegisterARM::R0).unwrap(), 7);
         assert_eq!(backend.machine().mmu.last_fault(), None);
+        let inspection = backend.inspect_execution(None, 0, 4).unwrap();
+        assert_eq!(inspection.instruction_address.get(), 4);
+        assert_eq!(inspection.instruction_bytes, [0; 4]);
+        assert_eq!(inspection.instruction_error, None);
+    }
+
+    #[test]
+    fn higher_half_execution_inspection_reads_translated_instruction_bytes() {
+        let mut machine = Machine::default();
+        let ram = MemRegion::Ram.base().get();
+        let virtual_page = 0xc003_0000;
+        let physical_page = ram + 0x30000;
+        let next_physical_page = ram + 0x50000;
+        let directory_index = virtual_page >> 22;
+        let table_index = (virtual_page >> 12) & 0x3ff;
+        machine
+            .memory
+            .write_u32(
+                PhysicalAddress::new(ram + directory_index * 4),
+                (ram + 0x1000) | PTE_VALID,
+            )
+            .unwrap();
+        machine
+            .memory
+            .write_u32(
+                PhysicalAddress::new(ram + 0x1000 + table_index * 4),
+                physical_page | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE,
+            )
+            .unwrap();
+        machine
+            .memory
+            .write_u32(
+                PhysicalAddress::new(ram + 0x1000 + (table_index + 1) * 4),
+                next_physical_page | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE,
+            )
+            .unwrap();
+        let instructions = [
+            0x00, 0xf0, 0x20, 0xe3, // nop
+            0xfd, 0xff, 0xff, 0xea, // b 0xc0030260
+        ];
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(physical_page + 0x260), &instructions)
+            .unwrap();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(physical_page + 0xffc), &[1, 2, 3, 4])
+            .unwrap();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(next_physical_page), &[5, 6, 7, 8])
+            .unwrap();
+        machine.mmu.set_ttbr0(PhysicalAddress::new(ram));
+        machine.mmu.set_enabled(true);
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_program_counter(0xc003_0264).unwrap();
+
+        let inspection = backend.inspect_execution(None, 4, 4).unwrap();
+        assert_eq!(inspection.instruction_address.get(), 0xc003_0260);
+        assert_eq!(inspection.instruction_bytes, instructions);
+        assert_eq!(inspection.instruction_error, None);
         assert_eq!(
             backend
-                .inspect_execution(None, 0, 4)
-                .unwrap()
-                .instruction_address
-                .get(),
-            4
+                .read_virtual_memory(VirtualAddress::new(virtual_page + 0xffc), 8)
+                .unwrap(),
+            [1, 2, 3, 4, 5, 6, 7, 8]
         );
     }
 

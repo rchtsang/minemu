@@ -65,8 +65,8 @@ impl Default for PrimaryWidget {
 }
 
 impl PrimaryWidget {
-    fn refresh(&self) -> Vec<Action> {
-        let request = match self.subview {
+    fn inspection_request(&self) -> RuntimeInspectionRequest {
+        match self.subview {
             PrimarySubview::PhysicalMemory => {
                 RuntimeInspectionRequest::LiveMemory(self.memory_range)
             }
@@ -86,10 +86,13 @@ impl PrimaryWidget {
                 before: usize::from(self.disassembly_address.is_none()) * 32,
                 after: 224,
             },
-        };
+        }
+    }
+
+    fn refresh(&self) -> Vec<Action> {
         vec![Action::RequestInspection {
             target: self.id(),
-            request,
+            request: self.inspection_request(),
         }]
     }
 
@@ -340,6 +343,7 @@ impl PrimaryWidget {
                 .saturating_sub(window - self.memory_columns as u32)
                 .min(last_start)
         };
+        let start = base + (start - base) / self.memory_columns as u32 * self.memory_columns as u32;
         self.memory_range = PhysicalRange::new(PhysicalAddress::new(start), window)
             .expect("cursor window remains in mapped memory");
     }
@@ -359,6 +363,7 @@ impl PrimaryWidget {
                 .saturating_sub(window - self.memory_columns as u32)
                 .min(last_start)
         };
+        let start = start / self.memory_columns as u32 * self.memory_columns as u32;
         self.virtual_start = VirtualAddress::new(start);
     }
 
@@ -490,6 +495,13 @@ impl TuiWidget for PrimaryWidget {
                 if self.subview == PrimarySubview::VirtualMemory && !self.virtual_initialized {
                     self.initialize_virtual_memory(execution.registers[15]);
                     return self.refresh();
+                }
+            }
+            AppEvent::InspectionFailed(request, error) => {
+                if *request == self.inspection_request() {
+                    return vec![Action::ShowMessage(DialogMessage::error(format!(
+                        "{request:?} failed: {error}"
+                    )))];
                 }
             }
             AppEvent::Inspection(RuntimeInspection::SearchMemory(Some(address))) => {
@@ -655,6 +667,20 @@ mod tests {
     }
 
     #[test]
+    fn memory_windows_remain_row_aligned() {
+        let mut widget = PrimaryWidget {
+            memory_cursor: PhysicalAddress::new(MemRegion::Ram.base().get() + 0x30264),
+            virtual_cursor: VirtualAddress::new(0xc003_0264),
+            ..PrimaryWidget::default()
+        };
+        widget.ensure_cursor_visible();
+        assert_eq!(widget.memory_range.start().get() % 8, 0);
+
+        widget.ensure_virtual_cursor_visible();
+        assert_eq!(widget.virtual_start.get() % 8, 0);
+    }
+
+    #[test]
     fn disassembly_address_label_follows_mmu_state() {
         let mut widget = PrimaryWidget {
             execution: Some(ExecutionInspection {
@@ -709,6 +735,7 @@ mod tests {
 
         assert!(widget.virtual_initialized);
         assert_eq!(widget.virtual_cursor, VirtualAddress::new(pc));
+        assert_eq!(widget.virtual_start.get() % widget.memory_columns as u32, 0);
         assert!(matches!(
             actions.as_slice(),
             [Action::RequestInspection {
@@ -716,5 +743,18 @@ mod tests {
                 ..
             }] if *address == widget.virtual_start
         ));
+    }
+
+    #[test]
+    fn stale_virtual_failure_is_ignored_in_physical_view() {
+        let mut widget = PrimaryWidget::default();
+        let actions = widget.update(&AppEvent::InspectionFailed(
+            RuntimeInspectionRequest::VirtualMemory {
+                address: VirtualAddress::new(0),
+                length: widget.memory_window as usize,
+            },
+            "READ_PROT".into(),
+        ));
+        assert!(actions.is_empty());
     }
 }

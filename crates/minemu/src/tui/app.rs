@@ -117,9 +117,13 @@ impl App {
                     error: detail,
                 } => {
                     warn!(?target, ?request, error = %detail, "TUI inspection failed");
-                    self.show_message(DialogMessage::error(format!(
-                        "{request:?} failed: {detail}"
-                    )));
+                    if target == WidgetId::Primary {
+                        self.target(target, AppEvent::InspectionFailed(request, detail));
+                    } else {
+                        self.show_message(DialogMessage::error(format!(
+                            "{request:?} failed: {detail}"
+                        )));
+                    }
                 }
             }
         }

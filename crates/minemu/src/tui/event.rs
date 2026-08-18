@@ -1,4 +1,4 @@
-use minemu_runtime::{RuntimeInspection, RuntimeStatus, UartPort};
+use minemu_runtime::{RuntimeInspection, RuntimeInspectionRequest, RuntimeStatus, UartPort};
 
 use super::{
     input::Motion,
@@ -9,6 +9,7 @@ use super::{
 pub enum AppEvent {
     Status(RuntimeStatus),
     Inspection(RuntimeInspection),
+    InspectionFailed(RuntimeInspectionRequest, String),
     ViewChanged(View),
     Pulse,
     Refresh,

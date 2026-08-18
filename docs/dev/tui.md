@@ -37,6 +37,13 @@ device mappings so inspection cannot trigger MMIO side effects. The first
 virtual-memory selection opens around the stopped PC. Both memory views then
 retain independent cursors and visible windows.
 
+Virtual mappings are guest-defined and may alias physical addresses. The
+minimum template intentionally identity-maps `0x40000000..0x403fffff` during
+bootstrap, so virtual and physical inspection at `0x40030264` show the same
+bytes. Its `0xc0030264` higher-half address is another alias of physical
+`0x40030264`. Unmapped or read-protected virtual addresses report an inspection
+error instead of falling back to physical memory.
+
 A highlighted cursor selects one byte; motions move the cursor and automatically
 shift the visible window. Physical navigation skips unmapped and MMIO gaps. The
 byte request expands or contracts to fill every visible data row. Wide panes

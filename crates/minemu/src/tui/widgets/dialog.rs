@@ -5,8 +5,9 @@ use ratatui::{
     Frame,
     layout::Rect,
     text::{Line, Text},
-    widgets::{Paragraph, Wrap},
+    widgets::Paragraph,
 };
+use unicode_width::UnicodeWidthChar;
 
 use crate::tui::{
     action::Action,
@@ -42,7 +43,7 @@ impl DialogWidget {
         self.from_bottom = 0;
     }
 
-    fn lines(&self) -> Vec<Line<'static>> {
+    fn lines(&self, width: usize) -> Vec<Line<'static>> {
         self.messages
             .iter()
             .flat_map(|message| {
@@ -50,9 +51,11 @@ impl DialogWidget {
                     .text
                     .lines()
                     .enumerate()
-                    .map(|(index, line)| {
+                    .flat_map(|(index, line)| {
                         let prefix = if index == 0 { "> " } else { "  " };
-                        Line::styled(format!("{prefix}{line}"), message.level.color())
+                        hard_wrap(&format!("{prefix}{line}"), width)
+                            .into_iter()
+                            .map(|line| Line::styled(line, message.level.color()))
                     })
                     .collect::<Vec<_>>()
             })
@@ -70,17 +73,13 @@ impl TuiWidget for DialogWidget {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
-        let lines = self.lines();
         let inner_width = usize::from(area.width.saturating_sub(3)).max(1);
-        let wrapped_lines = lines
-            .iter()
-            .map(|line| line.width().max(1).div_ceil(inner_width))
-            .sum::<usize>();
+        let lines = self.lines(inner_width);
+        let wrapped_lines = lines.len();
         let viewport = usize::from(area.height.saturating_sub(2));
         let offset = scroll_offset(wrapped_lines, area.height, self.from_bottom);
         frame.render_widget(
-            Paragraph::new(Text::from(lines.clone()))
-                .wrap(Wrap { trim: false })
+            Paragraph::new(Text::from(lines))
                 .scroll((offset, 0))
                 .block(pane_block(
                     "[^d] dialog",
@@ -109,15 +108,37 @@ impl TuiWidget for DialogWidget {
     }
 }
 
+fn hard_wrap(value: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut line_width = 0;
+    for character in value.chars() {
+        let character_width = character.width().unwrap_or(0);
+        if !line.is_empty() && line_width + character_width > width {
+            lines.push(std::mem::take(&mut line));
+            line_width = 0;
+        }
+        line.push(character);
+        line_width += character_width;
+    }
+    if !line.is_empty() || lines.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
+    use unicode_width::UnicodeWidthStr;
+
     use crate::tui::{
         event::AppEvent,
         types::{DialogLevel, DialogMessage},
         widget::TuiWidget,
     };
 
-    use super::DialogWidget;
+    use super::{DialogWidget, hard_wrap};
 
     #[test]
     fn retains_recoverable_error_messages() {
@@ -125,6 +146,15 @@ mod tests {
         dialog.update(&AppEvent::Dialog(DialogMessage::error("read failed")));
         assert_eq!(dialog.messages.len(), 1);
         assert_eq!(dialog.messages[0].level, DialogLevel::Error);
-        assert_eq!(dialog.lines()[0].spans[0].content, "> read failed");
+        assert_eq!(dialog.lines(80)[0].spans[0].content, "> read failed");
+    }
+
+    #[test]
+    fn hard_wrapping_preserves_the_complete_message() {
+        let message = "> VirtualMemory { address: VirtualAddress(0), length: 288 } failed: Unicorn operation failed: READ_PROT.";
+        let lines = hard_wrap(message, 24);
+        assert!(lines.len() > 1);
+        assert_eq!(lines.concat(), message);
+        assert!(lines.iter().all(|line| line.width() <= 24));
     }
 }

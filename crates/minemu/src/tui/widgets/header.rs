@@ -43,7 +43,7 @@ impl TuiWidget for HeaderWidget {
 
         let columns = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(25), Constraint::Min(1)])
+            .constraints([Constraint::Length(27), Constraint::Min(1)])
             .split(inner);
         let selected = usize::from(context.view == View::Inspect);
         let titles = match context.view {
@@ -60,7 +60,7 @@ impl TuiWidget for HeaderWidget {
                         .add_modifier(Modifier::BOLD),
                 )
                 .padding("", "")
-                .divider("   "),
+                .divider(" "),
             columns[0],
         );
         let status = self.status.as_ref().map_or_else(

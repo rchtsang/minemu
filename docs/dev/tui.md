@@ -33,8 +33,9 @@ Physical memory inspection covers the readable byte map: Boot ROM, system ROM,
 and RAM. Physical `00000000` contains the platform reset vector and boot
 firmware, while the packaged system image begins at `08000000`. Virtual memory
 inspection translates each page through the guest's live MMU state. It rejects
-device mappings so inspection cannot trigger MMIO side effects. Both memory
-views have independent cursors and visible windows.
+device mappings so inspection cannot trigger MMIO side effects. The first
+virtual-memory selection opens around the stopped PC. Both memory views then
+retain independent cursors and visible windows.
 
 A highlighted cursor selects one byte; motions move the cursor and automatically
 shift the visible window. Physical navigation skips unmapped and MMIO gaps. The

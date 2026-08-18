@@ -31,6 +31,7 @@ pub struct PrimaryWidget {
     virtual_start: VirtualAddress,
     virtual_memory: Vec<u8>,
     virtual_cursor: VirtualAddress,
+    virtual_initialized: bool,
     memory_columns: usize,
     memory_window: u32,
     memory_dirty: bool,
@@ -51,6 +52,7 @@ impl Default for PrimaryWidget {
             virtual_start: VirtualAddress::new(0),
             virtual_memory: Vec::new(),
             virtual_cursor: VirtualAddress::new(0),
+            virtual_initialized: false,
             memory_columns: 8,
             memory_window: DEFAULT_MEMORY_WINDOW,
             memory_dirty: false,
@@ -68,9 +70,16 @@ impl PrimaryWidget {
             PrimarySubview::PhysicalMemory => {
                 RuntimeInspectionRequest::LiveMemory(self.memory_range)
             }
-            PrimarySubview::VirtualMemory => RuntimeInspectionRequest::VirtualMemory {
-                address: self.virtual_start,
-                length: self.memory_window as usize,
+            PrimarySubview::VirtualMemory if self.virtual_initialized => {
+                RuntimeInspectionRequest::VirtualMemory {
+                    address: self.virtual_start,
+                    length: self.memory_window as usize,
+                }
+            }
+            PrimarySubview::VirtualMemory => RuntimeInspectionRequest::Execution {
+                address: None,
+                before: 0,
+                after: 0,
             },
             PrimarySubview::Disassembly => RuntimeInspectionRequest::Execution {
                 address: self.disassembly_address,
@@ -107,6 +116,7 @@ impl PrimaryWidget {
     }
 
     fn nav_virtual_memory(&mut self, motion: Motion) {
+        self.virtual_initialized = true;
         let count = motion_count(motion) as u32;
         let step = match motion {
             Motion::Left(_) | Motion::Right(_) => 1,
@@ -302,6 +312,7 @@ impl PrimaryWidget {
             }
             PrimarySubview::VirtualMemory => {
                 self.virtual_cursor = VirtualAddress::new(address);
+                self.virtual_initialized = true;
                 self.ensure_virtual_cursor_visible();
             }
             PrimarySubview::Disassembly => {
@@ -349,6 +360,12 @@ impl PrimaryWidget {
                 .min(last_start)
         };
         self.virtual_start = VirtualAddress::new(start);
+    }
+
+    fn initialize_virtual_memory(&mut self, pc: u32) {
+        self.virtual_cursor = VirtualAddress::new(pc);
+        self.virtual_initialized = true;
+        self.ensure_virtual_cursor_visible();
     }
 
     fn update_memory_geometry(&mut self, area: Rect) {
@@ -470,6 +487,10 @@ impl TuiWidget for PrimaryWidget {
             }
             AppEvent::Inspection(RuntimeInspection::Execution(execution)) => {
                 self.execution = Some(execution.clone());
+                if self.subview == PrimarySubview::VirtualMemory && !self.virtual_initialized {
+                    self.initialize_virtual_memory(execution.registers[15]);
+                    return self.refresh();
+                }
             }
             AppEvent::Inspection(RuntimeInspection::SearchMemory(Some(address))) => {
                 self.memory_cursor = *address;
@@ -508,6 +529,12 @@ impl TuiWidget for PrimaryWidget {
             },
             AppEvent::PrimarySelected(subview) => {
                 self.subview = *subview;
+                if *subview == PrimarySubview::VirtualMemory
+                    && !self.virtual_initialized
+                    && let Some(pc) = self.execution.as_ref().map(|value| value.registers[15])
+                {
+                    self.initialize_virtual_memory(pc);
+                }
                 if self.active {
                     return self.refresh();
                 }
@@ -577,11 +604,13 @@ fn motion_count(motion: Motion) -> usize {
 #[cfg(test)]
 mod tests {
     use minemu_platform::{MemRegion, PhysicalAddress, VirtualAddress};
-    use minemu_runtime::ExecutionInspection;
+    use minemu_runtime::{ExecutionInspection, RuntimeInspection, RuntimeInspectionRequest};
     use ratatui::layout::Rect;
 
     use super::{PrimaryWidget, memory_address_at, memory_linear_offset};
-    use crate::tui::input::Motion;
+    use crate::tui::{
+        action::Action, event::AppEvent, input::Motion, types::PrimarySubview, widget::TuiWidget,
+    };
 
     #[test]
     fn linear_memory_map_includes_both_roms_and_ram() {
@@ -653,5 +682,39 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert!(heading.contains("vaddr"));
+    }
+
+    #[test]
+    fn initial_virtual_memory_window_follows_pc() {
+        let pc = 0xc003_0264;
+        let mut registers = [0; 16];
+        registers[15] = pc;
+        let mut widget = PrimaryWidget {
+            subview: PrimarySubview::VirtualMemory,
+            active: true,
+            ..PrimaryWidget::default()
+        };
+
+        let actions = widget.update(&AppEvent::Inspection(RuntimeInspection::Execution(
+            ExecutionInspection {
+                registers,
+                cpsr: 0,
+                spsr: 0,
+                mmu_enabled: true,
+                instruction_address: VirtualAddress::new(pc),
+                instruction_bytes: Vec::new(),
+                instruction_error: None,
+            },
+        )));
+
+        assert!(widget.virtual_initialized);
+        assert_eq!(widget.virtual_cursor, VirtualAddress::new(pc));
+        assert!(matches!(
+            actions.as_slice(),
+            [Action::RequestInspection {
+                request: RuntimeInspectionRequest::VirtualMemory { address, .. },
+                ..
+            }] if *address == widget.virtual_start
+        ));
     }
 }

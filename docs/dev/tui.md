@@ -28,13 +28,13 @@ Instruction-read failures do not close the TUI. Registers and other snapshots
 remain visible while the disassembly pane reports the original error.
 
 Memory inspection covers the readable physical byte map: Boot ROM, system ROM,
-and RAM. Physical `00000000` contains the platform handoff stub, while the
-packaged system image begins at `08000000`. A highlighted cursor selects one byte; motions move the cursor and
-automatically shift the 256-byte window across region boundaries while skipping
-unmapped and MMIO gaps. Wide panes display eight bytes per row and narrow panes
-display four. Addresses omit the `0x` prefix to preserve byte columns. Scrollable
-panes include an inset vertical position indicator that does not replace border
-corners. Narrow
+and RAM. Physical `00000000` contains the platform reset vector and boot
+firmware, while the packaged system image begins at `08000000`. A highlighted
+cursor selects one byte; motions move the cursor and automatically shift the
+256-byte window across region boundaries while skipping unmapped and MMIO gaps.
+Wide panes display eight bytes per row and narrow panes display four. Addresses
+omit the `0x` prefix to preserve byte columns. Scrollable panes include an inset
+vertical position indicator that does not replace border corners. Narrow
 register panes omit decimal values and retain hexadecimal values.
 
 ## Input Modes

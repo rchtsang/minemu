@@ -492,6 +492,7 @@ dependencies = [
  "minemu-image",
  "minemu-platform",
  "minemu-runtime",
+ "minemu-unicorn",
  "ratatui",
  "serde",
  "thiserror",

@@ -1,5 +1,6 @@
 //! Command-line orchestration for image construction and headless execution.
 
+mod boot_rom;
 mod manifest;
 mod runner;
 mod tui;

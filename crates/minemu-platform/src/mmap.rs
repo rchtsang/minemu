@@ -11,6 +11,14 @@ pub const SYSTEM_ROM_SIZE: u32 = 16 * 1024 * 1024;
 /// Physical RAM base address and size.
 pub const RAM_BASE: u32 = 0x4000_0000;
 pub const RAM_SIZE: u32 = 64 * 1024 * 1024;
+/// Temporary stack reserved for platform boot-ROM C code.
+pub const BOOT_STACK_BASE: u32 = RAM_BASE + 0x6000;
+pub const BOOT_STACK_SIZE: u32 = PAGE_SIZE;
+/// Physical and direct-mapped virtual addresses of the boot-info record.
+pub const BOOT_INFO_PADDR: u32 = RAM_BASE + 0x7000;
+pub const BOOT_INFO_VADDR: u32 = 0xc000_7000;
+/// Physical entry populated by the boot ROM before kernel handoff.
+pub const BOOTSTRAP_ENTRY_PADDR: u32 = RAM_BASE + 0x8000;
 
 /// A classified physical memory region.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

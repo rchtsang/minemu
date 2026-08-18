@@ -1,8 +1,10 @@
-use minemu_platform::{BOOT_INFO_SIZE, BootInfo, MemRegion, PhysicalAddress, VirtualAddress};
+use minemu_platform::{
+    BOOT_INFO_SIZE, BOOT_INFO_VADDR, BootInfo, MemRegion, PhysicalAddress, VirtualAddress,
+};
 
 use crate::{Result, SystemImage};
 
-/// A boot-ROM action plan derived from a validated system-ROM image.
+/// Host-side reference model of the actions performed by the guest boot ROM.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootPlan {
     pub copies: Vec<BootCopy>,
@@ -22,7 +24,7 @@ pub struct BootCopy {
 }
 
 impl SystemImage {
-    /// Produces the data movements and handoff values performed by boot ROM.
+    /// Produces the expected data movements and handoff values for testing.
     pub fn boot_plan(&self) -> Result<BootPlan> {
         let mut copies = Vec::with_capacity(self.kernel_segments.len());
         for segment in &self.kernel_segments {
@@ -46,15 +48,15 @@ impl SystemImage {
             boot_info,
             boot_info_paddr: self.header.boot_info_paddr,
             bootstrap_entry_paddr: self.header.bootstrap_entry_paddr,
-            boot_info_vaddr: VirtualAddress::new(0xc000_7000),
+            boot_info_vaddr: VirtualAddress::new(BOOT_INFO_VADDR),
             kernel_entry_vaddr: self.header.kernel_entry_vaddr,
         })
     }
 }
 
 impl BootPlan {
-    /// Applies the boot ROM's kernel copies, BSS clearing, and boot-info write.
-    /// The caller performs the subsequent branch to `bootstrap_entry_paddr`.
+    /// Applies the reference kernel copies, BSS clearing, and boot-info write.
+    /// Production image runs execute those operations in guest firmware instead.
     pub fn apply<E>(
         &self,
         mut write: impl FnMut(PhysicalAddress, &[u8]) -> std::result::Result<(), E>,

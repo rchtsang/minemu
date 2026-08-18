@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 use std::ops::Deref;
 
 use minemu_platform::{
-    IMAGE_HEADER_SIZE, ImageHeader, KERNEL_SEGMENT_SIZE, KernelSegment, MODULE_RECORD_SIZE,
-    MODULE_SEGMENT_SIZE, MemRegion, ModuleRecord, ModuleSegment, PhysicalAddress, VirtualAddress,
+    BOOT_INFO_PADDR, BOOTSTRAP_ENTRY_PADDR, IMAGE_HEADER_SIZE, ImageHeader, KERNEL_SEGMENT_SIZE,
+    KernelSegment, MODULE_RECORD_SIZE, MODULE_SEGMENT_SIZE, MemRegion, ModuleRecord, ModuleSegment,
+    PhysicalAddress, VirtualAddress,
 };
 
 use crate::{
@@ -177,9 +178,9 @@ pub(crate) fn build_image(
         kernel_segment_count: size32(kernel_segments.len(), "kernel segment count")?,
         module_table_offset: size32(module_table_offset, "module table offset")?,
         module_count: size32(modules.len(), "module count")?,
-        bootstrap_entry_paddr: PhysicalAddress::new(MemRegion::Ram.base().get() + 0x8000),
+        bootstrap_entry_paddr: PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR),
         kernel_entry_vaddr: kernel_entry,
-        boot_info_paddr: PhysicalAddress::new(MemRegion::Ram.base().get() + 0x7000),
+        boot_info_paddr: PhysicalAddress::new(BOOT_INFO_PADDR),
     };
     let mut bytes = vec![0; cursor];
     bytes[..IMAGE_HEADER_SIZE].copy_from_slice(&header.encode()?);

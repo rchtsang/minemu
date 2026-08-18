@@ -90,10 +90,10 @@ pub struct UnicornBackend {
 
 impl UnicornBackend {
     /// Configures an A32 little-endian Cortex-A9 with the ABI physical map.
-    pub fn new(machine: Machine) -> Result<Self> {
+    pub fn new(mut machine: Machine) -> Result<Self> {
         let boot_rom = machine.copy_region(MemRegion::BootRom)?;
         let system_rom = machine.copy_region(MemRegion::SystemRom)?;
-        let ram = machine.copy_region(MemRegion::Ram)?;
+        let ram = machine.memory.ram_mut_ptr();
 
         let mut engine = Unicorn::new_with_data(
             Arch::ARM,
@@ -110,11 +110,14 @@ impl UnicornBackend {
         engine
             .ctl_set_cpu_model(ArmCpuModel::CORTEX_A9 as i32)
             .map_err(BackendError::Unicorn)?;
+        // Batches are bounded by instruction count. Address exits make
+        // Unicorn translate the synthetic `until` value through the guest MMU.
+        engine.ctl_exits_enable().map_err(BackendError::Unicorn)?;
 
         let mut backend = Self { engine };
         backend.map_bytes(MemRegion::BootRom, Prot::READ | Prot::EXEC, &boot_rom)?;
         backend.map_bytes(MemRegion::SystemRom, Prot::READ | Prot::EXEC, &system_rom)?;
-        backend.map_bytes(MemRegion::Ram, Prot::ALL, &ram)?;
+        backend.map_shared_ram(ram)?;
         backend.map_mmio_window()?;
         hooks::register(&mut backend.engine)?;
 
@@ -123,6 +126,14 @@ impl UnicornBackend {
 
     /// Runs no more than `instruction_budget` instructions from `start` toward `end`.
     pub fn run(&mut self, start: u32, end: u32, instruction_budget: usize) -> BackendStop {
+        let exits = if end == u32::MAX {
+            self.engine.ctl_set_exits(&[])
+        } else {
+            self.engine.ctl_set_exits(&[u64::from(end)])
+        };
+        if let Err(error) = exits {
+            return BackendStop::Unicorn(error);
+        }
         let data = self.engine.get_data_mut();
         data.executed_instructions = 0;
         data.callback_stop = None;
@@ -481,9 +492,15 @@ impl UnicornBackend {
                         VirtualAddress::new(pc),
                     ))
             }
-            PendingException::Fault(fault) => self
-                .machine_mut()
-                .finish_instruction(InstructionOutcome::Fault(fault)),
+            PendingException::Fault(fault) => {
+                trace!(
+                    address = fault.address.get(),
+                    status = fault.status.raw(),
+                    "entering exception for MMU or MMIO fault"
+                );
+                self.machine_mut()
+                    .finish_instruction(InstructionOutcome::Fault(fault))
+            }
         };
         let Some(plan) = plan else {
             return BackendStop::Unicorn(uc_error::ARG);
@@ -561,6 +578,22 @@ impl UnicornBackend {
         self.engine
             .mem_write(u64::from(region.base().get()), bytes)
             .map_err(BackendError::Unicorn)
+    }
+
+    fn map_shared_ram(&mut self, ram: *mut u8) -> Result<()> {
+        let region = MemRegion::Ram;
+        // `ram` points to the fixed-size allocation owned by BackendData's
+        // Machine. Moving the Box does not move its allocation, and Unicorn is
+        // closed before BackendData is dropped.
+        unsafe {
+            self.engine.mem_map_ptr(
+                u64::from(region.base().get()),
+                u64::from(region.size()),
+                Prot::ALL,
+                ram.cast(),
+            )
+        }
+        .map_err(BackendError::Unicorn)
     }
 
     fn map_mmio_window(&mut self) -> Result<()> {
@@ -772,6 +805,17 @@ mod tests {
     use super::{BackendError, BackendStop, MEMORY_SEARCH_CHUNK_SIZE, UnicornBackend};
 
     #[test]
+    fn cortex_a9_reset_state_is_privileged_a32_at_zero() {
+        let backend = UnicornBackend::new(Machine::default()).unwrap();
+        let state = backend.cpu_state().unwrap();
+        assert_eq!(state.registers[15], 0);
+        assert_eq!(state.cpsr & 0x1f, 0x13);
+        assert_eq!(state.cpsr & (1 << 5), 0);
+        assert_ne!(state.cpsr & (1 << 7), 0);
+        assert_ne!(state.cpsr & (1 << 6), 0);
+    }
+
+    #[test]
     fn cortex_a9_executes_one_a32_instruction() {
         let mut machine = Machine::default();
         let start = MemRegion::Ram.base().get();
@@ -809,6 +853,52 @@ mod tests {
         let execution = backend.inspect_execution(None, 0, 4).unwrap();
         assert_eq!(execution.instruction_address.get(), start);
         assert_eq!(execution.instruction_bytes, instruction);
+    }
+
+    #[test]
+    fn cpu_and_core_share_one_ram_backing() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        let target = start + 0x1000;
+        let value = 0x4433_2211_u32;
+        let mut code = vec![
+            0x04, 0x00, 0x9f, 0xe5, // ldr r0, [pc, #4]
+            0x04, 0x10, 0x9f, 0xe5, // ldr r1, [pc, #4]
+            0x00, 0x10, 0x80, 0xe5, // str r1, [r0]
+        ];
+        code.extend_from_slice(&target.to_le_bytes());
+        code.extend_from_slice(&value.to_le_bytes());
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &code)
+            .unwrap();
+        let mut backend = UnicornBackend::new(machine).unwrap();
+
+        assert_eq!(
+            backend.run(start, start + 12, 3),
+            BackendStop::InstructionBudget
+        );
+        assert_eq!(
+            backend
+                .machine()
+                .memory
+                .read_u32(PhysicalAddress::new(target))
+                .unwrap(),
+            value
+        );
+
+        let replacement = 0xaabb_ccdd_u32;
+        backend
+            .machine_mut()
+            .memory
+            .write_u32(PhysicalAddress::new(target), replacement)
+            .unwrap();
+        assert_eq!(
+            backend
+                .read_physical_memory(PhysicalAddress::new(target), 4)
+                .unwrap(),
+            replacement.to_le_bytes()
+        );
     }
 
     #[test]

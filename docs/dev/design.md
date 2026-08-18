@@ -36,7 +36,8 @@ replacement policy central without requiring ARM VMSA descriptor details.
 ### ROM, RAM, and Process Creation
 
 The image packer produces an immutable system-ROM image from separately linked
-kernel and user ELF files. A provided boot ROM copies the kernel into RAM.
+kernel and user ELF files. Reset starts at a fixed, guest-executed boot ROM,
+which copies the kernel into RAM rather than relying on host-side initialization.
 User programs remain immutable ROM modules until the student kernel creates a
 process by allocating RAM and copying a module into it.
 

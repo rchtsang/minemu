@@ -1,3 +1,5 @@
+use std::cell::UnsafeCell;
+
 use minemu_platform::{
     BOOT_ROM_SIZE, MemRegion, PhysicalAddress, PhysicalRange, RAM_SIZE, SYSTEM_ROM_SIZE,
 };
@@ -18,7 +20,7 @@ pub trait PhysicalMemoryAccess {
 pub struct PhysicalMemory {
     boot_rom: Box<[u8; BOOT_ROM_SIZE as usize]>,
     system_rom: Box<[u8; SYSTEM_ROM_SIZE as usize]>,
-    ram: Box<[u8; RAM_SIZE as usize]>,
+    ram: UnsafeCell<Box<[u8; RAM_SIZE as usize]>>,
 }
 
 impl PhysicalMemory {
@@ -27,7 +29,7 @@ impl PhysicalMemory {
         Self {
             boot_rom: zeroed(),
             system_rom: zeroed(),
-            ram: zeroed(),
+            ram: UnsafeCell::new(zeroed()),
         }
     }
 
@@ -53,7 +55,14 @@ impl PhysicalMemory {
 
     /// Returns a read-only view of the current RAM image.
     pub fn ram(&self) -> &[u8] {
-        &self.ram[..]
+        // RAM may also be mapped into a single-threaded CPU backend. Callers
+        // only inspect it while guest execution is stopped.
+        unsafe { &(**self.ram.get())[..] }
+    }
+
+    /// Returns the stable RAM allocation used by an in-process CPU backend.
+    pub fn ram_mut_ptr(&mut self) -> *mut u8 {
+        self.ram.get_mut().as_mut_ptr()
     }
 
     /// Borrows one mapped physical range for synchronous zero-copy inspection.
@@ -66,7 +75,7 @@ impl PhysicalMemory {
         let storage: &[u8] = match region {
             MemRegion::BootRom => &self.boot_rom[..],
             MemRegion::SystemRom => &self.system_rom[..],
-            MemRegion::Ram => &self.ram[..],
+            MemRegion::Ram => self.ram(),
             _ => return Err(CoreError::UnmappedPhysicalAddress(address.get())),
         };
         storage.get(offset..offset.saturating_add(length)).ok_or(
@@ -83,6 +92,7 @@ impl PhysicalMemory {
             return Err(CoreError::ImmutablePhysicalAddress(address.get()));
         }
         self.ram
+            .get_mut()
             .get_mut(offset..offset.saturating_add(length))
             .ok_or(CoreError::PhysicalAccessOutOfBounds {
                 address: address.get(),

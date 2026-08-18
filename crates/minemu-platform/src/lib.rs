@@ -26,8 +26,9 @@ pub use image::{
     ModuleRecord, ModuleSegment,
 };
 pub use mmap::{
-    BOOT_ROM_BASE, BOOT_ROM_SIZE, MemRegion, PAGE_SIZE, RAM_BASE, RAM_SIZE, SYSTEM_ROM_BASE,
-    SYSTEM_ROM_SIZE, direct_map_physical, direct_map_virtual,
+    BOOT_INFO_PADDR, BOOT_INFO_VADDR, BOOT_ROM_BASE, BOOT_ROM_SIZE, BOOT_STACK_BASE,
+    BOOT_STACK_SIZE, BOOTSTRAP_ENTRY_PADDR, MemRegion, PAGE_SIZE, RAM_BASE, RAM_SIZE,
+    SYSTEM_ROM_BASE, SYSTEM_ROM_SIZE, direct_map_physical, direct_map_virtual,
 };
 pub use mmio::{MmioRegister, MmioTransaction, MmioWidth, decode_mmio};
 pub use mmu::{

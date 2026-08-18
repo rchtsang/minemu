@@ -30,9 +30,11 @@ format documented in `emulator.md`.
 
 ## Interactive And Headless Runs
 
-`minemu run` host-applies the image boot plan and opens the interactive TUI in
-the paused state. Use its command prompt to start, pause, resume, reset, inspect
-the paused machine, or quit. See `tui.md` for controls.
+`minemu run` validates and maps the system image, maps the fixed platform boot
+ROM, and opens the interactive TUI in the paused reset state with `PC = 0`.
+Starting emulation executes the boot ROM; the host does not prepopulate kernel
+RAM. Use the command prompt to start, pause, resume, reset, inspect the paused
+machine, or quit. See `tui.md` for controls.
 
 ```sh
 minemu run minimum-template/system/build/minimum.img

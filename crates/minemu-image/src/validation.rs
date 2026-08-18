@@ -1,5 +1,6 @@
 use minemu_platform::{
-    KernelSegment, MemRegion, ModuleSegment, PhysicalAddress, PhysicalRange, VirtualAddress,
+    BOOT_STACK_BASE, BOOT_STACK_SIZE, BOOTSTRAP_ENTRY_PADDR, KernelSegment, ModuleSegment,
+    PhysicalAddress, PhysicalRange, VirtualAddress,
 };
 
 use crate::{ImageError, Result};
@@ -34,7 +35,7 @@ pub(crate) fn validate_kernel_records(
             "kernel entry is not initialized executable code",
         ));
     }
-    let bootstrap = PhysicalAddress::new(MemRegion::Ram.base().get() + 0x8000);
+    let bootstrap = PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR);
     let bootstrap_instruction = PhysicalRange::new(bootstrap, A32_INSTRUCTION_SIZE)
         .expect("fixed bootstrap instruction range is valid");
     if !segments.iter().any(|segment| {
@@ -45,16 +46,14 @@ pub(crate) fn validate_kernel_records(
             "missing initialized executable bootstrap segment",
         ));
     }
-    let boot_info = PhysicalRange::new(
-        PhysicalAddress::new(MemRegion::Ram.base().get() + 0x7000),
-        64,
-    )
-    .expect("fixed boot-info range is valid");
+    let boot_workspace =
+        PhysicalRange::new(PhysicalAddress::new(BOOT_STACK_BASE), BOOT_STACK_SIZE + 64)
+            .expect("fixed boot workspace range is valid");
     for (index, segment) in segments.iter().enumerate() {
         let physical = physical_range(*segment)?;
-        if physical_ranges_overlap(physical, boot_info) {
+        if physical_ranges_overlap(physical, boot_workspace) {
             return Err(ImageError::InvalidImage(
-                "kernel segment overlaps boot info",
+                "kernel segment overlaps boot ROM workspace",
             ));
         }
         let virtual_range = AddressRange::new(segment.virtual_address, segment.memory_size)?;

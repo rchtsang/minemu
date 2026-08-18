@@ -13,6 +13,7 @@ All entries are planned until their named evidence exists.
 | CPU-01 | A32-only Cortex-A9 execution and unsupported Thumb entry rejection | `minemu-image` ELF tests; `fixtures/arm/a32-entry` |
 | MAP-01 | Physical RAM, ROM, MMIO, and reserved ranges | `minemu-platform` range tests |
 | MAP-02 | Higher-half direct map and bootstrap addresses | `fixtures/arm/high-half-boot`; kernel template smoke test |
+| BOOT-01 | Reset at Boot ROM, guest segment copy/BSS clear, boot info, and physical handoff | `minemu` Boot ROM runner tests; minimum-template headless smoke test |
 | IMG-01 | Header, kernel-segment, module, and boot-info binary layouts | `minemu-platform` encode/decode tests |
 | IMG-02 | Packer rejects malformed image inputs and unsupported ELF features | `minemu-image` negative tests |
 | IMG-03 | Multi-segment kernel and fixed-address user modules boot | headless `image-multisegment` test |

@@ -12,7 +12,7 @@ use std::{
 use minemu_core::{BlockUpdate, MachineStatus, PhysicalMemoryAccess, UartUpdate};
 use minemu_platform::{InspectionRequest, InspectionResponse, Peripheral};
 use minemu_unicorn::{BackendStop, UnicornBackend};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection, RuntimeInspectionRequest,
@@ -376,16 +376,23 @@ impl Service {
                         );
                         break;
                     }
-                    Ok(stop) if last_publish.elapsed() >= self.config.status_period => {
-                        self.publish(
-                            lifecycle,
-                            Some(format!("{stop:?}")),
-                            None,
-                            Some(&mut emulator),
+                    Ok(stop) => {
+                        trace!(
+                            ?stop,
+                            pc = emulator.backend.program_counter().ok(),
+                            tick = emulator.backend.machine().ticks(),
+                            "emulator batch stopped"
                         );
-                        last_publish = Instant::now();
+                        if last_publish.elapsed() >= self.config.status_period {
+                            self.publish(
+                                lifecycle,
+                                Some(format!("{stop:?}")),
+                                None,
+                                Some(&mut emulator),
+                            );
+                            last_publish = Instant::now();
+                        }
                     }
-                    Ok(_) => {}
                     Err(error) => {
                         let flush_error = emulator.flush().err();
                         let detail = flush_error

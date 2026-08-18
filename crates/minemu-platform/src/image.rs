@@ -1,6 +1,6 @@
 use crate::{
-    MemRegion, PhysicalAddress, PhysicalRange, PlatformError, Result, VirtualAddress,
-    direct_map_physical,
+    BOOT_INFO_PADDR, BOOTSTRAP_ENTRY_PADDR, MemRegion, PhysicalAddress, PhysicalRange,
+    PlatformError, Result, VirtualAddress, direct_map_physical,
 };
 
 /// ABI version for system-ROM images and boot-info records.
@@ -90,10 +90,10 @@ impl ImageHeader {
         {
             return Err(PlatformError::InvalidImageField("image size"));
         }
-        if self.bootstrap_entry_paddr.get() != MemRegion::Ram.base().get() + 0x8000 {
+        if self.bootstrap_entry_paddr.get() != BOOTSTRAP_ENTRY_PADDR {
             return Err(PlatformError::InvalidImageField("bootstrap entry"));
         }
-        if self.boot_info_paddr.get() != MemRegion::Ram.base().get() + 0x7000 {
+        if self.boot_info_paddr.get() != BOOT_INFO_PADDR {
             return Err(PlatformError::InvalidImageField("boot info address"));
         }
         direct_map_physical(self.kernel_entry_vaddr)?;

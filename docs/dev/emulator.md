@@ -49,6 +49,8 @@ The reset and bootstrap contract uses these fixed physical addresses:
 
 | Address | Meaning |
 |---|---|
+| `0x0000_0000` | CPU reset PC and boot-ROM reset vector |
+| `0x4000_6000..0x4000_6fff` | Temporary boot-ROM stack |
 | `0x4000_7000` | Boot-info physical address |
 | `0x4000_8000` | First permitted kernel bootstrap physical address |
 | `0xc000_0000` | Kernel higher-half direct-map base |
@@ -60,12 +62,15 @@ The initial kernel mapping is:
 VA 0xc000_0000..0xc3ff_ffff -> PA 0x4000_0000..0x43ff_ffff
 ```
 
-The host packer requires `bootstrap_entry_paddr = 0x4000_8000`. The boot ROM
-copies kernel segments to their declared physical addresses and starts that
-entry with translation disabled. The bootstrap code
+Reset enters privileged A32 state at `PC = 0x0000_0000` with translation
+disabled. The host packer requires `bootstrap_entry_paddr = 0x4000_8000`. The
+guest-executed boot ROM reads the image from system ROM, copies kernel segments
+to their declared physical addresses, clears each trailing BSS range, writes
+boot info, and starts that entry with translation disabled and
+`r0 = 0xc000_7000`. The bootstrap code
 creates the initial page tables, installs TTBR0, enables SCTLR.M, sets VBAR to
 the kernel vector base, and branches to `kernel_entry_vaddr` in the high-half
-mapping. It passes `r0 = 0xc000_7000`, the high-half alias of boot info.
+mapping.
 
 The bootstrap segment is physical code. Kernel high-half segments must satisfy
 `physical_address = virtual_address - 0x8000_0000`. The boot ROM does not
@@ -195,7 +200,7 @@ stacks for SVC, IRQ, ABT, and UND before it enables exceptions. Prefetch and
 data aborts share the ABT stack. User stack state is process context rather
 than an exception stack.
 
-The supplied linker script reserves physical `0x4001_0000..0x4002_1fff` for
+The supplied linker script reserves physical `0x4001_0000..0x4002_2fff` for
 the bootstrap page directory and its page tables. Kernel high-half loadable
 segments begin at physical `0x4003_0000`, while the physical trampoline remains
 at `0x4000_8000`.
@@ -203,7 +208,8 @@ at `0x4000_8000`.
 Bootstrap temporarily maps physical `0x4000_0000..0x403f_ffff` identically so
 the trampoline can execute the instruction after enabling translation. Kernel
 code must use the documented higher-half direct map and must not rely on this
-transition mapping.
+transition mapping. It also identity-maps the implemented 64 KiB supervisor
+MMIO window as readable/writable and non-executable.
 
 The supplied undefined and abort trampolines create an 88-byte normalized
 `minemu_trap_frame`: `r0..r12`, banked return LR, SPSR, signed dispatch ID,

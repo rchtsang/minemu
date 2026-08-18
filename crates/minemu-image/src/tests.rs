@@ -69,7 +69,7 @@ fn parser_rejects_truncated_version_mismatched_and_corrupt_images() {
 }
 
 #[test]
-fn packer_rejects_invalid_a32_entries_bootstrap_and_boot_info_overlap() {
+fn packer_rejects_invalid_a32_entries_bootstrap_and_boot_workspace_overlap() {
     let kernel = kernel();
     let unaligned = elf(0x0040_0002, &[(0x0040_0000, &[1, 2, 3, 4], 4)]);
     assert!(
@@ -97,6 +97,16 @@ fn packer_rejects_invalid_a32_entries_bootstrap_and_boot_info_overlap() {
         ],
     );
     assert!(ImageBuilder::new(&boot_info_overlap).build().is_err());
+
+    let boot_stack_overlap = elf(
+        0xc000_9000,
+        &[
+            (0x4000_6000, &[1, 2, 3, 4], 4),
+            (0x4000_8000, &[1, 2, 3, 4], 4),
+            (0xc000_9000, &[5, 6, 7, 8], 4),
+        ],
+    );
+    assert!(ImageBuilder::new(&boot_stack_overlap).build().is_err());
 }
 
 #[test]

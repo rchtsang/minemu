@@ -6,13 +6,13 @@ use std::{
 };
 
 use minemu_core::{Machine, PhysicalMemory};
-use minemu_platform::{InspectionRequest, MmuInspection, ObservableEvent};
+use minemu_platform::{BOOT_ROM_BASE, InspectionRequest, MmuInspection, ObservableEvent};
 use minemu_runtime::{
     LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeStatus, UartPort,
 };
 use serde::Deserialize;
 
-use crate::{CliError, Result};
+use crate::{CliError, Result, boot_rom::BOOT_ROM};
 
 /// Options for bounded headless execution of a system image.
 #[derive(Clone, Debug)]
@@ -175,30 +175,11 @@ fn runtime_config(
     image: &minemu_image::SystemImage,
     block_media_path: Option<PathBuf>,
 ) -> Result<RuntimeConfig> {
-    let plan = image.boot_plan()?;
-    let boot_rom = boot_rom_handoff(plan.bootstrap_entry_paddr);
     let memory =
-        PhysicalMemory::with_roms(&boot_rom, image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
-    let mut writes = Vec::new();
-    plan.apply(|address, bytes| {
-        writes.push((address, bytes.to_vec()));
-        Ok::<(), CliError>(())
-    })?;
-    let entry = plan.bootstrap_entry_paddr.get();
-    let mut config = RuntimeConfig::new(Machine::new(memory, 4096), entry);
+        PhysicalMemory::with_roms(BOOT_ROM, image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
+    let mut config = RuntimeConfig::new(Machine::new(memory, 4096), BOOT_ROM_BASE);
     config.block_media_path = block_media_path;
-    for (address, bytes) in writes {
-        config = config.with_initial_ram_write(address, bytes);
-    }
     Ok(config)
-}
-
-fn boot_rom_handoff(entry: minemu_platform::PhysicalAddress) -> [u8; 8] {
-    let mut bytes = [0; 8];
-    // ldr pc, [pc, #-4] loads the adjacent physical bootstrap address.
-    bytes[..4].copy_from_slice(&0xe51f_f004_u32.to_le_bytes());
-    bytes[4..].copy_from_slice(&entry.get().to_le_bytes());
-    bytes
 }
 
 fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()> {
@@ -259,7 +240,9 @@ fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()
             })
             .collect::<Vec<_>>();
         if &actual != values {
-            return Err(CliError::Assertion("unexpected trace values".into()));
+            return Err(CliError::Assertion(format!(
+                "unexpected trace values: expected {values:?}, got {actual:?}"
+            )));
         }
     }
     Ok(())
@@ -304,11 +287,20 @@ const fn default_max_ticks() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use minemu_core::MachineStatus;
+    use minemu_core::{MachineStatus, PhysicalMemoryAccess};
+    use minemu_image::SystemImage;
+    use minemu_platform::{
+        BOOT_INFO_PADDR, BOOT_INFO_SIZE, BOOT_ROM_BASE, BOOTSTRAP_ENTRY_PADDR, IMAGE_HEADER_SIZE,
+        ImageHeader, KERNEL_SEGMENT_SIZE, KernelSegment, PhysicalAddress, PhysicalRange,
+        VirtualAddress,
+    };
+    use minemu_unicorn::UnicornBackend;
 
-    use super::{HeadlessAssertion, RunResult, assert_result, boot_rom_handoff};
+    use super::{HeadlessAssertion, RunResult, assert_result, runtime_config};
     use crate::CliError;
-    use minemu_runtime::LifecycleState;
+    use minemu_runtime::{
+        LifecycleState, RuntimeHandle, RuntimeInspection, RuntimeInspectionRequest,
+    };
 
     fn result(output: &[u8]) -> RunResult {
         RunResult {
@@ -357,15 +349,127 @@ mod tests {
     }
 
     #[test]
-    fn boot_rom_contains_a_physical_handoff_stub() {
-        let bytes = boot_rom_handoff(minemu_platform::PhysicalAddress::new(0x4000_8000));
-        assert_eq!(
-            u32::from_le_bytes(bytes[..4].try_into().unwrap()),
-            0xe51f_f004
-        );
-        assert_eq!(
-            u32::from_le_bytes(bytes[4..].try_into().unwrap()),
-            0x4000_8000
-        );
+    fn boot_rom_loads_the_kernel_and_hands_off_from_reset() {
+        let image = boot_test_image();
+        let mut config = runtime_config(&image, None).unwrap();
+        assert_eq!(config.entry, BOOT_ROM_BASE);
+        assert!(config.initial_ram_writes.is_empty());
+
+        let bootstrap = PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR);
+        config
+            .machine
+            .memory
+            .write_range(PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR + 4), &[0xaa; 4])
+            .unwrap();
+        let mut backend = UnicornBackend::new(config.machine).unwrap();
+        backend.set_program_counter(config.entry).unwrap();
+        backend.run(config.entry, u32::MAX, 4096);
+
+        assert_eq!(backend.program_counter().unwrap(), BOOTSTRAP_ENTRY_PADDR);
+        assert_eq!(backend.cpu_state().unwrap().registers[0], 0xc000_7000);
+
+        let mut loaded = [0; 8];
+        backend
+            .machine()
+            .memory
+            .read_range(PhysicalRange::new(bootstrap, 8).unwrap(), &mut loaded)
+            .unwrap();
+        assert_eq!(loaded, [0xfe, 0xff, 0xff, 0xea, 0, 0, 0, 0]);
+
+        let expected_boot_info = image.boot_plan().unwrap().boot_info;
+        let mut boot_info = [0; BOOT_INFO_SIZE];
+        backend
+            .machine()
+            .memory
+            .read_range(
+                PhysicalRange::new(PhysicalAddress::new(BOOT_INFO_PADDR), BOOT_INFO_SIZE as u32)
+                    .unwrap(),
+                &mut boot_info,
+            )
+            .unwrap();
+        assert_eq!(boot_info, expected_boot_info);
+    }
+
+    #[test]
+    fn image_reset_returns_to_boot_rom_with_clear_ram() {
+        let runtime =
+            RuntimeHandle::spawn(runtime_config(&boot_test_image(), None).unwrap()).unwrap();
+        runtime.pause().unwrap();
+        super::wait_for(&runtime, LifecycleState::Paused).unwrap();
+        runtime.reset().unwrap();
+
+        let RuntimeInspection::Execution(execution) = runtime
+            .request_inspection(RuntimeInspectionRequest::Execution {
+                address: None,
+                before: 0,
+                after: 4,
+            })
+            .unwrap()
+            .recv()
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("execution request has a fixed response type");
+        };
+        assert_eq!(execution.registers[15], BOOT_ROM_BASE);
+
+        let RuntimeInspection::LiveMemory(_, bytes) = runtime
+            .request_inspection(RuntimeInspectionRequest::LiveMemory(
+                PhysicalRange::new(PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR), 8).unwrap(),
+            ))
+            .unwrap()
+            .recv()
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("live-memory request has a fixed response type");
+        };
+        assert_eq!(bytes, [0; 8]);
+        runtime.shutdown().unwrap();
+    }
+
+    fn boot_test_image() -> SystemImage {
+        const BOOTSTRAP: [u8; 4] = [0xfe, 0xff, 0xff, 0xea]; // b .
+        const HIGH_ENTRY: [u8; 4] = [0xfe, 0xff, 0xff, 0xea]; // b .
+        let table_size = 2 * KERNEL_SEGMENT_SIZE;
+        let data_offset = IMAGE_HEADER_SIZE + table_size;
+        let image_size = data_offset + BOOTSTRAP.len() + HIGH_ENTRY.len();
+        let header = ImageHeader {
+            image_size: image_size as u32,
+            kernel_segment_table_offset: IMAGE_HEADER_SIZE as u32,
+            kernel_segment_count: 2,
+            module_table_offset: data_offset as u32,
+            module_count: 0,
+            bootstrap_entry_paddr: PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR),
+            kernel_entry_vaddr: VirtualAddress::new(0xc000_9000),
+            boot_info_paddr: PhysicalAddress::new(BOOT_INFO_PADDR),
+        };
+        let segments = [
+            KernelSegment {
+                data_offset: data_offset as u32,
+                physical_address: PhysicalAddress::new(BOOTSTRAP_ENTRY_PADDR),
+                virtual_address: VirtualAddress::new(BOOTSTRAP_ENTRY_PADDR),
+                file_size: BOOTSTRAP.len() as u32,
+                memory_size: 8,
+                flags: 0x5,
+            },
+            KernelSegment {
+                data_offset: (data_offset + BOOTSTRAP.len()) as u32,
+                physical_address: PhysicalAddress::new(0x4000_9000),
+                virtual_address: VirtualAddress::new(0xc000_9000),
+                file_size: HIGH_ENTRY.len() as u32,
+                memory_size: HIGH_ENTRY.len() as u32,
+                flags: 0x5,
+            },
+        ];
+        let mut bytes = vec![0; image_size];
+        bytes[..IMAGE_HEADER_SIZE].copy_from_slice(&header.encode().unwrap());
+        for (index, segment) in segments.into_iter().enumerate() {
+            let offset = IMAGE_HEADER_SIZE + index * KERNEL_SEGMENT_SIZE;
+            bytes[offset..offset + KERNEL_SEGMENT_SIZE].copy_from_slice(&segment.encode().unwrap());
+        }
+        bytes[data_offset..data_offset + BOOTSTRAP.len()].copy_from_slice(&BOOTSTRAP);
+        bytes[data_offset + BOOTSTRAP.len()..].copy_from_slice(&HIGH_ENTRY);
+        SystemImage::parse(&bytes).unwrap()
     }
 }

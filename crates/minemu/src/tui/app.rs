@@ -334,7 +334,10 @@ impl App {
 
     fn stop(&mut self) {
         if self.runtime.status().lifecycle != LifecycleState::Running {
-            if self.runtime.status().lifecycle != LifecycleState::Paused {
+            if self.runtime.status().lifecycle == LifecycleState::Paused {
+                self.actions.push_back(Action::Refresh(WidgetId::Primary));
+                self.actions.push_back(Action::Refresh(WidgetId::Secondary));
+            } else {
                 self.show_message(DialogMessage::error("emulation is not running"));
             }
             return;
@@ -343,6 +346,8 @@ impl App {
             self.runtime_error("stop", error.to_string());
         } else {
             self.show_message(DialogMessage::info("emulation stopped"));
+            self.actions.push_back(Action::Refresh(WidgetId::Primary));
+            self.actions.push_back(Action::Refresh(WidgetId::Secondary));
         }
     }
 

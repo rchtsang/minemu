@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     path::PathBuf,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -47,7 +48,28 @@ pub struct App {
 impl App {
     pub fn start(image: PathBuf, block_media: Option<PathBuf>) -> Result<Self> {
         let handle = start_runtime(&image, block_media)?;
-        let runtime = RuntimeController::new(handle);
+        let mut runtime = RuntimeController::new(handle);
+        runtime.pause().map_err(|error| {
+            error!(error = %error, "failed to request initial TUI pause");
+            CliError::RuntimeSetup
+        })?;
+        for _ in 0..500 {
+            runtime.refresh_status();
+            if runtime.status().lifecycle == LifecycleState::Paused {
+                break;
+            }
+            if runtime.status().lifecycle == LifecycleState::Failed {
+                return Err(CliError::RuntimeSetup);
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        if runtime.status().lifecycle != LifecycleState::Paused {
+            error!(
+                lifecycle = ?runtime.status().lifecycle,
+                "timed out waiting for initial TUI pause"
+            );
+            return Err(CliError::RuntimeSetup);
+        }
         let mut app = Self {
             runtime,
             widgets: vec![

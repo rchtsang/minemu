@@ -20,7 +20,7 @@ pub use secondary::SecondaryWidget;
 
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Margin, Rect},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
@@ -77,5 +77,9 @@ pub fn render_scrollbar(
     let mut state = ScrollbarState::new(content_length)
         .position(position)
         .viewport_content_length(viewport_length);
-    frame.render_stateful_widget(scrollbar, area, &mut state);
+    let track_area = area.inner(Margin {
+        horizontal: 0,
+        vertical: 1,
+    });
+    frame.render_stateful_widget(scrollbar, track_area, &mut state);
 }

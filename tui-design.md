@@ -1,6 +1,7 @@
 # overall behaviors
 
 - errors should generally not crash the tui, but be displayed with red text in the dialog pane
+- emulation starts paused in TUI mode and requires an explicit start action
 
 # commands and controls
 
@@ -74,6 +75,7 @@ Notes:
 - the `<hints>` bar should show a list of hints depending on the active pane.
 - the hints and tick sections are separated by a vertical border
 - scrollable panes show a vertical scrollbar
+  - scrollbar tracks are inset and do not overwrite pane corners
 
 Panes:
 - console
@@ -149,6 +151,7 @@ Subviews:
   - covers Boot ROM, system ROM, and RAM while skipping unmapped/MMIO gaps
   - movement selects bytes with a cursor and scrolls the memory window
   - shows eight bytes per row when wide enough and four bytes otherwise
+  - addresses omit the `0x` prefix to preserve space for byte columns
   - Normal Mode:
     - Search ASCII: /[pattern]
     - Search Bytes: \\[pattern]
@@ -163,7 +166,8 @@ Subviews:
 - pending (secondary)
 
 The dialog wraps messages and prefixes each new message with `>`. Help is shown
-in a popup rather than appended to dialog history. Narrow register panes omit
+as a white command/description table in a green-bordered popup rather than
+appended to dialog history. Narrow register panes omit
 decimal conversion and do not scroll beyond the last full page of registers.
 
 Memory searches scan all physical RAM. ASCII search uses UTF-8 input and byte

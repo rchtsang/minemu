@@ -34,8 +34,8 @@ Status: implemented and verified.
 2. Add explicit normal, insert, command, leader, ASCII-search, byte-search,
    and goto input states. Render their input in the persistent input bar and
    clear it after an action.
-3. Start in console normal mode. `i` enters insert mode and `Esc`
-   returns to normal mode. Normal-mode `?` opens help in dialog.
+3. Start paused in console normal mode. `i` enters insert mode and `Esc`
+   returns to normal mode. Normal-mode `?` opens the help popup.
 4. Bind Ctrl+C, Ctrl+E, Ctrl+D, Ctrl+P, and Ctrl+S to console, events, dialog,
    primary, and secondary focus. Keep Tab for primary/secondary subview
    selection.

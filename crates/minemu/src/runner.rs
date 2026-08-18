@@ -175,10 +175,11 @@ fn runtime_config(
     image: &minemu_image::SystemImage,
     block_media_path: Option<PathBuf>,
 ) -> Result<RuntimeConfig> {
-    let memory =
-        PhysicalMemory::with_roms(&[], image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
-    let mut writes = Vec::new();
     let plan = image.boot_plan()?;
+    let boot_rom = boot_rom_handoff(plan.bootstrap_entry_paddr);
+    let memory =
+        PhysicalMemory::with_roms(&boot_rom, image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
+    let mut writes = Vec::new();
     plan.apply(|address, bytes| {
         writes.push((address, bytes.to_vec()));
         Ok::<(), CliError>(())
@@ -190,6 +191,14 @@ fn runtime_config(
         config = config.with_initial_ram_write(address, bytes);
     }
     Ok(config)
+}
+
+fn boot_rom_handoff(entry: minemu_platform::PhysicalAddress) -> [u8; 8] {
+    let mut bytes = [0; 8];
+    // ldr pc, [pc, #-4] loads the adjacent physical bootstrap address.
+    bytes[..4].copy_from_slice(&0xe51f_f004_u32.to_le_bytes());
+    bytes[4..].copy_from_slice(&entry.get().to_le_bytes());
+    bytes
 }
 
 fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()> {
@@ -297,7 +306,7 @@ const fn default_max_ticks() -> u64 {
 mod tests {
     use minemu_core::MachineStatus;
 
-    use super::{HeadlessAssertion, RunResult, assert_result};
+    use super::{HeadlessAssertion, RunResult, assert_result, boot_rom_handoff};
     use crate::CliError;
     use minemu_runtime::LifecycleState;
 
@@ -345,5 +354,18 @@ mod tests {
             ),
             Err(CliError::Assertion(_))
         ));
+    }
+
+    #[test]
+    fn boot_rom_contains_a_physical_handoff_stub() {
+        let bytes = boot_rom_handoff(minemu_platform::PhysicalAddress::new(0x4000_8000));
+        assert_eq!(
+            u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+            0xe51f_f004
+        );
+        assert_eq!(
+            u32::from_le_bytes(bytes[4..].try_into().unwrap()),
+            0x4000_8000
+        );
     }
 }

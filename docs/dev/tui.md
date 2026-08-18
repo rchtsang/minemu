@@ -9,8 +9,9 @@ The internal controller/widget design is documented in
 
 ## Views
 
-The **runtime** view contains console, events, and dialog panes. The console is
-focused initially in normal mode. Press `i` to enter insert mode and forward
+The **runtime** view contains console, events, and dialog panes. The TUI opens
+with emulation paused; use `:start`, `:s`, or Space+s to begin execution. The
+console is focused initially in normal mode. Press `i` to enter insert mode and forward
 ordinary keys, Enter, Backspace, and pasted text to the selected UART. `Esc`
 returns to normal mode.
 
@@ -27,10 +28,13 @@ Instruction-read failures do not close the TUI. Registers and other snapshots
 remain visible while the disassembly pane reports the original error.
 
 Memory inspection covers the readable physical byte map: Boot ROM, system ROM,
-and RAM. A highlighted cursor selects one byte; motions move the cursor and
+and RAM. Physical `00000000` contains the platform handoff stub, while the
+packaged system image begins at `08000000`. A highlighted cursor selects one byte; motions move the cursor and
 automatically shift the 256-byte window across region boundaries while skipping
 unmapped and MMIO gaps. Wide panes display eight bytes per row and narrow panes
-display four. Scrollable panes include a vertical position indicator. Narrow
+display four. Addresses omit the `0x` prefix to preserve byte columns. Scrollable
+panes include an inset vertical position indicator that does not replace border
+corners. Narrow
 register panes omit decimal values and retain hexadecimal values.
 
 ## Input Modes
@@ -58,7 +62,7 @@ in hexadecimal.
 | Space+s | Toggle emulation start/stop. |
 | `[#]h/j/k/l`, `w`, `e`, `gg`, `G` | Count-aware pane-local navigation. |
 | `Tab` | Switch the focused inspect pane's subview. |
-| `?` | Open the help popup. |
+| `?` | Open the green-bordered help table. |
 | Ctrl+left-drag | Resize the main horizontal split. |
 
 Memory and disassembly goto accept hexadecimal addresses, optionally prefixed

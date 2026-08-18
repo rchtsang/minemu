@@ -116,14 +116,14 @@ impl PrimaryWidget {
         let columns = self.memory_columns;
         let mut lines = vec![
             Line::raw(format!(
-                "{:<12}{:<width$} ascii",
+                "{:<10}{:<width$} ascii",
                 "address",
                 "offset",
                 width = columns * 3
             )),
             Line::raw(format!(
                 "{}{offsets}",
-                " ".repeat(12),
+                " ".repeat(10),
                 offsets = (0..columns)
                     .map(|offset| format!("+{offset} "))
                     .collect::<String>()
@@ -135,7 +135,7 @@ impl PrimaryWidget {
             .add_modifier(Modifier::BOLD);
         for (row, bytes) in self.memory.chunks(columns).enumerate() {
             let address = self.memory_range.start().get() + (row * columns) as u32;
-            let mut spans = vec![Span::raw(format!("0x{address:08x}: "))];
+            let mut spans = vec![Span::raw(format!("{address:08x}: "))];
             for (column, byte) in bytes.iter().enumerate() {
                 let byte_address = address + column as u32;
                 let style = if byte_address == self.memory_cursor.get() {
@@ -272,7 +272,7 @@ impl TuiWidget for PrimaryWidget {
         };
         match self.subview {
             PrimarySubview::Memory => {
-                self.memory_columns = if area.width >= 50 { 8 } else { 4 };
+                self.memory_columns = if area.width >= 45 { 8 } else { 4 };
                 self.ensure_cursor_visible();
                 frame.render_widget(
                     Paragraph::new(self.render_memory()).block(pane_block(

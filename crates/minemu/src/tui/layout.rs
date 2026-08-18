@@ -52,7 +52,7 @@ impl SplitLayout {
         result.insert(WidgetId::Header, rows[0]);
         result.insert(WidgetId::InputBar, rows[2]);
         result.insert(WidgetId::Hints, rows[3]);
-        result.insert(WidgetId::Help, centered(area, 72, 70));
+        result.insert(WidgetId::Help, centered(area, 78, 80));
 
         if rows[1].width < 70 || rows[1].height < 12 {
             let visible = match (view, focused) {

@@ -159,7 +159,7 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Extend the normative exception contract with 8-byte-aligned SVC, IRQ,
   ABT, and UND stack symbols; one shared ABT stack; no nested IRQs; a normalized
   trap-frame layout; and IRQ claim, source-ACK, and controller-EOI ownership.
-- [x] Add `minimum-template/include/minemu/platform.h` with the stable memory
+- [x] Add `minimum-template/kernel/include/minemu/platform.h` with the stable memory
   map,
   constants, dual-UART definitions, and a limited set of raw MMIO helpers.
 - [x] Add `mmu.h`, `boot.h`, `trap.h`, `syscall.h`, and `irq.h` with fixed-width,

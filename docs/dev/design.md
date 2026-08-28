@@ -139,10 +139,10 @@ Student projects own their own Makefiles. `minemu` does runtime and packaging
 work only:
 
 ```sh
-minemu image system/minimum.toml --output build/system.img
-minemu run build/system.img --boot-rom bootrom/minemu-bootrom.bin \
-  --block-media build/disk.img --ticks 100000
-minemu test system/minimum-test.toml
+minemu image image/minimum.toml --output image/build/minimum.img
+minemu run image/build/minimum.img --boot-rom bootloader/bootloader.bin \
+  --block-media image/build/disk.img --ticks 100000
+minemu test image/minimum-test.toml
 ```
 
 An OCI image provides the pinned Rust binary, cross-compiler, and supporting

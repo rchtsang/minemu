@@ -26,7 +26,7 @@ fmt:
 # build and boot-test the freestanding minimum template and reference examples
 template:
   make -C "{{ root }}/minimum-template"
-  make -C "{{ root }}/minimum-template" MINEMU="{{ cargo }} run --manifest-path {{ root }}/Cargo.toml -p minemu --" system-test
+  make -C "{{ root }}/minimum-template" MINEMU="{{ cargo }} run --manifest-path {{ root }}/Cargo.toml -p minemu --" test
 
 # ci pipeline
 ci: fmt check lint test template

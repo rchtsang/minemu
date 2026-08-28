@@ -9,19 +9,19 @@ deterministic emulator runtime. It does not build student C or assembly; run
 `minemu image` accepts a TOML manifest. Paths are relative to the manifest.
 
 ```toml
-kernel = "../build/kernel/example.elf"
+kernel = "../kernel/build/minimum-kernel.elf"
 
 [[modules]]
 name = "minimum-user"
-elf = "../build/user/minimum-user.elf"
+elf = "../user/prog/minimum-user/build/minimum-user.elf"
 ```
 
 Package the supplied template system after building it:
 
 ```sh
 make -C minimum-template
-minemu image minimum-template/system/minimum.toml \
-  --output minimum-template/system/build/minimum.img
+minemu image minimum-template/image/minimum.toml \
+  --output minimum-template/image/build/minimum.img
 ```
 
 The packer validates that every input is a little-endian ARM executable ELF,
@@ -37,19 +37,19 @@ prepopulate kernel RAM. Use the command prompt to start, pause, resume, reset,
 inspect the paused machine, or quit. See `tui.md` for controls.
 
 ```sh
-minemu run minimum-template/system/build/minimum.img \
-  --boot-rom minimum-template/bootrom/minemu-bootrom.bin
-minemu run minimum-template/system/build/minimum.img \
-  --boot-rom minimum-template/bootrom/minemu-bootrom.bin \
-  --block-media build/disk.img
+minemu run minimum-template/image/build/minimum.img \
+  --boot-rom minimum-template/bootloader/bootloader.bin
+minemu run minimum-template/image/build/minimum.img \
+  --boot-rom minimum-template/bootloader/bootloader.bin \
+  --block-media minimum-template/image/build/disk.img
 ```
 
 For CI or scripts, `--headless` stops after the requested virtual-tick budget.
 UART0 output is sent to standard output and UART1 output to standard error.
 
 ```sh
-minemu run minimum-template/system/build/minimum.img \
-  --boot-rom minimum-template/bootrom/minemu-bootrom.bin \
+minemu run minimum-template/image/build/minimum.img \
+  --boot-rom minimum-template/bootloader/bootloader.bin \
   --headless --ticks 100000
 ```
 
@@ -64,7 +64,7 @@ The image and Boot ROM paths are relative to the test manifest.
 
 ```toml
 image = "build/minimum.img"
-boot_rom = "../bootrom/minemu-bootrom.bin"
+boot_rom = "../bootloader/bootloader.bin"
 max_ticks = 100
 
 [[inputs]]
@@ -89,5 +89,5 @@ bounded trace-event sequence in order.
 Run the supplied smoke test after packaging its image:
 
 ```sh
-minemu test minimum-template/system/minimum-test.toml
+minemu test minimum-template/image/minimum-test.toml
 ```

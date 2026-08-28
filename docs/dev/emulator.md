@@ -64,7 +64,7 @@ VA 0xc000_0000..0xc3ff_ffff -> PA 0x4000_0000..0x43ff_ffff
 
 Reset enters privileged A32 state at `PC = 0x0000_0000` with translation
 disabled. The emulator maps the exact 64-KiB raw Boot ROM supplied by the
-platform project; `minimum-template/bootrom` owns the reference firmware. The
+platform project; `minimum-template/bootloader` owns the reference firmware. The
 host packer requires `bootstrap_entry_paddr = 0x4000_8000`. The guest-executed
 Boot ROM reads the image from system ROM, copies kernel segments to their
 declared physical addresses, clears each trailing BSS range, writes boot info,

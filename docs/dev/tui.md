@@ -139,6 +139,6 @@ The file is appended to; `RUST_LOG` selects verbosity and defaults to `warn`.
 ```sh
 RUST_LOG=minemu=debug,minemu_runtime=debug,minemu_unicorn=trace \
 cargo run -p minemu -- --log-file /tmp/minemu.log run \
-  minimum-template/system/build/minimum.img \
-  --boot-rom minimum-template/bootrom/minemu-bootrom.bin
+  minimum-template/image/build/minimum.img \
+  --boot-rom minimum-template/bootloader/bootloader.bin
 ```

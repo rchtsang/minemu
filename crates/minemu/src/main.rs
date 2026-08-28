@@ -13,7 +13,7 @@ use tracing_subscriber::EnvFilter;
     name = "minemu",
     about = "Package, boot, and test A32 teaching-platform images.",
     long_about = "Package independently linked A32 kernel and user ELFs into a system image, then boot it headlessly through the same deterministic runtime used by tests.",
-    after_help = "Examples:\n  minemu image minimum-template/system/minimum.toml --output build/minimum.img\n  minemu run build/minimum.img --boot-rom minimum-template/bootrom/minemu-bootrom.bin\n  minemu test minimum-template/system/minimum-test.toml"
+    after_help = "Examples:\n  minemu image minimum-template/image/minimum.toml --output minimum-template/image/build/minimum.img\n  minemu run minimum-template/image/build/minimum.img --boot-rom minimum-template/bootloader/bootloader.bin\n  minemu test minimum-template/image/minimum-test.toml"
 )]
 struct Cli {
     /// Write structured diagnostics to a file instead of the terminal.

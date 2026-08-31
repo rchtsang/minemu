@@ -302,9 +302,10 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [ ] Repair and finish `container/Dockerfile` as the student development image
   with pinned Rust and Just versions, Zsh, ARM GCC, and the native tools needed
   to build Unicorn.
-- [ ] Make the Docker build context explicit and minimal, install the Zsh files
-  as `.zshenv` and `.zshrc`, use a valid UTF-8 locale, and retain the non-root
-  development user.
+- [x] Make the Docker build context explicit and minimal with an allowlist-style
+  `container/.dockerignore`.
+- [ ] Install the Zsh files as `.zshenv` and `.zshrc`, use a valid UTF-8 locale,
+  and retain the non-root development user.
 - [ ] Add root Just targets for development-image build, rebuild, test, shell,
   and cleanup without making Docker part of the normal host `just ci` path.
 - [ ] Add a container smoke test that mounts the workspace and runs `just ci`,

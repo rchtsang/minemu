@@ -1,27 +1,28 @@
 set shell := ["zsh", "-eu", "-o", "pipefail", "-c"]
 
 workspace := parent_directory(justfile_directory())
+context := justfile_directory()
 dockerfile := justfile_directory() / "Dockerfile"
 image := "minemu-dev"
 
 # build docker image
 build:
-  docker build \
+  sudo docker build \
     --file "{{ dockerfile }}" \
     --tag "{{ image }}" \
-    "{{ workspace }}"
+    "{{ context }}"
 
 # rebuild docker image ignore cache
 rebuild:
-  docker build \
+  sudo docker build \
     --file "{{ dockerfile }}" \
     --no-cache \
     --tag "{{ image }}" \
-    "{{ workspace }}"
+    "{{ context }}"
 
 # run workspace tests in container
 test:
-  docker run --rm \
+  sudo docker run --rm \
     --volume "{{ workspace }}:/workspace" \
     --workdir /workspace \
     "{{ image }}" \
@@ -29,7 +30,7 @@ test:
 
 # ssh into container
 shell:
-  docker run --rm \
+  sudo docker run --rm \
     --interactive \
     --tty \
     --volume "{{ workspace }}:/workspace" \
@@ -38,4 +39,4 @@ shell:
 
 # delete the docker image
 clean:
-  docker image rm "{{ image }}"
+  sudo docker image rm "{{ image }}"

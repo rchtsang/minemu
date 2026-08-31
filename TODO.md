@@ -197,8 +197,9 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Provide user and system templates as separate student projects.
 - [x] Require students to implement low-level device drivers, especially UART,
   using exposed definitions and raw MMIO helpers.
-- [ ] Add template and reference-example smoke tests, including ABT/UND, SVC,
-  IRQ, stack-frame, and IRQ-completion conformance evidence.
+- [ ] Keep `minimum-template` validation focused on building the student
+  projects and packaging the starter image. Move headless image tests and ABI
+  conformance evidence into the separate `minimum-tests` repository.
 
 ## 6. Implement `minemu-runtime`
 
@@ -282,18 +283,28 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Rewrite `docs/dev/tui.md` from the completed behavior, run workspace and
   template verification, then perform a manual TUI pass with `--log-file`.
 
-## 9. Complete Template Conformance and Release the Platform
+## 9. Complete Conformance and Release the Platform
 
-- [ ] Add focused `minimum-template` headless image tests for ROM boot,
-  dual-UART polling/IRQ, SysTick deadlines, configurable IRQ priority, block
+- [x] After its remote exists, add `minimum-tests` as a Git submodule. It will
+  be a fork of `minimum-template` that tracks the student platform while
+  keeping emulator conformance programs and manifests out of the student
+  repository.
+- [ ] Move the existing starter-image headless smoke test from
+  `minimum-template` into `minimum-tests`; keep the student repository free of
+  headless test programs and manifests.
+- [ ] Add focused `minimum-tests` headless image tests for ROM boot, dual-UART
+  polling/IRQ, SysTick deadlines, configurable IRQ priority, block
   success/error/write-back paths, RNG sequences, trace events, MMU replacement
   bits and permissions, CP15, every exception path, and process TTBR/TLBIALL
   switches.
-- [ ] Extend the template test workflow to build the starter kernel, user
-  programs, and reference examples; package each required image; run scripted
-  input; and assert output, events, faults, and machine state.
+- [ ] Extend the `minimum-tests` workflow to build each conformance program,
+  package its image, run scripted input, and assert output, events, faults, and
+  machine state.
 - [ ] Keep the focused Rust platform, core, backend, image, and runtime tests as
-  the backend-independent evidence paired with the template headless tests.
+  the backend-independent evidence paired with the `minimum-tests` headless
+  suite.
+- [ ] Update `docs/dev/abi-conformance.md` to name the final `minimum-tests`
+  manifests after the submodule is available.
 - [ ] Maintain the 100,000 strict-instructions-per-second representative
   throughput floor.
 
@@ -306,20 +317,19 @@ scenarios. Do not copy its monolithic implementation into this workspace.
   `container/.dockerignore`.
 - [ ] Install the Zsh files as `.zshenv` and `.zshrc`, use a valid UTF-8 locale,
   and retain the non-root development user.
-- [ ] Add root Just targets for development-image build, rebuild, test, shell,
-  and cleanup without making Docker part of the normal host `just ci` path.
 - [ ] Add a container smoke test that mounts the workspace and runs `just ci`,
-  including the `minimum-template` build and headless boot test.
+  including the `minimum-template` build and the `minimum-tests` headless
+  suite.
 - [ ] Document local development-image build, shell, test, UID/GID, and cache
-  usage in `container/README.md` and link the root Just commands from the
-  developer tooling documentation.
+  usage in `container/README.md`, including the container-local Just commands.
 
 ### Release Distribution
 
 - [ ] Add a multi-stage release image that includes a prebuilt `minemu` binary
   plus version-matched platform artifacts.
 - [ ] Publish versioned `linux/amd64` and `linux/arm64` images only after
-  workspace, template headless, and container smoke tests pass.
+  workspace, `minimum-template` smoke, `minimum-tests` headless, and container
+  smoke tests pass.
 
 ## Completion Criteria
 

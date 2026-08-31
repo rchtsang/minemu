@@ -74,8 +74,8 @@ scenarios. Do not copy its monolithic implementation into this workspace.
   SysTick defaults, and trace-event semantics.
 - [x] Specify the versioned image and boot-info wire formats with explicit
   little-endian fields and bounds rules.
-- [x] Build a conformance matrix mapping each ABI rule to a Rust test, guest
-  fixture, template smoke test, or headless image test.
+- [x] Build a conformance matrix mapping each ABI rule to a Rust test, template
+  smoke test, or headless image test.
 
 ## 1. Implement `minemu-platform`
 
@@ -180,14 +180,14 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Define the student-owned IRQ trampoline sequence: claim once, perform the
   source-specific ACK, write matching controller EOI, then return or switch
   context with IRQs masked throughout the handler.
-- [x] Build `libminemu_rt.a` with freestanding memory primitives and
-  panic/halt support, but no UART driver convenience API.
+- [x] Build `kernel/build/libminemu_kernel.a` with freestanding memory
+  primitives and panic/halt support, but no UART driver convenience API.
 - [x] Document and link `libgcc` explicitly through supported Makefile rules.
-- [x] Add complete reference examples outside the starter template for SVC
-  context switching; IRQ enable/disable and IRQ context switching; UART polling
-  and RX IRQ handling; and raw SysTick, interrupt-controller, RNG, trace, and
-  block MMIO access.
-- [ ] Publish `minimum-template` as a separately hosted, independently buildable
+- [x] Add complete reference examples alongside, but separate from, the starter
+  kernel for SVC context switching; IRQ enable/disable and IRQ context
+  switching; UART polling and RX IRQ handling; and raw SysTick,
+  interrupt-controller, RNG, trace, and block MMIO access.
+- [x] Publish `minimum-template` as a separately hosted, independently buildable
   Git repository and add it to this workspace as a Git submodule after the
   remote exists. It contains student-owned SVC/IRQ trampoline sources, platform
   assets, and a build without hosted libc/newlib from its initial clone.
@@ -282,30 +282,48 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Rewrite `docs/dev/tui.md` from the completed behavior, run workspace and
   template verification, then perform a manual TUI pass with `--log-file`.
 
-## 9. Port Fixtures and Release the Platform
+## 9. Complete Template Conformance and Release the Platform
 
-- [ ] Port spike scenarios into `fixtures/arm` as backend/ABI conformance
-  tests, separate from student templates.
-- [ ] Cover ROM boot, dual-UART polling/IRQ, SysTick deadlines, configurable
-  IRQ priority, block success/error/write-back paths, RNG sequences, trace
-  events, MMU replacement bits and permissions, CP15, all exception paths, and
-  process TTBR/TLBIALL switches.
-- [ ] Build the fixture suite through `just fixtures/test`.
-- [ ] Add template smoke tests: build kernel/user projects, package an image,
-  boot it, run scripted input, and assert output/state.
+- [ ] Add focused `minimum-template` headless image tests for ROM boot,
+  dual-UART polling/IRQ, SysTick deadlines, configurable IRQ priority, block
+  success/error/write-back paths, RNG sequences, trace events, MMU replacement
+  bits and permissions, CP15, every exception path, and process TTBR/TLBIALL
+  switches.
+- [ ] Extend the template test workflow to build the starter kernel, user
+  programs, and reference examples; package each required image; run scripted
+  input; and assert output, events, faults, and machine state.
+- [ ] Keep the focused Rust platform, core, backend, image, and runtime tests as
+  the backend-independent evidence paired with the template headless tests.
 - [ ] Maintain the 100,000 strict-instructions-per-second representative
   throughput floor.
-- [ ] Build the student `dev` container with Zsh, ARM GCC, pinned Just, and
-  required native Unicorn build tools.
+
+### Development Container
+
+- [ ] Repair and finish `container/Dockerfile` as the student development image
+  with pinned Rust and Just versions, Zsh, ARM GCC, and the native tools needed
+  to build Unicorn.
+- [ ] Make the Docker build context explicit and minimal, install the Zsh files
+  as `.zshenv` and `.zshrc`, use a valid UTF-8 locale, and retain the non-root
+  development user.
+- [ ] Add root Just targets for development-image build, rebuild, test, shell,
+  and cleanup without making Docker part of the normal host `just ci` path.
+- [ ] Add a container smoke test that mounts the workspace and runs `just ci`,
+  including the `minimum-template` build and headless boot test.
+- [ ] Document local development-image build, shell, test, UID/GID, and cache
+  usage in `container/README.md` and link the root Just commands from the
+  developer tooling documentation.
+
+### Release Distribution
+
 - [ ] Add a multi-stage release image that includes a prebuilt `minemu` binary
   plus version-matched platform artifacts.
 - [ ] Publish versioned `linux/amd64` and `linux/arm64` images only after
-  workspace, fixture, template, and container smoke tests pass.
+  workspace, template headless, and container smoke tests pass.
 
 ## Completion Criteria
 
 - [ ] All ABI rules are documented and covered by conformance tests.
-- [ ] No production core type exposes Unicorn callbacks or types.
+- [x] No production core type exposes Unicorn callbacks or types.
 - [ ] The booted higher-half kernel handles every documented exception path.
 - [ ] A kernel creates and runs a fixed-address user module from system ROM.
 - [ ] MMU-backed supervisor device mappings and user isolation are proven.

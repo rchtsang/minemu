@@ -89,5 +89,5 @@ bounded trace-event sequence in order.
 Run the supplied smoke test after packaging its image:
 
 ```sh
-minemu test minimum-template/image/minimum-test.toml
+minemu test minimum-tests/image/minimum-test.toml
 ```

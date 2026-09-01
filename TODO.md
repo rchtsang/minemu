@@ -197,7 +197,7 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Provide user and system templates as separate student projects.
 - [x] Require students to implement low-level device drivers, especially UART,
   using exposed definitions and raw MMIO helpers.
-- [ ] Keep `minimum-template` validation focused on building the student
+- [x] Keep `minimum-template` validation focused on building the student
   projects and packaging the starter image. Move headless image tests and ABI
   conformance evidence into the separate `minimum-tests` repository.
 
@@ -289,7 +289,7 @@ scenarios. Do not copy its monolithic implementation into this workspace.
   be a fork of `minimum-template` that tracks the student platform while
   keeping emulator conformance programs and manifests out of the student
   repository.
-- [ ] Move the existing starter-image headless smoke test from
+- [x] Move the existing starter-image headless smoke test from
   `minimum-template` into `minimum-tests`; keep the student repository free of
   headless test programs and manifests.
 - [ ] Add focused `minimum-tests` headless image tests for ROM boot, dual-UART

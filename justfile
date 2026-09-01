@@ -23,13 +23,17 @@ lint:
 fmt:
   {{ cargo }} fmt --all -- --check
 
-# build and boot-test the freestanding minimum template and reference examples
+# build the freestanding minimum template and reference examples
 template:
   make -C "{{ root }}/minimum-template"
-  make -C "{{ root }}/minimum-template" MINEMU="{{ cargo }} run --manifest-path {{ root }}/Cargo.toml -p minemu --" test
+  make -C "{{ root }}/minimum-template" MINEMU="{{ cargo }} run --manifest-path {{ root }}/Cargo.toml -p minemu --" image
+
+# build and run the minimum platform conformance tests
+conformance:
+  make -C "{{ root }}/minimum-tests" MINEMU="{{ cargo }} run --manifest-path {{ root }}/Cargo.toml -p minemu --" test
 
 # ci pipeline
-ci: fmt check lint test template
+ci: fmt check lint test template conformance
 
 # cargo clean
 clean:

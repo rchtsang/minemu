@@ -142,7 +142,7 @@ work only:
 minemu image image/minimum.toml --output image/build/minimum.img
 minemu run image/build/minimum.img --boot-rom bootloader/bootloader.bin \
   --block-media image/build/disk.img --ticks 100000
-minemu test image/minimum-test.toml
+minemu test minimum-tests/image/minimum-test.toml
 ```
 
 An OCI image provides the pinned Rust binary, cross-compiler, and supporting

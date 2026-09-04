@@ -6,7 +6,8 @@ mod tui;
 
 pub use manifest::{ImageManifest, ModuleManifest, package_manifest};
 pub use runner::{
-    HeadlessAssertion, HeadlessInput, HeadlessTest, RunOptions, RunResult, run_headless, run_image,
+    BlockMediaAssertion, HeadlessAssertion, HeadlessInput, HeadlessTest, RamPrefill, RunOptions,
+    RunResult, run_headless, run_image,
 };
 pub use tui::run_tui;
 

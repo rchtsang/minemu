@@ -12,7 +12,7 @@ use crate::{ExceptionPlan, MmioBus, Mmu, MmuFault, PhysicalMemory, PhysicalMemor
 pub enum InstructionOutcome {
     Completed,
     SynchronousException(ExceptionKind, VirtualAddress),
-    Fault(MmuFault),
+    Fault(MmuFault, VirtualAddress),
 }
 
 /// Small continuously publishable machine status.
@@ -91,8 +91,8 @@ impl Machine {
                 self.record_event(ObservableEvent::Exception(kind));
                 Some(ExceptionPlan::synchronous(kind, pc))
             }
-            InstructionOutcome::Fault(fault) => {
-                let plan = ExceptionPlan::fault(fault);
+            InstructionOutcome::Fault(fault, pc) => {
+                let plan = ExceptionPlan::fault(fault, pc);
                 self.advance_ticks(plan.request.kind.entry_ticks());
                 self.record_event(ObservableEvent::Exception(plan.request.kind));
                 Some(plan)
@@ -182,15 +182,87 @@ mod tests {
             VirtualAddress::new(0),
         ));
         assert_eq!(machine.ticks(), 3);
-        machine.finish_instruction(InstructionOutcome::Fault(crate::MmuFault {
-            address: VirtualAddress::new(4),
-            status: minemu_platform::FaultStatus::new(
-                minemu_platform::FaultCause::Translation,
-                true,
-                minemu_platform::Access::Read,
-            ),
-        }));
+        machine.finish_instruction(InstructionOutcome::Fault(
+            crate::MmuFault {
+                address: VirtualAddress::new(4),
+                status: minemu_platform::FaultStatus::new(
+                    minemu_platform::FaultCause::Translation,
+                    true,
+                    minemu_platform::Access::Read,
+                ),
+            },
+            VirtualAddress::new(0x1000),
+        ));
         assert_eq!(machine.ticks(), 4);
+    }
+
+    #[test]
+    fn device_deadlines_include_exception_entry_but_not_faulting_access() {
+        let mut machine = Machine::default();
+        let systick = MemRegion::SysTick.base().get();
+        machine
+            .bus
+            .access(
+                MmioTransaction::write(PhysicalAddress::new(systick), MmioWidth::U32, 3),
+                machine.ticks(),
+            )
+            .unwrap();
+        machine
+            .bus
+            .access(
+                MmioTransaction::write(PhysicalAddress::new(systick + 4), MmioWidth::U32, 1),
+                machine.ticks(),
+            )
+            .unwrap();
+
+        machine.finish_instruction(InstructionOutcome::Completed);
+        machine.finish_instruction(InstructionOutcome::SynchronousException(
+            ExceptionKind::SupervisorCall,
+            VirtualAddress::new(0),
+        ));
+        assert_eq!(machine.ticks(), 3);
+        assert_eq!(machine.bus.systick.status(), 1);
+
+        machine
+            .bus
+            .access(
+                MmioTransaction::write(PhysicalAddress::new(systick), MmioWidth::U32, 3),
+                machine.ticks(),
+            )
+            .unwrap();
+        machine
+            .bus
+            .access(
+                MmioTransaction::write(PhysicalAddress::new(systick + 4), MmioWidth::U32, 1),
+                machine.ticks(),
+            )
+            .unwrap();
+        machine
+            .bus
+            .access(
+                MmioTransaction::write(PhysicalAddress::new(systick + 12), MmioWidth::U32, 1),
+                machine.ticks(),
+            )
+            .unwrap();
+
+        machine.finish_instruction(InstructionOutcome::Fault(
+            crate::MmuFault {
+                address: VirtualAddress::new(4),
+                status: minemu_platform::FaultStatus::new(
+                    minemu_platform::FaultCause::Translation,
+                    true,
+                    minemu_platform::Access::Read,
+                ),
+            },
+            VirtualAddress::new(0x1000),
+        ));
+        assert_eq!(machine.ticks(), 4);
+        assert_eq!(machine.bus.systick.status(), 0);
+        machine.finish_instruction(InstructionOutcome::Completed);
+        assert_eq!(machine.bus.systick.status(), 0);
+        machine.finish_instruction(InstructionOutcome::Completed);
+        assert_eq!(machine.ticks(), 6);
+        assert_eq!(machine.bus.systick.status(), 1);
     }
 
     #[test]

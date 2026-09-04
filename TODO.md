@@ -292,18 +292,18 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Move the existing starter-image headless smoke test from
   `minimum-template` into `minimum-tests`; keep the student repository free of
   headless test programs and manifests.
-- [ ] Add focused `minimum-tests` headless image tests for ROM boot, dual-UART
+- [x] Add focused `minimum-tests` headless image tests for ROM boot, dual-UART
   polling/IRQ, SysTick deadlines, configurable IRQ priority, block
   success/error/write-back paths, RNG sequences, trace events, MMU replacement
   bits and permissions, CP15, every exception path, and process TTBR/TLBIALL
   switches.
-- [ ] Extend the `minimum-tests` workflow to build each conformance program,
+- [x] Extend the `minimum-tests` workflow to build each conformance program,
   package its image, run scripted input, and assert output, events, faults, and
   machine state.
-- [ ] Keep the focused Rust platform, core, backend, image, and runtime tests as
+- [x] Keep the focused Rust platform, core, backend, image, and runtime tests as
   the backend-independent evidence paired with the `minimum-tests` headless
   suite.
-- [ ] Update `docs/dev/abi-conformance.md` to name the final `minimum-tests`
+- [x] Update `docs/dev/abi-conformance.md` to name the final `minimum-tests`
   manifests after the submodule is available.
 - [ ] Maintain the 100,000 strict-instructions-per-second representative
   throughput floor.

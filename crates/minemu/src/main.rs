@@ -115,6 +115,7 @@ fn execute(command: Command) -> minemu::Result<()> {
                 image,
                 boot_rom,
                 block_media_path: block_media,
+                instruction_batch: None,
                 max_ticks: ticks,
                 inputs: Vec::new(),
             })?;

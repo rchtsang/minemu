@@ -2,8 +2,8 @@
 
 use minemu_core::{ExceptionPlan, InstructionOutcome, Machine, MmuFault};
 use minemu_platform::{
-    Access, FaultCause, FaultStatus, MemRegion, MmioTransaction, MmioWidth, PAGE_SIZE,
-    PhysicalAddress, PhysicalRange, VirtualAddress,
+    Access, MemRegion, MmioTransaction, MmioWidth, PAGE_SIZE, PhysicalAddress, PhysicalRange,
+    VirtualAddress,
 };
 use thiserror::Error;
 use tracing::{debug, debug_span, trace, warn};
@@ -545,10 +545,17 @@ impl UnicornBackend {
             }
             BackendStop::MmioFault {
                 address, access, ..
-            } => self.finish_pending_exception(PendingException::Fault(MmuFault {
-                address: VirtualAddress::new(address),
-                status: FaultStatus::new(FaultCause::DeviceAccess, false, access),
-            })),
+            } => {
+                let user_mode = self
+                    .register(RegisterARM::CPSR)
+                    .is_ok_and(|cpsr| cpsr & 0x1f == 0x10);
+                let fault = self.machine_mut().mmu.record_invalid_mmio_fault(
+                    VirtualAddress::new(address),
+                    access,
+                    user_mode,
+                );
+                self.finish_pending_exception(PendingException::Fault(fault))
+            }
             stop => stop,
         }
     }
@@ -563,13 +570,15 @@ impl UnicornBackend {
                     ))
             }
             PendingException::Fault(fault) => {
+                let pc = self.program_counter().unwrap_or(fault.address.get());
                 trace!(
                     address = fault.address.get(),
+                    pc,
                     status = fault.status.raw(),
                     "entering exception for MMU or MMIO fault"
                 );
                 self.machine_mut()
-                    .finish_instruction(InstructionOutcome::Fault(fault))
+                    .finish_instruction(InstructionOutcome::Fault(fault, VirtualAddress::new(pc)))
             }
         };
         let Some(plan) = plan else {
@@ -715,6 +724,7 @@ mod hooks {
         memory_type: unicorn_engine::unicorn_const::MemType,
     ) -> Option<TlbEntry> {
         let access = arm::mmu_access(memory_type)?;
+        let user_mode = engine.reg_read(RegisterARM::CPSR).ok()? as u32 & 0x1f == 0x10;
         let data = engine.get_data_mut();
         let BackendData {
             machine,
@@ -725,11 +735,15 @@ mod hooks {
             &mut machine.memory,
             VirtualAddress::new(address as u32),
             access,
-            false,
+            user_mode,
         ) {
             Ok(physical) => Some(TlbEntry {
                 paddr: u64::from(physical.get()),
-                perms: Prot::ALL,
+                perms: match access {
+                    Access::Fetch => Prot::EXEC,
+                    Access::Read => Prot::READ,
+                    Access::Write => Prot::WRITE,
+                },
             }),
             Err(fault) => {
                 *callback_stop = Some(BackendStop::MmuFault(fault));
@@ -866,13 +880,54 @@ mod hooks {
 mod tests {
     use minemu_core::{InterruptUpdate, Machine, PhysicalMemoryAccess, UartUpdate};
     use minemu_platform::{
-        MemRegion, PTE_EXECUTABLE, PTE_READABLE, PTE_VALID, Peripheral, PhysicalAddress,
-        PhysicalRange, VirtualAddress,
+        FaultCause, MemRegion, PTE_DIRTY, PTE_EXECUTABLE, PTE_READABLE, PTE_VALID, PTE_WRITABLE,
+        Peripheral, PhysicalAddress, PhysicalRange, VirtualAddress,
         peripherals::{interrupt, uart},
     };
     use unicorn_engine::RegisterARM;
 
     use super::{BackendError, BackendStop, MEMORY_SEARCH_CHUNK_SIZE, UnicornBackend};
+
+    fn read_then_write_machine(data_permissions: u32) -> (Machine, PhysicalAddress) {
+        let mut machine = Machine::default();
+        let ram = MemRegion::Ram.base().get();
+        let table = ram + 0x1000;
+        let code = ram + 0x2000;
+        let data = ram + 0x3000;
+        machine
+            .memory
+            .write_u32(PhysicalAddress::new(ram), table | PTE_VALID)
+            .unwrap();
+        machine
+            .memory
+            .write_u32(
+                PhysicalAddress::new(table),
+                code | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE,
+            )
+            .unwrap();
+        let data_pte = PhysicalAddress::new(table + 4);
+        machine
+            .memory
+            .write_u32(data_pte, data | PTE_VALID | PTE_READABLE | data_permissions)
+            .unwrap();
+        machine
+            .memory
+            .write_range(
+                PhysicalAddress::new(code),
+                &[
+                    0x00, 0x00, 0x91, 0xe5, // ldr r0, [r1]
+                    0x00, 0x00, 0x81, 0xe5, // str r0, [r1]
+                ],
+            )
+            .unwrap();
+        machine
+            .memory
+            .write_u32(PhysicalAddress::new(data), 0x1234_5678)
+            .unwrap();
+        machine.mmu.set_ttbr0(PhysicalAddress::new(ram));
+        machine.mmu.set_enabled(true);
+        (machine, data_pte)
+    }
 
     #[test]
     fn cortex_a9_reset_state_is_privileged_a32_at_zero() {
@@ -1044,6 +1099,71 @@ mod tests {
     }
 
     #[test]
+    fn virtual_tlb_enforces_supervisor_only_mapping_in_user_mode() {
+        let mut machine = Machine::default();
+        let ram = MemRegion::Ram.base().get();
+        let target = ram + 0x3000;
+        machine
+            .memory
+            .write_u32(PhysicalAddress::new(ram), (ram + 0x1000) | PTE_VALID)
+            .unwrap();
+        machine
+            .memory
+            .write_u32(
+                PhysicalAddress::new(ram + 0x1000),
+                target | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE,
+            )
+            .unwrap();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(target), &[0, 0xf0, 0x20, 0xe3])
+            .unwrap(); // nop
+        machine.mmu.set_ttbr0(PhysicalAddress::new(ram));
+        machine.mmu.set_enabled(true);
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::CPSR, 0x10).unwrap();
+
+        assert_eq!(
+            backend.run(0, 4, 1),
+            BackendStop::Exception(minemu_platform::ExceptionKind::PrefetchAbort)
+        );
+        let fault = backend.machine().mmu.last_fault().unwrap();
+        assert_eq!(fault.status.cause(), Some(FaultCause::ExecuteProtection));
+        assert!(fault.status.from_user());
+    }
+
+    #[test]
+    fn read_tlb_entry_does_not_bypass_later_write_protection() {
+        let (machine, data_pte) = read_then_write_machine(0);
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::R1, 0x1000).unwrap();
+
+        assert_eq!(
+            backend.run(0, 8, 2),
+            BackendStop::Exception(minemu_platform::ExceptionKind::DataAbort)
+        );
+        let fault = backend.machine().mmu.last_fault().unwrap();
+        assert_eq!(fault.status.cause(), Some(FaultCause::WriteProtection));
+        assert_eq!(
+            backend.machine().memory.read_u32(data_pte).unwrap() & PTE_DIRTY,
+            0
+        );
+    }
+
+    #[test]
+    fn write_after_read_reenters_translation_and_sets_dirty() {
+        let (machine, data_pte) = read_then_write_machine(PTE_WRITABLE);
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::R1, 0x1000).unwrap();
+
+        assert_eq!(backend.run(0, 8, 2), BackendStop::InstructionBudget);
+        assert_ne!(
+            backend.machine().memory.read_u32(data_pte).unwrap() & PTE_DIRTY,
+            0
+        );
+    }
+
+    #[test]
     fn higher_half_execution_inspection_reads_translated_instruction_bytes() {
         let mut machine = Machine::default();
         let ram = MemRegion::Ram.base().get();
@@ -1166,6 +1286,32 @@ mod tests {
         );
         assert_eq!(backend.register(RegisterARM::R0).unwrap(), 0x791c_7b62);
         assert_eq!(backend.machine().ticks(), 2);
+    }
+
+    #[test]
+    fn invalid_mmio_load_updates_fault_status_and_address() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        let invalid_address = MemRegion::Rng.base().get() + 0x0c;
+        let mut code = vec![
+            0x00, 0x10, 0x9f, 0xe5, // ldr r1, [pc]
+            0x00, 0x00, 0x91, 0xe5, // ldr r0, [r1]
+        ];
+        code.extend_from_slice(&invalid_address.to_le_bytes());
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &code)
+            .unwrap();
+        let mut backend = UnicornBackend::new(machine).unwrap();
+
+        assert_eq!(
+            backend.run(start, start + 8, 2),
+            BackendStop::Exception(minemu_platform::ExceptionKind::DataAbort)
+        );
+        let fault = backend.machine().mmu.last_fault().unwrap();
+        assert_eq!(fault.address, VirtualAddress::new(invalid_address));
+        assert_eq!(fault.status.cause(), Some(FaultCause::DeviceAccess));
+        assert!(!fault.status.is_write());
     }
 
     #[test]
@@ -1296,6 +1442,7 @@ mod tests {
             BackendStop::Exception(minemu_platform::ExceptionKind::DataAbort)
         );
         assert_eq!(backend.register(RegisterARM::PC).unwrap(), 16);
+        assert_eq!(backend.register(RegisterARM::LR).unwrap(), 8);
         assert_eq!(backend.machine().ticks(), 1);
     }
 

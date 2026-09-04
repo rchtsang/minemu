@@ -17,14 +17,14 @@ impl ExceptionPlan {
         }
     }
 
-    pub const fn fault(fault: MmuFault) -> Self {
+    pub const fn fault(fault: MmuFault, pc: VirtualAddress) -> Self {
         let kind = if fault.status.is_fetch() {
             ExceptionKind::PrefetchAbort
         } else {
             ExceptionKind::DataAbort
         };
         Self {
-            request: ExceptionRequest::abort(kind, fault.address, fault.status),
+            request: ExceptionRequest::abort(kind, pc, fault.status),
             dispatch_id: kind.dispatch_id(),
         }
     }

@@ -1,5 +1,6 @@
 use std::{
     fs,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     thread,
     time::Duration,
@@ -7,7 +8,8 @@ use std::{
 
 use minemu_core::{Machine, PhysicalMemory};
 use minemu_platform::{
-    BOOT_ROM_BASE, BOOT_ROM_SIZE, InspectionRequest, MmuInspection, ObservableEvent,
+    BOOT_ROM_BASE, BOOT_ROM_SIZE, InspectionRequest, MemRegion, MmuInspection, ObservableEvent,
+    PhysicalAddress, PhysicalRange,
 };
 use minemu_runtime::{
     LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeStatus, UartPort,
@@ -22,6 +24,7 @@ pub struct RunOptions {
     pub image: PathBuf,
     pub boot_rom: PathBuf,
     pub block_media_path: Option<PathBuf>,
+    pub instruction_batch: Option<NonZeroUsize>,
     pub max_ticks: u64,
     pub inputs: Vec<HeadlessInput>,
 }
@@ -34,21 +37,36 @@ pub struct HeadlessInput {
     pub data: String,
 }
 
+/// One byte pattern written to physical RAM before reset firmware executes.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RamPrefill {
+    pub address: u32,
+    pub length: u32,
+    pub value: u8,
+}
+
 /// Declarative headless test file.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HeadlessTest {
     pub image: PathBuf,
     pub boot_rom: PathBuf,
+    pub block_media: Option<PathBuf>,
+    pub instruction_batch: Option<NonZeroUsize>,
     #[serde(default = "default_max_ticks")]
     pub max_ticks: u64,
     #[serde(default)]
     pub inputs: Vec<HeadlessInput>,
+    #[serde(default)]
+    pub ram_prefill: Vec<RamPrefill>,
     #[serde(default)]
     pub assert: HeadlessAssertion,
 }
 
 /// Supported headless assertions over final runtime state.
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HeadlessAssertion {
     pub uart0_contains: Option<String>,
     pub uart1_contains: Option<String>,
@@ -57,6 +75,16 @@ pub struct HeadlessAssertion {
     pub mmu_enabled: Option<bool>,
     pub fault_status: Option<u32>,
     pub trace_values: Option<Vec<u32>>,
+    #[serde(default)]
+    pub block_media: Vec<BlockMediaAssertion>,
+}
+
+/// Expected bytes at one offset in the attached block media.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockMediaAssertion {
+    pub offset: u64,
+    pub bytes: Vec<u8>,
 }
 
 /// Lifecycle name accepted by the headless test manifest.
@@ -80,7 +108,17 @@ pub struct RunResult {
 
 /// Loads a system image and runs it headlessly for a bounded virtual-time budget.
 pub fn run_image(options: RunOptions) -> Result<RunResult> {
-    let runtime = start_runtime(&options.image, &options.boot_rom, options.block_media_path)?;
+    run_image_with_prefill(options, &[])
+}
+
+fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Result<RunResult> {
+    let runtime = start_runtime_with_prefill(
+        &options.image,
+        &options.boot_rom,
+        options.block_media_path,
+        options.instruction_batch,
+        ram_prefill,
+    )?;
     let mut inputs = options.inputs;
     inputs.sort_by_key(|input| input.at_tick);
     let mut next_input = 0;
@@ -148,6 +186,23 @@ pub(crate) fn start_runtime(
     image_path: &Path,
     boot_rom_path: &Path,
     block_media_path: Option<PathBuf>,
+    instruction_batch: Option<NonZeroUsize>,
+) -> Result<RuntimeHandle> {
+    start_runtime_with_prefill(
+        image_path,
+        boot_rom_path,
+        block_media_path,
+        instruction_batch,
+        &[],
+    )
+}
+
+fn start_runtime_with_prefill(
+    image_path: &Path,
+    boot_rom_path: &Path,
+    block_media_path: Option<PathBuf>,
+    instruction_batch: Option<NonZeroUsize>,
+    ram_prefill: &[RamPrefill],
 ) -> Result<RuntimeHandle> {
     let image = minemu_image::SystemImage::parse(&read(image_path)?)?;
     let boot_rom = read(boot_rom_path)?;
@@ -158,7 +213,13 @@ pub(crate) fn start_runtime(
             actual: boot_rom.len(),
         });
     }
-    let config = runtime_config(&boot_rom, &image, block_media_path)?;
+    let config = runtime_config(
+        &boot_rom,
+        &image,
+        block_media_path,
+        instruction_batch,
+        ram_prefill,
+    )?;
     RuntimeHandle::spawn(config).map_err(|_| CliError::RuntimeSetup)
 }
 
@@ -174,13 +235,19 @@ pub fn run_headless(path: impl AsRef<Path>) -> Result<RunResult> {
         source,
     })?;
     let root = path.parent().unwrap_or_else(|| Path::new("."));
-    let result = run_image(RunOptions {
-        image: resolve(root, &test.image),
-        boot_rom: resolve(root, &test.boot_rom),
-        block_media_path: None,
-        max_ticks: test.max_ticks,
-        inputs: test.inputs,
-    })?;
+    let block_media_path = test.block_media.as_deref().map(|path| resolve(root, path));
+    let result = run_image_with_prefill(
+        RunOptions {
+            image: resolve(root, &test.image),
+            boot_rom: resolve(root, &test.boot_rom),
+            block_media_path: block_media_path.clone(),
+            instruction_batch: test.instruction_batch,
+            max_ticks: test.max_ticks,
+            inputs: test.inputs,
+        },
+        &test.ram_prefill,
+    )?;
+    assert_block_media(block_media_path.as_deref(), &test.assert.block_media)?;
     assert_result(&result, &test.assert)?;
     Ok(result)
 }
@@ -189,11 +256,34 @@ fn runtime_config(
     boot_rom: &[u8],
     image: &minemu_image::SystemImage,
     block_media_path: Option<PathBuf>,
+    instruction_batch: Option<NonZeroUsize>,
+    ram_prefill: &[RamPrefill],
 ) -> Result<RuntimeConfig> {
     let memory =
         PhysicalMemory::with_roms(boot_rom, image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
     let mut config = RuntimeConfig::new(Machine::new(memory, 4096), BOOT_ROM_BASE);
     config.block_media_path = block_media_path;
+    if let Some(instruction_batch) = instruction_batch {
+        config.instruction_batch = instruction_batch.get();
+    }
+    for fill in ram_prefill {
+        let address = PhysicalAddress::new(fill.address);
+        let range = PhysicalRange::new(address, fill.length).map_err(|_| {
+            CliError::Assertion(format!(
+                "RAM prefill at {:#010x} must have a nonzero in-range length",
+                fill.address
+            ))
+        })?;
+        if !MemRegion::Ram.range().contains_range(range) {
+            return Err(CliError::Assertion(format!(
+                "RAM prefill at {:#010x} with length {} is outside physical RAM",
+                fill.address, fill.length
+            )));
+        }
+        config
+            .initial_ram_writes
+            .push((address, vec![fill.value; fill.length as usize]));
+    }
     Ok(config)
 }
 
@@ -236,14 +326,16 @@ fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()
     {
         return Err(CliError::Assertion("unexpected MMU enabled state".into()));
     }
-    if let Some(status) = assertion.fault_status
-        && result
+    if let Some(expected) = assertion.fault_status {
+        let actual = result
             .mmu
             .and_then(|mmu| mmu.last_fault_status)
-            .map(|status| status.raw())
-            != Some(status)
-    {
-        return Err(CliError::Assertion("unexpected fault status".into()));
+            .map(|status| status.raw());
+        if actual != Some(expected) {
+            return Err(CliError::Assertion(format!(
+                "unexpected fault status: expected {expected:#010x}, got {actual:?}"
+            )));
+        }
     }
     if let Some(values) = &assertion.trace_values {
         let actual = result
@@ -257,6 +349,50 @@ fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()
         if &actual != values {
             return Err(CliError::Assertion(format!(
                 "unexpected trace values: expected {values:?}, got {actual:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn assert_block_media(path: Option<&Path>, assertions: &[BlockMediaAssertion]) -> Result<()> {
+    if assertions.is_empty() {
+        return Ok(());
+    }
+    let path = path.ok_or_else(|| {
+        CliError::Assertion("block media assertions require an attached block_media path".into())
+    })?;
+    assert_block_media_contents(&read(path)?, assertions)
+}
+
+fn assert_block_media_contents(media: &[u8], assertions: &[BlockMediaAssertion]) -> Result<()> {
+    for assertion in assertions {
+        let start = usize::try_from(assertion.offset).map_err(|_| {
+            CliError::Assertion(format!(
+                "block media region at offset {} is out of range for {} bytes of media",
+                assertion.offset,
+                media.len()
+            ))
+        })?;
+        let end = start.checked_add(assertion.bytes.len()).ok_or_else(|| {
+            CliError::Assertion(format!(
+                "block media region at offset {} is out of range for {} bytes of media",
+                assertion.offset,
+                media.len()
+            ))
+        })?;
+        let actual = media.get(start..end).ok_or_else(|| {
+            CliError::Assertion(format!(
+                "block media region at offset {} with length {} is out of range for {} bytes of media",
+                assertion.offset,
+                assertion.bytes.len(),
+                media.len()
+            ))
+        })?;
+        if actual != assertion.bytes {
+            return Err(CliError::Assertion(format!(
+                "block media mismatch at offset {}: expected {:?}, got {:?}",
+                assertion.offset, assertion.bytes, actual
             )));
         }
     }
@@ -310,7 +446,10 @@ mod tests {
         VirtualAddress,
     };
 
-    use super::{HeadlessAssertion, RunResult, assert_result, runtime_config};
+    use super::{
+        BlockMediaAssertion, HeadlessAssertion, HeadlessTest, RamPrefill, RunResult,
+        assert_block_media_contents, assert_result, runtime_config,
+    };
     use crate::CliError;
     use minemu_runtime::{
         LifecycleState, RuntimeHandle, RuntimeInspection, RuntimeInspectionRequest,
@@ -363,10 +502,113 @@ mod tests {
     }
 
     #[test]
+    fn block_media_region_assertions_cover_success_out_of_range_and_mismatch() {
+        let expected = [BlockMediaAssertion {
+            offset: 2,
+            bytes: vec![0x22, 0x33],
+        }];
+        assert_block_media_contents(&[0x00, 0x11, 0x22, 0x33], &expected).unwrap();
+
+        let out_of_range = [BlockMediaAssertion {
+            offset: 3,
+            bytes: vec![0x33, 0x44],
+        }];
+        assert!(matches!(
+            assert_block_media_contents(&[0x00, 0x11, 0x22, 0x33], &out_of_range),
+            Err(CliError::Assertion(message)) if message.contains("out of range")
+        ));
+
+        let mismatch = [BlockMediaAssertion {
+            offset: 2,
+            bytes: vec![0xaa, 0xbb],
+        }];
+        assert!(matches!(
+            assert_block_media_contents(&[0x00, 0x11, 0x22, 0x33], &mismatch),
+            Err(CliError::Assertion(message)) if message.contains("mismatch")
+        ));
+    }
+
+    #[test]
+    fn headless_manifest_accepts_media_regions_and_positive_instruction_batch() {
+        let test: HeadlessTest = toml::from_str(
+            r#"
+image = "system.img"
+boot_rom = "boot.bin"
+block_media = "working-disk.img"
+instruction_batch = 1
+
+[[ram_prefill]]
+address = 0x40030000
+length = 128
+value = 165
+
+[[assert.block_media]]
+offset = 512
+bytes = [0xde, 0xad, 0xbe, 0xef]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            test.block_media.unwrap(),
+            std::path::PathBuf::from("working-disk.img")
+        );
+        assert_eq!(test.instruction_batch.unwrap().get(), 1);
+        assert_eq!(test.ram_prefill.len(), 1);
+        assert_eq!(test.ram_prefill[0].value, 165);
+        assert_eq!(test.assert.block_media.len(), 1);
+        assert_eq!(test.assert.block_media[0].offset, 512);
+
+        assert!(
+            toml::from_str::<HeadlessTest>(
+                r#"
+image = "system.img"
+boot_rom = "boot.bin"
+instruction_batch = 0
+"#,
+            )
+            .is_err()
+        );
+        assert!(
+            toml::from_str::<HeadlessTest>(
+                r#"
+image = "system.img"
+boot_rom = "boot.bin"
+
+[assert]
+block_media_bytes = []
+"#,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn runtime_config_applies_instruction_batch_override() {
+        let config = runtime_config(
+            &test_boot_rom(),
+            &boot_test_image(),
+            None,
+            std::num::NonZeroUsize::new(7),
+            &[RamPrefill {
+                address: 0x4003_0000,
+                length: 4,
+                value: 0xa5,
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(config.instruction_batch, 7);
+        assert_eq!(config.initial_ram_writes.len(), 1);
+        assert_eq!(config.initial_ram_writes[0].1, [0xa5; 4]);
+    }
+
+    #[test]
     fn image_reset_returns_to_boot_rom_with_clear_ram() {
         let boot_rom = test_boot_rom();
-        let config = runtime_config(&boot_rom, &boot_test_image(), None).unwrap();
+        let config = runtime_config(&boot_rom, &boot_test_image(), None, None, &[]).unwrap();
         assert_eq!(config.entry, BOOT_ROM_BASE);
+        assert_eq!(config.instruction_batch, 1024);
         assert!(config.initial_ram_writes.is_empty());
         let runtime = RuntimeHandle::spawn(config).unwrap();
         runtime.pause().unwrap();

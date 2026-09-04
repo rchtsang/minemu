@@ -63,6 +63,21 @@ impl Mmu {
         }
     }
 
+    /// Records a backend-detected invalid MMIO access for DFSR and DFAR.
+    pub fn record_invalid_mmio_fault(
+        &mut self,
+        address: VirtualAddress,
+        access: Access,
+        user_mode: bool,
+    ) -> MmuFault {
+        let fault = MmuFault {
+            address,
+            status: FaultStatus::new(FaultCause::DeviceAccess, user_mode, access),
+        };
+        self.last_fault = Some(fault);
+        fault
+    }
+
     pub fn set_ttbr0(&mut self, ttbr0: PhysicalAddress) {
         self.ttbr0 = ttbr0;
     }
@@ -228,5 +243,18 @@ mod tests {
                 .cause(),
             Some(FaultCause::ReadProtection)
         );
+    }
+
+    #[test]
+    fn invalid_mmio_fault_is_recorded_for_fault_registers() {
+        let mut mmu = Mmu::new();
+        let address = VirtualAddress::new(0x1000_4002);
+        let fault = mmu.record_invalid_mmio_fault(address, Access::Write, true);
+
+        assert_eq!(mmu.last_fault(), Some(fault));
+        assert_eq!(fault.address, address);
+        assert_eq!(fault.status.cause(), Some(FaultCause::DeviceAccess));
+        assert!(fault.status.from_user());
+        assert!(fault.status.is_write());
     }
 }

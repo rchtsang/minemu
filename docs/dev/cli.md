@@ -60,12 +60,20 @@ terminal backend failure.
 ## Test Manifests
 
 `minemu test` runs a TOML manifest with scheduled UART input and assertions.
-The image and Boot ROM paths are relative to the test manifest.
+The image, Boot ROM, and optional block-media paths are relative to the test
+manifest.
 
 ```toml
 image = "build/minimum.img"
 boot_rom = "../bootloader/bootloader.bin"
+block_media = "build/disk.img"
+instruction_batch = 1
 max_ticks = 100
+
+[[ram_prefill]]
+address = 0x40030000
+length = 128
+value = 0xa5
 
 [[inputs]]
 at_tick = 20
@@ -79,12 +87,23 @@ lifecycle = "stopped"
 mmu_enabled = true
 fault_status = 0x00000101
 trace_values = [1, 2, 3]
+
+[[assert.block_media]]
+offset = 512
+bytes = [0xde, 0xad, 0xbe, 0xef]
 ```
 
 `uart` accepts `0` or `1`. Inputs are injected once the virtual instruction
 clock reaches `at_tick`. Assertions may independently omit console, MMU/fault,
 trace, lifecycle, and tick checks. Trace values are compared to the complete
-bounded trace-event sequence in order.
+bounded trace-event sequence in order. `instruction_batch` must be positive and
+is intended for tests that need tighter instruction-boundary scheduling. Block
+media is attached write-back, so tests should use an ignored working copy;
+byte-region assertions run after shutdown flushes it. `ram_prefill` regions must
+fall within physical RAM and are reapplied on reset before the Boot ROM runs;
+they are intended for tests that prove reset firmware overwrites or clears RAM.
+Unknown manifest and assertion fields are rejected so misspelled checks cannot
+silently produce a passing test.
 
 Run the supplied smoke test after packaging its image:
 

@@ -44,8 +44,10 @@ minemu run minimum-template/image/build/minimum.img \
   --block-media minimum-template/image/build/disk.img
 ```
 
-For CI or scripts, `--headless` stops after the requested virtual-tick budget.
-UART0 output is sent to standard output and UART1 output to standard error.
+For CI or scripts, `--headless` stops exactly at the requested virtual-tick
+budget. The emulator thread enforces the boundary rather than relying on host
+polling. UART0 output is sent to standard output and UART1 output to standard
+error.
 
 ```sh
 minemu run minimum-template/image/build/minimum.img \
@@ -83,7 +85,8 @@ data = "hello\n"
 [assert]
 uart0_contains = "hello"
 ticks_at_least = 100
-lifecycle = "stopped"
+execution_lifecycle = "paused"
+shutdown_lifecycle = "stopped"
 mmu_enabled = true
 fault_status = 0x00000101
 trace_values = [1, 2, 3]
@@ -93,17 +96,21 @@ offset = 512
 bytes = [0xde, 0xad, 0xbe, 0xef]
 ```
 
-`uart` accepts `0` or `1`. Inputs are injected once the virtual instruction
-clock reaches `at_tick`. Assertions may independently omit console, MMU/fault,
-trace, lifecycle, and tick checks. Trace values are compared to the complete
-bounded trace-event sequence in order. `instruction_batch` must be positive and
-is intended for tests that need tighter instruction-boundary scheduling. Block
-media is attached write-back, so tests should use an ignored working copy;
-byte-region assertions run after shutdown flushes it. `ram_prefill` regions must
-fall within physical RAM and are reapplied on reset before the Boot ROM runs;
-they are intended for tests that prove reset firmware overwrites or clears RAM.
-Unknown manifest and assertion fields are rejected so misspelled checks cannot
-silently produce a passing test.
+`uart` accepts `0` or `1`. The emulator thread injects inputs at the exact
+`at_tick` boundary and stops execution at exactly `max_ticks`;
+`instruction_batch` is a positive maximum batch size, and the runtime shortens
+batches at scheduled boundaries. Every test must contain at least one
+assertion, and a runtime failure always fails the test. Ordinary machine,
+output, fault, event, and tick assertions use the execution snapshot captured
+before shutdown.
+`execution_lifecycle` and `shutdown_lifecycle` explicitly select the snapshot
+whose lifecycle is checked. Trace values are compared to the complete bounded
+trace-event sequence in order. Block media is attached write-back, so tests
+should use an ignored working copy; byte-region assertions run after shutdown
+flushes it. `ram_prefill` regions must fall within physical RAM and are reapplied
+on reset before the Boot ROM runs; they are intended for tests that prove reset
+firmware overwrites or clears RAM. Unknown fields are rejected throughout image
+and test manifests so misspelled settings or checks cannot silently pass.
 
 Run the supplied smoke test after packaging its image:
 

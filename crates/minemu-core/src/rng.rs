@@ -12,22 +12,29 @@ pub enum RngUpdate {
 
 /// Deterministic xorshift32 RNG state.
 pub struct Rng {
+    seed: u32,
     state: u32,
 }
 
 impl Rng {
     pub const fn new() -> Self {
         Self {
+            seed: DEFAULT_SEED,
             state: DEFAULT_SEED,
         }
     }
 
     pub const fn seed(&self) -> u32 {
+        self.seed
+    }
+
+    pub const fn state(&self) -> u32 {
         self.state
     }
 
     fn set_seed(&mut self, seed: u32) {
-        self.state = if seed == 0 { DEFAULT_SEED } else { seed };
+        self.seed = if seed == 0 { DEFAULT_SEED } else { seed };
+        self.state = self.seed;
     }
 
     fn next_u32(&mut self) -> u32 {
@@ -38,7 +45,9 @@ impl Rng {
     }
 
     pub const fn inspect(&self) -> RngInspection {
-        RngInspection { state: self.state }
+        RngInspection {
+            state: self.state(),
+        }
     }
 }
 
@@ -56,8 +65,9 @@ impl Peripheral for Rng {
 
     fn read(&mut self, register: Self::Register) -> Result<u32> {
         Ok(match register {
-            Register::Seed | Register::State => self.seed(),
+            Register::Seed => self.seed(),
             Register::Data => self.next_u32(),
+            Register::State => self.state(),
         })
     }
 
@@ -76,12 +86,30 @@ impl Peripheral for Rng {
 
 #[cfg(test)]
 mod tests {
-    use super::Rng;
+    use minemu_platform::{Peripheral, peripherals::rng::Register};
+
+    use super::{Rng, RngUpdate};
 
     #[test]
     fn zero_seed_uses_the_abi_default() {
         let mut rng = Rng::new();
         rng.set_seed(0);
         assert_eq!(rng.next_u32(), 0x791c_7b62);
+    }
+
+    #[test]
+    fn configured_seed_is_distinct_from_evolving_state() {
+        let mut rng = Rng::new();
+        rng.update(RngUpdate::Write {
+            register: Register::Seed,
+            value: 0x1234_5678,
+        })
+        .unwrap();
+
+        assert_eq!(rng.read(Register::Seed).unwrap(), 0x1234_5678);
+        assert_eq!(rng.read(Register::State).unwrap(), 0x1234_5678);
+        assert_eq!(rng.read(Register::Data).unwrap(), 0x8798_5aa5);
+        assert_eq!(rng.read(Register::Seed).unwrap(), 0x1234_5678);
+        assert_eq!(rng.read(Register::State).unwrap(), 0x8798_5aa5);
     }
 }

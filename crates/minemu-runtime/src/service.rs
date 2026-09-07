@@ -17,7 +17,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection, RuntimeInspectionRequest,
-    RuntimeStatus, UartPort,
+    RuntimeStatus, ScheduledUartInput, UartPort,
     types::{InspectionResult, Result},
 };
 
@@ -215,9 +215,19 @@ impl Emulator {
         })
     }
 
-    fn run_batch(&mut self, instruction_budget: usize) -> Result<BackendStop> {
+    fn run_batch(
+        &mut self,
+        instruction_budget: usize,
+        tick_deadline: Option<u64>,
+    ) -> Result<BackendStop> {
         let start = self.backend.program_counter().unwrap_or(self.entry);
-        Ok(self.backend.run(start, self.end, instruction_budget))
+        Ok(match tick_deadline {
+            Some(deadline) => {
+                self.backend
+                    .run_until_tick(start, self.end, instruction_budget, deadline)
+            }
+            None => self.backend.run(start, self.end, instruction_budget),
+        })
     }
 
     fn reset(&mut self) -> Result<()> {
@@ -232,6 +242,8 @@ impl Emulator {
             uart_capacity: 0,
             block_media_path: self.block_media_path.clone(),
             initial_ram_writes: self.initial_ram_writes.clone(),
+            execution_deadline: None,
+            scheduled_uart: Vec::new(),
         };
         let machine = configured_machine(&config, &config.machine)?;
         self.backend = UnicornBackend::new(machine)?;
@@ -256,21 +268,17 @@ impl Emulator {
         let uart0 = inbox.drain(UartPort::Uart0);
         let uart1 = inbox.drain(UartPort::Uart1);
         drop(inbox);
-        for byte in uart0 {
-            let _ = self
-                .backend
-                .machine_mut()
-                .bus
-                .uart0
-                .update(UartUpdate::Receive(byte));
-        }
-        for byte in uart1 {
-            let _ = self
-                .backend
-                .machine_mut()
-                .bus
-                .uart1
-                .update(UartUpdate::Receive(byte));
+        self.deliver_uart(UartPort::Uart0, &uart0);
+        self.deliver_uart(UartPort::Uart1, &uart1);
+    }
+
+    fn deliver_uart(&mut self, port: UartPort, bytes: &[u8]) {
+        let uart = match port {
+            UartPort::Uart0 => &mut self.backend.machine_mut().bus.uart0,
+            UartPort::Uart1 => &mut self.backend.machine_mut().bus.uart1,
+        };
+        for byte in bytes {
+            let _ = uart.update(UartUpdate::Receive(*byte));
         }
     }
 
@@ -341,21 +349,28 @@ struct Service {
     status: Arc<Mutex<RuntimeStatus>>,
     uart: Arc<Mutex<UartInbox>>,
     remaining_instructions: Option<u64>,
+    execution_deadline: Option<u64>,
+    scheduled_uart: VecDeque<ScheduledUartInput>,
 }
 
 impl Service {
     fn new(
-        config: RuntimeConfig,
+        mut config: RuntimeConfig,
         commands: Receiver<Command>,
         status: Arc<Mutex<RuntimeStatus>>,
         uart: Arc<Mutex<UartInbox>>,
     ) -> Self {
+        config.scheduled_uart.sort_by_key(|input| input.at_tick);
+        let execution_deadline = config.execution_deadline;
+        let scheduled_uart = std::mem::take(&mut config.scheduled_uart).into();
         Self {
             config,
             commands,
             status,
             uart,
             remaining_instructions: None,
+            execution_deadline,
+            scheduled_uart,
         }
     }
 
@@ -381,16 +396,52 @@ impl Service {
                 break;
             }
             if lifecycle == LifecycleState::Running {
+                let current_tick = emulator.backend.machine().ticks();
+                while self
+                    .scheduled_uart
+                    .front()
+                    .is_some_and(|input| input.at_tick <= current_tick)
+                {
+                    let input = self
+                        .scheduled_uart
+                        .pop_front()
+                        .expect("scheduled UART queue was just checked");
+                    emulator.deliver_uart(input.port, &input.bytes);
+                }
+                if self
+                    .execution_deadline
+                    .is_some_and(|deadline| current_tick >= deadline)
+                {
+                    lifecycle = LifecycleState::Paused;
+                    self.publish(
+                        lifecycle,
+                        Some("execution deadline reached".into()),
+                        emulator.flush().err().map(|error| error.to_string()),
+                        Some(&mut emulator),
+                    );
+                    last_publish = Instant::now();
+                    continue;
+                }
                 emulator.drain_uart(&self.uart);
-                let instruction_budget =
+                let mut instruction_budget =
                     self.remaining_instructions
                         .map_or(emulator.instruction_batch, |remaining| {
                             usize::try_from(remaining)
                                 .unwrap_or(usize::MAX)
                                 .min(emulator.instruction_batch)
                         });
+                let tick_boundary = self
+                    .execution_deadline
+                    .into_iter()
+                    .chain(self.scheduled_uart.front().map(|input| input.at_tick))
+                    .filter(|boundary| *boundary > current_tick)
+                    .min();
+                if let Some(boundary) = tick_boundary {
+                    instruction_budget = instruction_budget
+                        .min(usize::try_from(boundary - current_tick).unwrap_or(usize::MAX));
+                }
                 let ticks_before = emulator.backend.machine().ticks();
-                let result = emulator.run_batch(instruction_budget);
+                let result = emulator.run_batch(instruction_budget, tick_boundary);
                 let executed = emulator
                     .backend
                     .machine()
@@ -630,5 +681,71 @@ impl Service {
         if let Some(emulator) = emulator {
             status.machine = emulator.status();
         }
+    }
+}
+
+#[cfg(test)]
+mod emulator_tests {
+    use std::{
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use minemu_core::{BlockUpdate, Machine, PhysicalMemoryAccess};
+    use minemu_platform::{MemRegion, Peripheral, peripherals::block::Register};
+
+    use super::{Emulator, RuntimeConfig};
+
+    static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn reset_flushes_dirty_block_media_before_rebuilding() {
+        let path = std::env::temp_dir().join(format!(
+            "minemu-reset-flush-{}-{}.img",
+            std::process::id(),
+            NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, vec![0; 512]).unwrap();
+
+        let mut config = RuntimeConfig::new(Machine::default(), 0);
+        config.block_media_path = Some(path.clone());
+        let mut emulator = Emulator::new(&config).unwrap();
+        let dma = MemRegion::Ram.base();
+        let machine = emulator.backend.machine_mut();
+        machine.memory.write_u8(dma, 0xa5).unwrap();
+        for (register, value) in [
+            (Register::Lba, 0),
+            (Register::SectorCount, 1),
+            (Register::PhysicalAddress, dma.get()),
+            (Register::Command, 2),
+        ] {
+            machine
+                .bus
+                .block
+                .update(BlockUpdate::Write {
+                    register,
+                    value,
+                    now: machine.ticks(),
+                })
+                .unwrap();
+        }
+        for _ in 0..32 {
+            machine.finish_instruction(minemu_core::InstructionOutcome::Completed);
+        }
+        assert_eq!(machine.bus.block.dirty_sector_count(), 1);
+
+        emulator.reset().unwrap();
+
+        assert_eq!(fs::read(&path).unwrap()[0], 0xa5);
+        assert_eq!(
+            emulator
+                .backend
+                .machine_mut()
+                .bus
+                .block
+                .dirty_sector_count(),
+            0
+        );
+        fs::remove_file(path).unwrap();
     }
 }

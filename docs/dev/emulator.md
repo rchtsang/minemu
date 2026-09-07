@@ -63,7 +63,8 @@ VA 0xc000_0000..0xc3ff_ffff -> PA 0x4000_0000..0x43ff_ffff
 ```
 
 Reset enters privileged A32 state at `PC = 0x0000_0000` with translation
-disabled. The emulator maps the exact 64-KiB raw Boot ROM supplied by the
+disabled and physical RAM zeroed before firmware writes. The emulator maps the
+exact 64-KiB raw Boot ROM supplied by the
 platform project; `minimum-template/bootloader` owns the reference firmware. The
 host packer requires `bootstrap_entry_paddr = 0x4000_8000`. The guest-executed
 Boot ROM reads the image from system ROM, copies kernel segments to their
@@ -447,7 +448,7 @@ file.
 | Invalid LBA or range | `5` |
 | Deferred persistence failure | `6` |
 
-The runtime flushes dirty sectors on pause, shutdown, and terminal
+The runtime flushes dirty sectors on pause, reset, shutdown, and terminal
 emulator/backend failure. A failed flush leaves dirty sectors intact for retry.
 Guest command errors never force a host flush.
 
@@ -460,8 +461,9 @@ Guest command errors never force a host flush.
 | `0x08` | `STATE` | R | Current generator state |
 
 The RNG is deterministic. Reset initializes SEED and STATE to
-`0x4d45_4d55`. Writing zero to SEED stores that default value instead. DATA
-uses `xorshift32`:
+`0x4d45_4d55`. Writing zero to SEED stores that default value instead. Reading
+SEED returns the retained configured seed; reading STATE returns the evolving
+generator state. DATA uses `xorshift32`:
 
 ```text
 x ^= x << 13
@@ -496,5 +498,7 @@ status update.
 
 `minemu test` runs an explicitly supplied Boot ROM and completed system-ROM
 image with scheduled input and assertions over console output, events, faults,
-and selected machine state. It uses the same machine and runtime contract as
-interactive execution.
+and selected machine state. The emulator thread delivers scheduled UART input
+and stops at exact virtual-time boundaries. Assertions use a pre-shutdown
+execution snapshot separately from final shutdown state. It uses the same
+machine and runtime contract as interactive execution.

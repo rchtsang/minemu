@@ -89,6 +89,7 @@ enum PendingException {
 /// Safe, single-threaded Unicorn A32 backend bound to one core machine.
 pub struct UnicornBackend {
     engine: Unicorn<'static, BackendData>,
+    deferred_exception: Option<(minemu_platform::ExceptionKind, VirtualAddress)>,
 }
 
 impl UnicornBackend {
@@ -117,7 +118,10 @@ impl UnicornBackend {
         // Unicorn translate the synthetic `until` value through the guest MMU.
         engine.ctl_exits_enable().map_err(BackendError::Unicorn)?;
 
-        let mut backend = Self { engine };
+        let mut backend = Self {
+            engine,
+            deferred_exception: None,
+        };
         backend.map_bytes(MemRegion::BootRom, Prot::READ | Prot::EXEC, &boot_rom)?;
         backend.map_bytes(MemRegion::SystemRom, Prot::READ | Prot::EXEC, &system_rom)?;
         backend.map_shared_ram(ram)?;
@@ -129,6 +133,42 @@ impl UnicornBackend {
 
     /// Runs no more than `instruction_budget` instructions from `start` toward `end`.
     pub fn run(&mut self, start: u32, end: u32, instruction_budget: usize) -> BackendStop {
+        self.run_with_tick_deadline(start, end, instruction_budget, None)
+    }
+
+    /// Runs without crossing the supplied virtual-time boundary.
+    pub fn run_until_tick(
+        &mut self,
+        start: u32,
+        end: u32,
+        instruction_budget: usize,
+        tick_deadline: u64,
+    ) -> BackendStop {
+        self.run_with_tick_deadline(start, end, instruction_budget, Some(tick_deadline))
+    }
+
+    fn run_with_tick_deadline(
+        &mut self,
+        start: u32,
+        end: u32,
+        instruction_budget: usize,
+        tick_deadline: Option<u64>,
+    ) -> BackendStop {
+        if let Some(stop) = self.resume_deferred_exception(tick_deadline) {
+            return stop;
+        }
+        if tick_deadline.is_some_and(|deadline| self.machine().ticks() >= deadline) {
+            return BackendStop::InstructionBudget;
+        }
+        if tick_deadline.is_some()
+            && let Some(stop) = self.deliver_irq()
+        {
+            return stop;
+        }
+        let instruction_budget = tick_deadline.map_or(instruction_budget, |deadline| {
+            instruction_budget
+                .min(usize::try_from(deadline - self.machine().ticks()).unwrap_or(usize::MAX))
+        });
         let exits = if end == u32::MAX {
             self.engine.ctl_set_exits(&[])
         } else {
@@ -167,15 +207,17 @@ impl UnicornBackend {
             (pending_cp15, pending_exception, callback_stop)
         };
         if let Some(stop) = callback_stop {
-            return self.finish_callback_stop(stop);
+            return self.finish_callback_stop(stop, tick_deadline);
         }
         if let Some(exception) = pending_exception {
-            return self.finish_pending_exception(exception);
+            return self.finish_pending_exception(exception, tick_deadline);
         }
         if let Some(pending) = pending_cp15 {
-            return self.finish_cp15(pending);
+            return self.finish_cp15(pending, tick_deadline);
         }
-        if let Some(stop) = self.deliver_irq() {
+        if tick_deadline.is_none_or(|deadline| self.machine().ticks() < deadline)
+            && let Some(stop) = self.deliver_irq()
+        {
             return stop;
         }
         match result {
@@ -395,6 +437,7 @@ impl UnicornBackend {
             "searching authoritative Unicorn RAM"
         );
 
+        // TODO: this can probably be optimized
         for offset in (0..ram_length).step_by(MEMORY_SEARCH_CHUNK_SIZE) {
             let length = (MEMORY_SEARCH_CHUNK_SIZE + overlap).min(ram_length - offset);
             let address = PhysicalAddress::new(ram.start().get() + offset as u32);
@@ -487,7 +530,7 @@ impl UnicornBackend {
         self.engine.get_data().machine.mmu.vector_base().get()
     }
 
-    fn finish_cp15(&mut self, pending: PendingCp15) -> BackendStop {
+    fn finish_cp15(&mut self, pending: PendingCp15, tick_deadline: Option<u64>) -> BackendStop {
         match pending {
             PendingCp15::Operation(operation) => {
                 let flush_tlb = matches!(operation, minemu_platform::Cp15Operation::InvalidateAll);
@@ -521,27 +564,22 @@ impl UnicornBackend {
                 }
                 BackendStop::Cp15Boundary
             }
-            PendingCp15::Undefined { pc } => {
-                let plan = self.machine_mut().finish_instruction(
-                    InstructionOutcome::SynchronousException(
-                        minemu_platform::ExceptionKind::Undefined,
-                        minemu_platform::VirtualAddress::new(pc),
-                    ),
-                );
-                if let Some(plan) = plan
-                    && self.enter_exception(plan).is_err()
-                {
-                    return BackendStop::Unicorn(uc_error::ARG);
-                }
-                BackendStop::Exception(minemu_platform::ExceptionKind::Undefined)
-            }
+            PendingCp15::Undefined { pc } => self.finish_synchronous_exception(
+                minemu_platform::ExceptionKind::Undefined,
+                VirtualAddress::new(pc),
+                tick_deadline,
+            ),
         }
     }
 
-    fn finish_callback_stop(&mut self, stop: BackendStop) -> BackendStop {
+    fn finish_callback_stop(
+        &mut self,
+        stop: BackendStop,
+        tick_deadline: Option<u64>,
+    ) -> BackendStop {
         match stop {
             BackendStop::MmuFault(fault) => {
-                self.finish_pending_exception(PendingException::Fault(fault))
+                self.finish_pending_exception(PendingException::Fault(fault), tick_deadline)
             }
             BackendStop::MmioFault {
                 address, access, ..
@@ -554,21 +592,21 @@ impl UnicornBackend {
                     access,
                     user_mode,
                 );
-                self.finish_pending_exception(PendingException::Fault(fault))
+                self.finish_pending_exception(PendingException::Fault(fault), tick_deadline)
             }
             stop => stop,
         }
     }
 
-    fn finish_pending_exception(&mut self, exception: PendingException) -> BackendStop {
+    fn finish_pending_exception(
+        &mut self,
+        exception: PendingException,
+        tick_deadline: Option<u64>,
+    ) -> BackendStop {
+        if let PendingException::Synchronous { kind, pc } = exception {
+            return self.finish_synchronous_exception(kind, VirtualAddress::new(pc), tick_deadline);
+        }
         let plan = match exception {
-            PendingException::Synchronous { kind, pc } => {
-                self.machine_mut()
-                    .finish_instruction(InstructionOutcome::SynchronousException(
-                        kind,
-                        VirtualAddress::new(pc),
-                    ))
-            }
             PendingException::Fault(fault) => {
                 let pc = self.program_counter().unwrap_or(fault.address.get());
                 trace!(
@@ -580,6 +618,7 @@ impl UnicornBackend {
                 self.machine_mut()
                     .finish_instruction(InstructionOutcome::Fault(fault, VirtualAddress::new(pc)))
             }
+            PendingException::Synchronous { .. } => unreachable!("handled above"),
         };
         let Some(plan) = plan else {
             return BackendStop::Unicorn(uc_error::ARG);
@@ -589,6 +628,43 @@ impl UnicornBackend {
             return BackendStop::Unicorn(uc_error::ARG);
         }
         BackendStop::Exception(kind)
+    }
+
+    fn finish_synchronous_exception(
+        &mut self,
+        kind: minemu_platform::ExceptionKind,
+        pc: VirtualAddress,
+        tick_deadline: Option<u64>,
+    ) -> BackendStop {
+        if tick_deadline.is_some_and(|deadline| self.machine().ticks() + 1 == deadline) {
+            self.machine_mut()
+                .finish_instruction(InstructionOutcome::Completed);
+            self.deferred_exception = Some((kind, pc));
+            return BackendStop::InstructionBudget;
+        }
+        let plan = self
+            .machine_mut()
+            .finish_instruction(InstructionOutcome::SynchronousException(kind, pc));
+        if let Some(plan) = plan
+            && self.enter_exception(plan).is_err()
+        {
+            return BackendStop::Unicorn(uc_error::ARG);
+        }
+        BackendStop::Exception(kind)
+    }
+
+    fn resume_deferred_exception(&mut self, tick_deadline: Option<u64>) -> Option<BackendStop> {
+        let (kind, pc) = self.deferred_exception?;
+        if tick_deadline.is_some_and(|deadline| self.machine().ticks() >= deadline) {
+            return Some(BackendStop::InstructionBudget);
+        }
+        self.deferred_exception = None;
+        let plan = self.machine_mut().enter_exception(kind, pc);
+        Some(if self.enter_exception(plan).is_err() {
+            BackendStop::Unicorn(uc_error::ARG)
+        } else {
+            BackendStop::Exception(kind)
+        })
     }
 
     fn deliver_irq(&mut self) -> Option<BackendStop> {
@@ -1375,6 +1451,30 @@ mod tests {
         backend.set_register(RegisterARM::CPSR, 0x13).unwrap();
         assert_eq!(
             backend.run(start, start + 4, 1),
+            BackendStop::Exception(minemu_platform::ExceptionKind::SupervisorCall)
+        );
+        assert_eq!(backend.register(RegisterARM::PC).unwrap(), 8);
+        assert_eq!(backend.machine().ticks(), 2);
+    }
+
+    #[test]
+    fn tick_deadline_can_pause_between_svc_retirement_and_exception_entry() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &[0, 0, 0, 0xef])
+            .unwrap(); // svc #0
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::CPSR, 0x13).unwrap();
+
+        assert_eq!(
+            backend.run_until_tick(start, start + 4, 1, 1),
+            BackendStop::InstructionBudget
+        );
+        assert_eq!(backend.machine().ticks(), 1);
+        assert_eq!(
+            backend.run_until_tick(start, start + 4, 1, 2),
             BackendStop::Exception(minemu_platform::ExceptionKind::SupervisorCall)
         );
         assert_eq!(backend.register(RegisterARM::PC).unwrap(), 8);

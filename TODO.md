@@ -38,7 +38,7 @@ scenarios. Do not copy its monolithic implementation into this workspace.
   - [x] Device success and failure complete at the same scheduled deadline.
   - [x] Host/backend failure adds no time after execution stops.
 - [x] The block device is write-back. It clones its disk into host memory on
-  attach, tracks dirty sectors, and flushes only on pause, shutdown, or a
+  attach, tracks dirty sectors, and flushes on pause, reset, shutdown, or a
   terminal emulator/backend failure. Failed flushes retain dirty state for
   retry. Guest block command errors do not trigger a host flush.
 - [x] `libgcc` is an allowed static toolchain dependency. Newlib and
@@ -107,8 +107,8 @@ scenarios. Do not copy its monolithic implementation into this workspace.
   deterministic completion, guest-visible errors, write-back media, dirty
   sector tracking, and flush/retry state.
 - [x] Implement deterministic MMIO RNG at `0x1000_3000`:
-  - [x] `SEED` is read/write, `DATA` advances and returns the next `u32`, and
-    `STATE` exposes current state for inspection.
+  - [x] `SEED` is read/write and retains the configured seed, `DATA` advances
+    and returns the next `u32`, and `STATE` exposes the evolving state.
   - [x] Use a specified `xorshift32` transition and a documented nonzero
     default/zero-seed policy.
   - [x] Do not emit an event for every RNG read.
@@ -210,7 +210,8 @@ scenarios. Do not copy its monolithic implementation into this workspace.
   UART input.
 - [x] Implement pause, reset, shutdown, and terminal-error paths with one final
   status publication.
-- [x] Flush dirty disk state on pause, shutdown, and terminal backend failure.
+- [x] Flush dirty disk state on pause, reset, shutdown, and terminal backend
+  failure.
 - [x] Publish lightweight immutable status at a cadence or material state
   change; serve larger CPU/MMU/memory/device inspection on request.
 - [x] Prove slow snapshot consumers cannot block guest execution or accumulate
@@ -221,8 +222,10 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 - [x] Add `minemu image` to package a system image from a declarative manifest.
 - [x] Add `minemu run` to load an image, attach optional write-back media, and
   run headlessly or through the runtime service.
-- [x] Add `minemu test` to run headless images with scheduled input and
-  assertions over console output, events, faults, and machine state.
+- [x] Add `minemu test` with emulator-thread-owned exact tick/input boundaries,
+  required assertions over pre-shutdown execution state, separate shutdown
+  lifecycle checks, and automatic failure on runtime errors.
+- [x] Reject unknown fields throughout image and headless-test manifests.
 - [x] Ensure diagnostics identify image, ELF, device, CP15, and runtime errors
   without exposing backend internals as ABI.
 

@@ -12,7 +12,8 @@ use minemu_platform::{
     PhysicalAddress, PhysicalRange,
 };
 use minemu_runtime::{
-    LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeStatus, UartPort,
+    LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeStatus,
+    ScheduledUartInput, UartPort,
 };
 use serde::Deserialize;
 
@@ -31,6 +32,7 @@ pub struct RunOptions {
 
 /// One UART byte sequence injected once virtual time reaches `at_tick`.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HeadlessInput {
     pub at_tick: u64,
     pub uart: u8,
@@ -60,18 +62,18 @@ pub struct HeadlessTest {
     pub inputs: Vec<HeadlessInput>,
     #[serde(default)]
     pub ram_prefill: Vec<RamPrefill>,
-    #[serde(default)]
     pub assert: HeadlessAssertion,
 }
 
-/// Supported headless assertions over final runtime state.
+/// Supported headless assertions over execution and shutdown snapshots.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessAssertion {
     pub uart0_contains: Option<String>,
     pub uart1_contains: Option<String>,
     pub ticks_at_least: Option<u64>,
-    pub lifecycle: Option<ExpectedLifecycle>,
+    pub execution_lifecycle: Option<ExpectedExecutionLifecycle>,
+    pub shutdown_lifecycle: Option<ExpectedShutdownLifecycle>,
     pub mmu_enabled: Option<bool>,
     pub fault_status: Option<u32>,
     pub trace_values: Option<Vec<u32>>,
@@ -87,19 +89,26 @@ pub struct BlockMediaAssertion {
     pub bytes: Vec<u8>,
 }
 
-/// Lifecycle name accepted by the headless test manifest.
+/// Lifecycle accepted for the pre-shutdown execution snapshot.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum ExpectedLifecycle {
-    Running,
+pub enum ExpectedExecutionLifecycle {
+    Paused,
     Stopped,
-    Failed,
+}
+
+/// Final lifecycle accepted after the headless runner requests shutdown.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExpectedShutdownLifecycle {
+    Stopped,
 }
 
 /// Result of a bounded run suitable for CLI output or test assertions.
 #[derive(Clone, Debug)]
 pub struct RunResult {
-    pub status: RuntimeStatus,
+    pub execution_status: RuntimeStatus,
+    pub shutdown_status: RuntimeStatus,
     pub uart0_output: Vec<u8>,
     pub uart1_output: Vec<u8>,
     pub mmu: Option<MmuInspection>,
@@ -118,63 +127,60 @@ fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Re
         options.block_media_path,
         options.instruction_batch,
         ram_prefill,
+        Some(options.max_ticks),
+        &options.inputs,
     )?;
-    let mut inputs = options.inputs;
-    inputs.sort_by_key(|input| input.at_tick);
-    let mut next_input = 0;
 
     loop {
         let status = runtime.status();
-        while next_input < inputs.len() && status.machine.ticks >= inputs[next_input].at_tick {
-            let input = &inputs[next_input];
-            runtime.send_uart(port(input.uart)?, input.data.as_bytes());
-            next_input += 1;
-        }
-        if status.machine.ticks >= options.max_ticks
-            || matches!(
-                status.lifecycle,
-                LifecycleState::Stopped | LifecycleState::Failed
-            )
-        {
+        if matches!(
+            status.lifecycle,
+            LifecycleState::Paused | LifecycleState::Stopped | LifecycleState::Failed
+        ) {
             break;
         }
         thread::sleep(Duration::from_millis(1));
     }
 
-    let status = runtime.status();
-    let (uart0_output, uart1_output, mmu, events) = if status.lifecycle == LifecycleState::Running {
+    if runtime.status().lifecycle == LifecycleState::Running {
         runtime.pause().map_err(|_| CliError::RuntimeSetup)?;
         wait_for(&runtime, LifecycleState::Paused)?;
-        let RuntimeInspection::Peripherals(peripherals) = runtime
-            .inspect(InspectionRequest::Peripherals)
-            .map_err(|_| CliError::RuntimeSetup)?
-        else {
-            unreachable!("peripheral inspection has a fixed response type")
+    }
+    let execution_status = runtime.status();
+    let (uart0_output, uart1_output, mmu, events) =
+        if execution_status.lifecycle == LifecycleState::Paused {
+            let RuntimeInspection::Peripherals(peripherals) = runtime
+                .inspect(InspectionRequest::Peripherals)
+                .map_err(|_| CliError::RuntimeSetup)?
+            else {
+                unreachable!("peripheral inspection has a fixed response type")
+            };
+            let RuntimeInspection::Mmu(mmu) = runtime
+                .inspect(InspectionRequest::Mmu)
+                .map_err(|_| CliError::RuntimeSetup)?
+            else {
+                unreachable!("MMU inspection has a fixed response type")
+            };
+            let RuntimeInspection::Events(events) = runtime
+                .inspect(InspectionRequest::Events)
+                .map_err(|_| CliError::RuntimeSetup)?
+            else {
+                unreachable!("event inspection has a fixed response type")
+            };
+            (
+                peripherals.uart0.tx_history,
+                peripherals.uart1.tx_history,
+                Some(mmu),
+                events,
+            )
+        } else {
+            (Vec::new(), Vec::new(), None, Vec::new())
         };
-        let RuntimeInspection::Mmu(mmu) = runtime
-            .inspect(InspectionRequest::Mmu)
-            .map_err(|_| CliError::RuntimeSetup)?
-        else {
-            unreachable!("MMU inspection has a fixed response type")
-        };
-        let RuntimeInspection::Events(events) = runtime
-            .inspect(InspectionRequest::Events)
-            .map_err(|_| CliError::RuntimeSetup)?
-        else {
-            unreachable!("event inspection has a fixed response type")
-        };
-        (
-            peripherals.uart0.tx_history,
-            peripherals.uart1.tx_history,
-            Some(mmu),
-            events,
-        )
-    } else {
-        (Vec::new(), Vec::new(), None, Vec::new())
-    };
     runtime.shutdown().map_err(|_| CliError::RuntimeSetup)?;
+    let shutdown_status = runtime.status();
     Ok(RunResult {
-        status: runtime.status(),
+        execution_status,
+        shutdown_status,
         uart0_output,
         uart1_output,
         mmu,
@@ -194,6 +200,8 @@ pub(crate) fn start_runtime(
         block_media_path,
         instruction_batch,
         &[],
+        None,
+        &[],
     )
 }
 
@@ -203,6 +211,8 @@ fn start_runtime_with_prefill(
     block_media_path: Option<PathBuf>,
     instruction_batch: Option<NonZeroUsize>,
     ram_prefill: &[RamPrefill],
+    execution_deadline: Option<u64>,
+    inputs: &[HeadlessInput],
 ) -> Result<RuntimeHandle> {
     let image = minemu_image::SystemImage::parse(&read(image_path)?)?;
     let boot_rom = read(boot_rom_path)?;
@@ -219,6 +229,8 @@ fn start_runtime_with_prefill(
         block_media_path,
         instruction_batch,
         ram_prefill,
+        execution_deadline,
+        inputs,
     )?;
     RuntimeHandle::spawn(config).map_err(|_| CliError::RuntimeSetup)
 }
@@ -234,6 +246,11 @@ pub fn run_headless(path: impl AsRef<Path>) -> Result<RunResult> {
         path: path.into(),
         source,
     })?;
+    if !test.assert.has_expectations() {
+        return Err(CliError::Assertion(
+            "headless tests require at least one assertion".into(),
+        ));
+    }
     let root = path.parent().unwrap_or_else(|| Path::new("."));
     let block_media_path = test.block_media.as_deref().map(|path| resolve(root, path));
     let result = run_image_with_prefill(
@@ -258,6 +275,8 @@ fn runtime_config(
     block_media_path: Option<PathBuf>,
     instruction_batch: Option<NonZeroUsize>,
     ram_prefill: &[RamPrefill],
+    execution_deadline: Option<u64>,
+    inputs: &[HeadlessInput],
 ) -> Result<RuntimeConfig> {
     let memory =
         PhysicalMemory::with_roms(boot_rom, image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
@@ -266,6 +285,17 @@ fn runtime_config(
     if let Some(instruction_batch) = instruction_batch {
         config.instruction_batch = instruction_batch.get();
     }
+    config.execution_deadline = execution_deadline;
+    config.scheduled_uart = inputs
+        .iter()
+        .map(|input| {
+            Ok(ScheduledUartInput {
+                at_tick: input.at_tick,
+                port: port(input.uart)?,
+                bytes: input.data.as_bytes().to_vec(),
+            })
+        })
+        .collect::<Result<_>>()?;
     for fill in ram_prefill {
         let address = PhysicalAddress::new(fill.address);
         let range = PhysicalRange::new(address, fill.length).map_err(|_| {
@@ -288,6 +318,19 @@ fn runtime_config(
 }
 
 fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()> {
+    if result.execution_status.lifecycle == LifecycleState::Failed
+        || result.shutdown_status.lifecycle == LifecycleState::Failed
+    {
+        let detail = result
+            .execution_status
+            .last_error
+            .as_deref()
+            .or(result.shutdown_status.last_error.as_deref())
+            .unwrap_or("unknown runtime failure");
+        return Err(CliError::Assertion(format!(
+            "emulator runtime failed: {detail}"
+        )));
+    }
     if let Some(expected) = &assertion.uart0_contains
         && !String::from_utf8_lossy(&result.uart0_output).contains(expected)
     {
@@ -303,22 +346,31 @@ fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()
         ));
     }
     if let Some(ticks) = assertion.ticks_at_least
-        && result.status.machine.ticks < ticks
+        && result.execution_status.machine.ticks < ticks
     {
         return Err(CliError::Assertion(
             "virtual time did not reach the required tick".into(),
         ));
     }
-    if let Some(expected) = &assertion.lifecycle
+    if let Some(expected) = &assertion.execution_lifecycle
         && !matches!(
-            (expected, result.status.lifecycle),
-            (ExpectedLifecycle::Running, LifecycleState::Running)
-                | (ExpectedLifecycle::Stopped, LifecycleState::Stopped)
-                | (ExpectedLifecycle::Failed, LifecycleState::Failed)
+            (expected, result.execution_status.lifecycle),
+            (ExpectedExecutionLifecycle::Paused, LifecycleState::Paused)
+                | (ExpectedExecutionLifecycle::Stopped, LifecycleState::Stopped)
         )
     {
         return Err(CliError::Assertion(
-            "unexpected final lifecycle state".into(),
+            "unexpected execution lifecycle state".into(),
+        ));
+    }
+    if let Some(expected) = &assertion.shutdown_lifecycle
+        && !matches!(
+            (expected, result.shutdown_status.lifecycle),
+            (ExpectedShutdownLifecycle::Stopped, LifecycleState::Stopped)
+        )
+    {
+        return Err(CliError::Assertion(
+            "unexpected shutdown lifecycle state".into(),
         ));
     }
     if let Some(enabled) = assertion.mmu_enabled
@@ -353,6 +405,20 @@ fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()
         }
     }
     Ok(())
+}
+
+impl HeadlessAssertion {
+    fn has_expectations(&self) -> bool {
+        self.uart0_contains.is_some()
+            || self.uart1_contains.is_some()
+            || self.ticks_at_least.is_some()
+            || self.execution_lifecycle.is_some()
+            || self.shutdown_lifecycle.is_some()
+            || self.mmu_enabled.is_some()
+            || self.fault_status.is_some()
+            || self.trace_values.is_some()
+            || !self.block_media.is_empty()
+    }
 }
 
 fn assert_block_media(path: Option<&Path>, assertions: &[BlockMediaAssertion]) -> Result<()> {
@@ -456,21 +522,23 @@ mod tests {
     };
 
     fn result(output: &[u8]) -> RunResult {
-        RunResult {
-            status: minemu_runtime::RuntimeStatus {
-                lifecycle: LifecycleState::Stopped,
-                machine: MachineStatus {
-                    ticks: 7,
-                    mmu_enabled: false,
-                    pending_interrupts: 0,
-                    systick_status: 0,
-                    block_status: 0,
-                    uart0_status: 0,
-                    uart1_status: 0,
-                },
-                last_stop: None,
-                last_error: None,
+        let status = |lifecycle| minemu_runtime::RuntimeStatus {
+            lifecycle,
+            machine: MachineStatus {
+                ticks: 7,
+                mmu_enabled: false,
+                pending_interrupts: 0,
+                systick_status: 0,
+                block_status: 0,
+                uart0_status: 0,
+                uart1_status: 0,
             },
+            last_stop: None,
+            last_error: None,
+        };
+        RunResult {
+            execution_status: status(LifecycleState::Paused),
+            shutdown_status: status(LifecycleState::Stopped),
             uart0_output: output.to_vec(),
             uart1_output: Vec::new(),
             mmu: None,
@@ -498,6 +566,22 @@ mod tests {
                 },
             ),
             Err(CliError::Assertion(_))
+        ));
+    }
+
+    #[test]
+    fn assertions_distinguish_lifecycle_snapshots_and_fail_runtime_errors() {
+        let assertion: HeadlessAssertion =
+            toml::from_str("execution_lifecycle = 'paused'\nshutdown_lifecycle = 'stopped'\n")
+                .unwrap();
+        assert_result(&result(b""), &assertion).unwrap();
+
+        let mut failed = result(b"");
+        failed.execution_status.lifecycle = LifecycleState::Failed;
+        failed.execution_status.last_error = Some("backend stopped".into());
+        assert!(matches!(
+            assert_result(&failed, &assertion),
+            Err(CliError::Assertion(message)) if message.contains("backend stopped")
         ));
     }
 
@@ -558,6 +642,7 @@ bytes = [0xde, 0xad, 0xbe, 0xef]
         assert_eq!(test.ram_prefill[0].value, 165);
         assert_eq!(test.assert.block_media.len(), 1);
         assert_eq!(test.assert.block_media[0].offset, 512);
+        assert!(test.assert.has_expectations());
 
         assert!(
             toml::from_str::<HeadlessTest>(
@@ -566,6 +651,15 @@ image = "system.img"
 boot_rom = "boot.bin"
 instruction_batch = 0
 "#,
+            )
+            .is_err()
+        );
+        let empty: HeadlessTest =
+            toml::from_str("image = 'system.img'\nboot_rom = 'boot.bin'\n[assert]\n").unwrap();
+        assert!(!empty.assert.has_expectations());
+        assert!(
+            toml::from_str::<HeadlessTest>(
+                "image = 'system.img'\nboot_rom = 'boot.bin'\n[[inputs]]\nat_tick = 1\nuart = 0\ndata = 'x'\nwhen = 'late'\n[assert]\nticks_at_least = 1\n"
             )
             .is_err()
         );
@@ -595,18 +689,22 @@ block_media_bytes = []
                 length: 4,
                 value: 0xa5,
             }],
+            Some(99),
+            &[],
         )
         .unwrap();
 
         assert_eq!(config.instruction_batch, 7);
         assert_eq!(config.initial_ram_writes.len(), 1);
         assert_eq!(config.initial_ram_writes[0].1, [0xa5; 4]);
+        assert_eq!(config.execution_deadline, Some(99));
     }
 
     #[test]
     fn image_reset_returns_to_boot_rom_with_clear_ram() {
         let boot_rom = test_boot_rom();
-        let config = runtime_config(&boot_rom, &boot_test_image(), None, None, &[]).unwrap();
+        let config =
+            runtime_config(&boot_rom, &boot_test_image(), None, None, &[], None, &[]).unwrap();
         assert_eq!(config.entry, BOOT_ROM_BASE);
         assert_eq!(config.instruction_batch, 1024);
         assert!(config.initial_ram_writes.is_empty());

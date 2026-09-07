@@ -99,12 +99,12 @@ minimum-tests/docs/conformance-authoring.md
 
 ### D1. Canonical Ownership Of Student Documentation
 
-Status: open
+Status: decided
 
 Choose one:
 
 - [ ] Keep all student documentation in `minimum-template`.
-- [ ] Keep normative platform documents in the parent repository and maintain
+- [x] Keep normative platform documents in the parent repository and maintain
   a standalone quickstart plus links in `minimum-template`.
 - [ ] Duplicate versioned platform documents into `minimum-template` releases.
 
@@ -118,12 +118,12 @@ Notes:
 
 ### D2. Normative Specification Granularity
 
-Status: open
+Status: decided
 
 Choose one:
 
 - [ ] Keep one large `emulator.md`, but reorganize it by contract layer.
-- [ ] Split it into the five proposed versioned platform documents.
+- [x] Split it into the five proposed versioned platform documents.
 - [ ] Use a smaller three-document split: machine ABI, boot/image ABI, and
   supplied runtime ABI.
 
@@ -137,14 +137,14 @@ Notes:
 
 ### D3. Normative Status Of The Supplied Template Layout
 
-Status: open
+Status: decided
 
 Choose one:
 
 - [ ] Make the current page-table workspace, high-kernel load address,
   temporary identity map, MMIO map, and banked-stack layout part of platform
   ABI v1.
-- [ ] Treat them as supported `minimum-template` implementation details that
+- [x] Treat them as supported `minimum-template` implementation details that
   students may replace while preserving the machine and boot ABIs.
 - [ ] Freeze only selected addresses; list them in `Notes`.
 
@@ -158,11 +158,11 @@ Notes:
 
 ### D4. Reset As A Block-Media Flush Boundary
 
-Status: open
+Status: decided
 
 Choose one:
 
-- [ ] Reset flushes dirty block media before rebuilding machine state.
+- [x] Reset flushes dirty block media before rebuilding machine state.
 - [ ] Reset discards unflushed guest writes; only pause, shutdown, and terminal
   failure flush.
 - [ ] Reset fails while media is dirty and requires an explicit pause first.
@@ -175,15 +175,15 @@ and avoids silently losing completed guest writes during a user-requested
 reset.
 
 Notes:
-
+yes, reset should be a flush boundary.
 
 ### D5. RNG `SEED` Read Semantics
 
-Status: open
+Status: decided
 
 Choose one:
 
-- [ ] `SEED` retains and returns the last configured seed; `STATE` returns the
+- [x] `SEED` retains and returns the last configured seed; `STATE` returns the
   evolving generator state.
 - [ ] `SEED` and `STATE` both return the evolving state; document `SEED` as an
   alias with restart-on-write behavior.
@@ -200,11 +200,11 @@ Notes:
 
 ### D6. RAM Contents After Reset
 
-Status: open
+Status: decided
 
 Choose one:
 
-- [ ] RAM is guaranteed to be zero after reset, before firmware writes.
+- [x] RAM is guaranteed to be zero after reset, before firmware writes.
 - [ ] RAM contents are unspecified after reset.
 - [ ] Normal reset clears RAM, but this is tool behavior rather than guest ABI.
 
@@ -217,13 +217,13 @@ Notes:
 
 ### D7. Headless Tick Budget And Input Scheduling
 
-Status: open
+Status: decided
 
 Choose one:
 
 - [ ] Preserve the current asynchronous runner and document `max_ticks` and
   `at_tick` as soft, earliest-observed thresholds.
-- [ ] Move budget enforcement and scheduled input into the emulator thread so
+- [x] Move budget enforcement and scheduled input into the emulator thread so
   they occur at exact virtual-time boundaries.
 - [ ] Keep soft scheduling for general tests and add a separate exact event
   schedule for conformance tests.
@@ -237,11 +237,13 @@ thread. Deterministic scheduling is a core reason for the headless test runner.
 Until that exists, documentation must call the current values thresholds.
 
 Notes:
-
+max_ticks and at_ticks don't make sense unless they are deterministic, i'd
+prefer to modify the source code to make it so rather than treat these as soft
+thresholds.
 
 ### D8. Test Success And Lifecycle Semantics
 
-Status: open
+Status: decided
 
 Choose one:
 
@@ -249,7 +251,7 @@ Choose one:
   result; document the limitations.
 - [ ] Reject empty assertions, fail automatically on runtime failure, and
   remove unusable lifecycle values.
-- [ ] Capture execution state before shutdown separately from final shutdown
+- [x] Capture execution state before shutdown separately from final shutdown
   state and allow assertions over both.
 
 Recommendation: capture pre-shutdown execution state separately, fail runtime
@@ -262,11 +264,11 @@ Notes:
 
 ### D9. Unknown Manifest Fields
 
-Status: open
+Status: decided
 
 Choose one:
 
-- [ ] Reject unknown fields in image manifests, test manifests, inputs,
+- [x] Reject unknown fields in image manifests, test manifests, inputs,
   prefills, and assertions.
 - [ ] Reject them only in test assertion structures.
 - [ ] Continue accepting unknown fields and document forward-compatible
@@ -283,11 +285,11 @@ Notes:
 
 ### D10. Canonical Headless-Test Documentation
 
-Status: open
+Status: decided
 
 Choose one:
 
-- [ ] Keep the complete schema in the parent repository and a conformance
+- [x] Keep the complete schema in the parent repository and a conformance
   author guide in `minimum-tests`.
 - [ ] Keep all headless testing documentation in `minimum-tests`.
 - [ ] Keep general schema documentation in the parent and duplicate it in the
@@ -303,11 +305,11 @@ Notes:
 
 ### D11. Historical Documentation Policy
 
-Status: open
+Status: decided
 
 Choose one:
 
-- [ ] Delete completed plans and spike documents after durable decisions are
+- [x] Delete completed plans and spike documents after durable decisions are
   incorporated into current documentation.
 - [ ] Retain them under `docs/dev/archive/` with a prominent historical and
   nonnormative notice.
@@ -317,16 +319,16 @@ Recommendation: archive the feasibility spike and visual TUI specification,
 but delete completed execution plans after extracting durable decisions.
 
 Notes:
-
+we'll rely on version control to keep the contents in history.
 
 ### D12. Unreleased Development Container Instructions
 
-Status: open
+Status: decided
 
 Choose one:
 
 - [ ] Remove all container instructions until a student image is published.
-- [ ] Keep a status section that says the released image is not yet available.
+- [x] Keep a status section that says the released image is not yet available.
 - [ ] Continue using a placeholder image name in command examples.
 
 Recommendation: keep a short status section without unusable commands. Add the
@@ -334,6 +336,31 @@ real image reference and workflow only when release work is complete.
 
 Notes:
 
+
+## Resolved Contract Statements
+
+- The parent repository owns the canonical platform contract. The template
+  keeps a standalone quickstart and links to the canonical specification.
+- The platform contract is split into five versioned documents covering the
+  overview, boot, image format, exceptions/MMU, and devices.
+- Template page-table storage, temporary mappings, and stack placement are
+  supported reference-policy choices rather than platform ABI.
+- Reset flushes dirty block media before machine state is rebuilt.
+- RNG `SEED` reads return the configured seed, `STATE` reads return the evolving
+  generator state, and `DATA` advances that state.
+- Physical RAM is zero after reset and before firmware writes.
+- The emulator thread enforces `max_ticks` and scheduled UART `at_tick`
+  boundaries exactly by shortening execution batches at those boundaries.
+- Headless assertions inspect a pre-shutdown execution snapshot. Execution and
+  shutdown lifecycle expectations are distinct, empty assertion sets are
+  invalid, and any runtime failure fails the test.
+- Unknown fields are rejected at every level of image and test manifests.
+- The parent repository owns the complete headless schema; `minimum-tests`
+  owns the conformance-suite authoring guide.
+- Completed plans and superseded historical documents are deleted after their
+  durable decisions are incorporated into current documentation.
+- Container documentation states that no released student image is currently
+  available and does not publish placeholder commands.
 
 ## Content Boundaries
 
@@ -386,7 +413,7 @@ in `docs/dev/tui-architecture.md`.
 - Global options and path resolution.
 - `minemu image` inputs, output behavior, and links to the image format.
 - `minemu run` as TUI by default.
-- `minemu run --headless` output and threshold behavior.
+- `minemu run --headless` output and exact tick-boundary behavior.
 - Boot ROM and block-media requirements.
 - Exit status and error behavior.
 - Links to TUI and headless-test documentation.
@@ -438,11 +465,11 @@ notices for one release. They must not remain parallel sources of truth.
 
 ### Phase 1. Resolve Contracts
 
-- [ ] Record decisions D1 through D12.
-- [ ] Convert each selected behavior into a concise normative statement.
-- [ ] Identify decisions that require source or test changes before the new
+- [x] Record decisions D1 through D12.
+- [x] Convert each selected behavior into a concise normative statement.
+- [x] Identify decisions that require source or test changes before the new
   documentation can truthfully describe them.
-- [ ] Reconcile reset flushing, RNG `SEED`, RAM reset, timing, lifecycle, and
+- [x] Reconcile reset flushing, RNG `SEED`, RAM reset, timing, lifecycle, and
   unknown-field behavior across source, tests, `TODO.md`, and specifications.
 
 Exit criterion: no known source/document contradiction is being moved into the

@@ -35,6 +35,14 @@ impl UartPort {
     }
 }
 
+/// UART bytes delivered by the emulator thread at an exact virtual-time boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScheduledUartInput {
+    pub at_tick: u64,
+    pub port: UartPort,
+    pub bytes: Vec<u8>,
+}
+
 /// Lightweight immutable state continuously available to observers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeStatus {
@@ -93,6 +101,8 @@ pub struct RuntimeConfig {
     pub uart_capacity: usize,
     pub block_media_path: Option<PathBuf>,
     pub initial_ram_writes: Vec<(PhysicalAddress, Vec<u8>)>,
+    pub execution_deadline: Option<u64>,
+    pub scheduled_uart: Vec<ScheduledUartInput>,
 }
 
 impl RuntimeConfig {
@@ -107,6 +117,8 @@ impl RuntimeConfig {
             uart_capacity: 4096,
             block_media_path: None,
             initial_ram_writes: Vec::new(),
+            execution_deadline: None,
+            scheduled_uart: Vec::new(),
         }
     }
 

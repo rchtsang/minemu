@@ -9,6 +9,7 @@ use crate::{CliError, Result};
 
 /// Declarative system-image input manifest.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImageManifest {
     pub kernel: PathBuf,
     #[serde(default)]
@@ -17,6 +18,7 @@ pub struct ImageManifest {
 
 /// One fixed-address user module included in an image manifest.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModuleManifest {
     pub name: String,
     pub elf: PathBuf,
@@ -79,5 +81,18 @@ mod tests {
         .unwrap();
         assert_eq!(manifest.kernel.to_str(), Some("kernel.elf"));
         assert_eq!(manifest.modules[0].name, "shell");
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_top_level_and_module_fields() {
+        assert!(
+            toml::from_str::<ImageManifest>("kernel = 'kernel.elf'\nkerne = 'typo'\n").is_err()
+        );
+        assert!(
+            toml::from_str::<ImageManifest>(
+                "kernel = 'kernel.elf'\n[[modules]]\nname = 'shell'\nelf = 'shell.elf'\naddress = 1\n"
+            )
+            .is_err()
+        );
     }
 }

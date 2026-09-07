@@ -30,13 +30,14 @@ test suites or files.
 | MMU-05 | Fetch/data page faults enter prefetch/data abort and retry correctly | `minemu-unicorn` abort-delivery tests; `minimum-tests/headless/exceptions/test.toml` |
 | TIME-01 | Normal instruction, trap, fault, and exception-entry tick costs | `minemu-core` virtual-time tests |
 | TIME-02 | Exact timer and block deadlines across traps and faults | `minemu-core` scheduler/device tests; `minimum-tests/headless/interrupts/test.toml`; `minimum-tests/headless/block/test.toml` |
+| TIME-03 | Exact headless budget and scheduled-UART boundaries, including multi-tick exception entry | `minemu-unicorn` tick-deadline test; `minemu-runtime` scheduled-boundary tests |
 | MMIO-01 | Width, alignment, direction, reserved-bit, and undefined-offset faults | `minemu-platform` MMIO decoding tests; `minemu-core` bus tests; planned `minimum-tests` headless `mmio-invalid` |
 | UART-01 | UART0 and UART1 polling, RX queues, TX output, and RX level IRQs | `minemu-core` UART tests; `minemu-unicorn` UART IRQ test; `minimum-tests/headless/uart/test.toml`; `minimum-tests/headless/interrupts/test.toml` |
 | TIMER-01 | SysTick enable, periodic scheduling, ACK, and IRQ masking | `minemu-core` SysTick tests; `minimum-tests/headless/interrupts/test.toml` |
 | IRQ-01 | Source priority, CLAIM retention, source ACK, and EOI | `minemu-core` interrupt-controller tests; `minimum-tests/headless/interrupts/test.toml` |
 | IRQ-02 | Configurable priority, SysTick-over-UART defaults, and source-ID tie breaking | `minemu-platform` peripheral-constant tests; `minemu-core` interrupt-controller tests; `minimum-tests/headless/interrupts/test.toml` |
 | BLOCK-01 | Physical DMA, deterministic read/write completion, and guest errors | `minemu-core` block tests; `minimum-tests/headless/block/test.toml` |
-| BLOCK-02 | Write-back media, pause/shutdown flush, and flush retry | `minemu-core` block flush-retry tests; `minimum-tests/headless/block/test.toml`; planned runtime flush-boundary tests |
+| BLOCK-02 | Write-back media, pause/reset/shutdown flush, and flush retry | `minemu-core` block flush-retry tests; `minemu-runtime` reset-flush test; `minimum-tests/headless/block/test.toml` |
 | RNG-01 | Default seed, zero-seed policy, xorshift32 sequence, and reseed | `minemu-core` RNG tests; `minimum-tests/headless/rng-trace/test.toml` |
 | RNG-02 | RNG supervisor-only mapping | `minemu-core` user-device test; `minimum-tests/headless/exceptions/test.toml` |
 | TRACE-01 | Guest trace value, retired-instruction timestamp, bounded history, and supervisor-only access | `minemu-core` trace tests; `minimum-tests/headless/rng-trace/test.toml`; `minimum-tests/headless/exceptions/test.toml` |

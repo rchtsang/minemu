@@ -5,7 +5,7 @@ use minemu_platform::{InspectionRequest, MemRegion, PhysicalAddress, PhysicalRan
 
 use crate::{
     LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeInspectionRequest,
-    UartPort,
+    ScheduledUartInput, UartPort,
 };
 
 fn running_runtime() -> RuntimeHandle {
@@ -76,6 +76,72 @@ fn bounded_resume_executes_exact_instruction_count_and_pauses() {
         status.machine.ticks,
         initial_ticks + 7
     );
+}
+
+#[test]
+fn scheduled_run_stops_and_delivers_uart_at_emulator_thread_boundaries() {
+    let mut machine = Machine::default();
+    let entry = MemRegion::Ram.base().get();
+    let instruction = [0xfe, 0xff, 0xff, 0xea]; // b .
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(entry), &instruction)
+        .unwrap();
+    let mut config = RuntimeConfig::new(machine, entry)
+        .with_initial_ram_write(PhysicalAddress::new(entry), instruction.to_vec());
+    config.instruction_batch = 1024;
+    config.execution_deadline = Some(7);
+    config.scheduled_uart.push(ScheduledUartInput {
+        at_tick: 3,
+        port: UartPort::Uart1,
+        bytes: b"scheduled".to_vec(),
+    });
+    let runtime = RuntimeHandle::spawn(config).unwrap();
+
+    wait_for(&runtime, LifecycleState::Paused);
+    let status = runtime.status();
+    assert_eq!(status.machine.ticks, 7);
+    assert_eq!(
+        status.last_stop.as_deref(),
+        Some("execution deadline reached")
+    );
+    let RuntimeInspection::Peripherals(peripherals) =
+        runtime.inspect(InspectionRequest::Peripherals).unwrap()
+    else {
+        panic!("peripheral inspection has a fixed response type");
+    };
+    assert_eq!(peripherals.uart1.rx_queued, b"scheduled".len());
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn scheduled_boundaries_split_multi_tick_exception_entry() {
+    let mut machine = Machine::default();
+    let entry = MemRegion::Ram.base().get();
+    let instruction = [0, 0, 0, 0xef]; // svc #0
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(entry), &instruction)
+        .unwrap();
+    let mut config = RuntimeConfig::new(machine, entry)
+        .with_initial_ram_write(PhysicalAddress::new(entry), instruction.to_vec());
+    config.execution_deadline = Some(2);
+    config.scheduled_uart.push(ScheduledUartInput {
+        at_tick: 1,
+        port: UartPort::Uart0,
+        bytes: b"x".to_vec(),
+    });
+    let runtime = RuntimeHandle::spawn(config).unwrap();
+
+    wait_for(&runtime, LifecycleState::Paused);
+    assert_eq!(runtime.status().machine.ticks, 2);
+    let RuntimeInspection::Peripherals(peripherals) =
+        runtime.inspect(InspectionRequest::Peripherals).unwrap()
+    else {
+        panic!("peripheral inspection has a fixed response type");
+    };
+    assert_eq!(peripherals.uart0.rx_queued, 1);
+    runtime.shutdown().unwrap();
 }
 
 #[test]

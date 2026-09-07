@@ -121,7 +121,9 @@ fn execute(command: Command) -> minemu::Result<()> {
             })?;
             print!("{}", String::from_utf8_lossy(&result.uart0_output));
             eprint!("{}", String::from_utf8_lossy(&result.uart1_output));
-            if result.status.lifecycle == minemu_runtime::LifecycleState::Failed {
+            if result.execution_status.lifecycle == minemu_runtime::LifecycleState::Failed
+                || result.shutdown_status.lifecycle == minemu_runtime::LifecycleState::Failed
+            {
                 return Err(CliError::Assertion(
                     "emulator terminated with a runtime failure".into(),
                 ));

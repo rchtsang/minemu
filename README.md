@@ -10,7 +10,7 @@ Git submodules.
 | Project | Purpose | Start here |
 |---|---|---|
 | `minemu` | Emulator, image tooling, TUI, headless runner, and platform contract | [Documentation index](docs/README.md) |
-| `minimum-template` | Student starter with reset firmware, kernel and user scaffolding, examples, and image definitions | [Template README](minimum-template/README.md) |
+| `minimum-template` | Student starter with reset firmware, kernel and user scaffolding, examples, and image definitions | [Template quickstart](minimum-template/README.md) |
 | `minimum-tests` | Emulator conformance fork with focused guest programs, manifests, and assertions | [Conformance README](minimum-tests/README.md) |
 
 Clone with submodules, or initialize them in an existing checkout:
@@ -23,7 +23,7 @@ git submodule update --init --recursive
 
 | Audience | Documentation |
 |---|---|
-| Students using the starter | [Template README](minimum-template/README.md), [TUI guide](docs/dev/tui.md), and current [platform ABI](docs/dev/emulator.md) |
+| Students using the starter | [Template quickstart](minimum-template/README.md), [TUI guide](docs/dev/tui.md), and current [platform ABI](docs/dev/emulator.md) |
 | Emulator users | [CLI and headless usage](docs/dev/cli.md) and [TUI guide](docs/dev/tui.md) |
 | Conformance authors | [Conformance matrix](docs/dev/abi-conformance.md) and [minimum-tests](minimum-tests/README.md) |
 | Emulator contributors | [Design](docs/dev/design.md), [TUI architecture](docs/dev/tui-architecture.md), and [documentation index](docs/README.md) |

@@ -8,7 +8,7 @@ the [project overview](../README.md) for the relationship among the repositories
 
 | Audience | Start here | Continue with |
 |---|---|---|
-| Students | [`minimum-template` overview](../minimum-template/README.md) | [TUI guide](dev/tui.md), current [platform ABI](dev/emulator.md) |
+| Students | [`minimum-template` quickstart](../minimum-template/README.md) | [TUI guide](dev/tui.md), current [platform ABI](dev/emulator.md) |
 | Emulator users | [CLI and headless usage](dev/cli.md) | [TUI guide](dev/tui.md) |
 | Conformance authors | [`minimum-tests` overview](../minimum-tests/README.md) | [ABI conformance matrix](dev/abi-conformance.md), current [platform ABI](dev/emulator.md) |
 | Emulator contributors | [Design](dev/design.md) | [TUI architecture](dev/tui-architecture.md), [ABI conformance matrix](dev/abi-conformance.md) |

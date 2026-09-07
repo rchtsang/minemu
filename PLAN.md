@@ -489,13 +489,13 @@ knowing the repository layout.
 
 ### Phase 3. Establish Student Entry Points
 
-- [ ] Rewrite `minimum-template/README.md` as a standalone quickstart.
-- [ ] Make the build sequence explicitly run both `make` and `make image`, or
+- [x] Rewrite `minimum-template/README.md` as a standalone quickstart.
+- [x] Make the build sequence explicitly run both `make` and `make image`, or
   change the Make workflow and document the selected behavior.
-- [ ] Add the essential paused-TUI controls and a link to the full TUI guide.
-- [ ] Remove the obsolete claim that `minimum-template/image/` owns boot tests.
-- [ ] Replace the development-container placeholder according to D12.
-- [ ] Keep bootloader maintenance instructions separate from normal student
+- [x] Add the essential paused-TUI controls and a link to the full TUI guide.
+- [x] Remove the obsolete claim that `minimum-template/image/` owns boot tests.
+- [x] Replace the development-container placeholder according to D12.
+- [x] Keep bootloader maintenance instructions separate from normal student
   use.
 
 Exit criterion: a student can build, package, start, interact with, inspect, and

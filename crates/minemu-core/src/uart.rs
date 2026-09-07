@@ -128,7 +128,8 @@ impl Peripheral for Uart {
         Ok(match register {
             Register::ReceiveData => self.read_rx() as u32,
             Register::Status => self.status(),
-            Register::TransmitData | Register::Control => 0,
+            Register::Control => self.control(),
+            Register::TransmitData => 0,
         })
     }
 
@@ -157,7 +158,10 @@ impl Peripheral for Uart {
 mod tests {
     use std::sync::mpsc;
 
-    use minemu_platform::peripherals::interrupt::Source;
+    use minemu_platform::{
+        Peripheral,
+        peripherals::{interrupt::Source, uart::Register},
+    };
 
     use super::Uart;
 
@@ -170,6 +174,7 @@ mod tests {
         assert!(!uart.irq_pending());
         uart.set_control(1);
         assert!(uart.irq_pending());
+        assert_eq!(uart.read(Register::Control).unwrap(), 1);
         assert!(!receiver.try_recv().unwrap().pending);
         assert!(receiver.try_recv().unwrap().pending);
         assert_eq!(uart.read_rx(), b'a');

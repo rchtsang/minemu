@@ -57,7 +57,9 @@ impl Register {
     }
 
     pub(crate) fn validate_write_value(self, value: u32) -> crate::Result<()> {
-        if matches!(self, Self::Ack | Self::Control) && value & !1 != 0 {
+        if (matches!(self, Self::Ack) && value != 1)
+            || (matches!(self, Self::Control) && value & !1 != 0)
+        {
             return super::invalid_value("block-device register", value);
         }
         Ok(())

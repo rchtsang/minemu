@@ -56,7 +56,7 @@ scenarios. Do not copy its monolithic implementation into this workspace.
 
 ## 0. Freeze ABI v1
 
-- [x] Rewrite `docs/dev/emulator.md` as the normative ABI document and remove
+- [x] Replace `docs/dev/emulator.md` with versioned normative specifications and remove
   stale spike terminology.
 - [x] Specify CP15 operations, privilege checks, A32 condition behavior, and
   behavior for unsupported CP15 operations.

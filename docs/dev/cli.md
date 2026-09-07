@@ -29,7 +29,7 @@ minemu image minimum-template/image/minimum.toml \
 
 The packer validates that every input is a little-endian ARM executable ELF,
 rejects Thumb entries and relocations, then writes the stable versioned image
-format documented in the [Emulator ABI](emulator.md).
+format documented in the [system-image specification](../platform/system-image-v1.md).
 
 ## Interactive And Headless Runs
 

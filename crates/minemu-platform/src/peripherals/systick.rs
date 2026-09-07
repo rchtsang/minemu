@@ -32,7 +32,7 @@ impl Register {
         let valid = match self {
             Self::Period => value != 0,
             Self::Control => value & !0x07 == 0,
-            Self::Ack => value & !1 == 0,
+            Self::Ack => value == 1,
             _ => true,
         };
         if valid {

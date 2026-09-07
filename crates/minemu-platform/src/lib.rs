@@ -1,8 +1,9 @@
 //! Backend-independent definitions for the `minemu` platform ABI.
 //!
-//! The normative ABI is documented in `docs/dev/emulator.md`. This crate owns
-//! the Rust representation and validation of that contract; it intentionally
-//! has no Unicorn, filesystem, or host-runtime dependency.
+//! The normative ABI is documented in the versioned specifications under
+//! `docs/platform/`. This crate owns the Rust representation and validation of
+//! that contract; it intentionally has no Unicorn, filesystem, or host-runtime
+//! dependency.
 
 mod access;
 mod address;

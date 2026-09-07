@@ -503,19 +503,19 @@ quit the starter image from a fresh template checkout.
 
 ### Phase 4. Split And Tighten The Platform Specification
 
-- [ ] Add explicit PA, VA, ROM-offset, MMIO-offset, LBA, and host-file-offset
+- [x] Add explicit PA, VA, ROM-offset, MMIO-offset, LBA, and host-file-offset
   terminology.
-- [ ] Use half-open ranges consistently.
-- [ ] Separate reserved physical boot locations from virtual mappings and
+- [x] Use half-open ranges consistently.
+- [x] Separate reserved physical boot locations from virtual mappings and
   arithmetic translation constants.
-- [ ] Document the boot handoff as a numbered sequence and register-state table.
-- [ ] State that `r0 = 0xc0007000` is a future VA that cannot be dereferenced
+- [x] Document the boot handoff as a numbered sequence and register-state table.
+- [x] State that `r0 = 0xc0007000` is a future VA that cannot be dereferenced
   before the direct map exists.
-- [ ] Separate machine exception entry from guest trap-frame construction.
-- [ ] Add complete reset values and transition semantics to device tables.
-- [ ] Clarify TTBR0 writes, cached translations, and required TLBIALL ordering.
-- [ ] Give numeric magic values and exact serialized byte sequences.
-- [ ] Assign stable requirement IDs suitable for conformance mapping.
+- [x] Separate machine exception entry from guest trap-frame construction.
+- [x] Add complete reset values and transition semantics to device tables.
+- [x] Clarify TTBR0 writes, cached translations, and required TLBIALL ordering.
+- [x] Give numeric magic values and exact serialized byte sequences.
+- [x] Assign stable requirement IDs suitable for conformance mapping.
 
 Exit criterion: every normative statement is guest-observable, versioned,
 unambiguous about address space, and attributable to either machine hardware or

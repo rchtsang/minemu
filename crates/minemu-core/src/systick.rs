@@ -56,9 +56,11 @@ impl SysTick {
         self.pending && self.irq_enabled
     }
 
-    fn set_period(&mut self, period: u32) {
+    fn set_period(&mut self, period: u32, now: u64) {
         self.period = period;
-        self.next_deadline = None;
+        if self.enabled {
+            self.next_deadline = Some(now + u64::from(period));
+        }
     }
 
     fn set_control(&mut self, control: u32, now: u64) {
@@ -142,8 +144,8 @@ impl Peripheral for SysTick {
             SysTickUpdate::Write {
                 register: Register::Period,
                 value,
-                ..
-            } => self.set_period(value),
+                now,
+            } => self.set_period(value, now),
             SysTickUpdate::Write {
                 register: Register::Control,
                 value,
@@ -174,12 +176,22 @@ mod tests {
     #[test]
     fn periodic_deadlines_keep_their_phase() {
         let mut timer = SysTick::default();
-        timer.set_period(3);
+        timer.set_period(3, 10);
         timer.set_control(0b111, 10);
         assert!(!timer.advance_to(12));
         assert!(timer.advance_to(13));
         timer.ack();
         assert!(timer.advance_to(20));
         assert!(timer.irq_pending());
+    }
+
+    #[test]
+    fn period_write_rephases_an_enabled_timer() {
+        let mut timer = SysTick::default();
+        timer.set_period(3, 0);
+        timer.set_control(0b011, 10);
+        timer.set_period(5, 11);
+        assert!(!timer.advance_to(15));
+        assert!(timer.advance_to(16));
     }
 }

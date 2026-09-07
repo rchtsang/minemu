@@ -288,7 +288,8 @@ impl Peripheral for BlockDevice {
             Register::PhysicalAddress => self.dma_address().get(),
             Register::Status => self.status(),
             Register::Error => self.error() as u32,
-            Register::Command | Register::Ack | Register::Control => 0,
+            Register::Control => self.control(),
+            Register::Command | Register::Ack => 0,
         })
     }
 
@@ -341,7 +342,7 @@ impl Peripheral for BlockDevice {
 
 #[cfg(test)]
 mod tests {
-    use minemu_platform::{MemRegion, PhysicalAddress};
+    use minemu_platform::{MemRegion, Peripheral, PhysicalAddress, peripherals::block::Register};
 
     use crate::{PhysicalMemory, PhysicalMemoryAccess};
 
@@ -380,5 +381,12 @@ mod tests {
         assert_eq!(block.dirty_sector_count(), 1);
         assert!(block.flush(|_| Ok(())).is_ok());
         assert_eq!(block.dirty_sector_count(), 0);
+    }
+
+    #[test]
+    fn control_register_reads_back_irq_enable() {
+        let mut block = BlockDevice::default();
+        block.set_control(1);
+        assert_eq!(block.read(Register::Control).unwrap(), 1);
     }
 }

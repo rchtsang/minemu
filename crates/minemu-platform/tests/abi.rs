@@ -69,6 +69,24 @@ fn mmio_decoding_enforces_width_direction_and_reserved_bits() {
         )),
         Err(PlatformError::InvalidMmioWidth(1))
     ));
+    for address in [0x1000_100c, 0x1000_2018] {
+        assert!(
+            decode_mmio(MmioTransaction::write(
+                PhysicalAddress::new(address),
+                MmioWidth::U32,
+                1,
+            ))
+            .is_ok()
+        );
+        assert!(matches!(
+            decode_mmio(MmioTransaction::write(
+                PhysicalAddress::new(address),
+                MmioWidth::U32,
+                0,
+            )),
+            Err(PlatformError::InvalidMmioValue { .. })
+        ));
+    }
 }
 
 #[test]

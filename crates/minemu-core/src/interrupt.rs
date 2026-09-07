@@ -94,7 +94,13 @@ impl InterruptController {
     }
 
     fn eoi(&mut self, source: u32) -> Result<()> {
-        let expected = self.claim.map(|claim| claim as u32).unwrap_or(u32::MAX);
+        let expected = self
+            .claim
+            .map(|claim| claim as u32)
+            .ok_or(CoreError::InvalidEoi {
+                expected: u32::MAX,
+                actual: source,
+            })?;
         if source != expected {
             return Err(CoreError::InvalidEoi {
                 expected,
@@ -201,5 +207,12 @@ mod tests {
         assert_eq!(controller.claim(), Some(Source::Uart1));
         controller.eoi(Source::Uart1 as u32).unwrap();
         assert_eq!(controller.claim(), Some(Source::SysTick));
+    }
+
+    #[test]
+    fn eoi_requires_an_active_claim() {
+        let (_, receiver) = mpsc::channel();
+        let mut controller = InterruptController::new(receiver);
+        assert!(controller.eoi(u32::MAX).is_err());
     }
 }

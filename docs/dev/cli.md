@@ -1,5 +1,8 @@
 # CLI And Headless Tests
 
+> **Status: Informative.** The platform ABI takes precedence over this usage
+> guide.
+
 `minemu` packages versioned system-ROM images and runs them through the
 deterministic emulator runtime. It does not build student C or assembly; run
 `make` in `minimum-template` first.
@@ -26,7 +29,7 @@ minemu image minimum-template/image/minimum.toml \
 
 The packer validates that every input is a little-endian ARM executable ELF,
 rejects Thumb entries and relocations, then writes the stable versioned image
-format documented in `emulator.md`.
+format documented in the [Emulator ABI](emulator.md).
 
 ## Interactive And Headless Runs
 
@@ -34,7 +37,7 @@ format documented in `emulator.md`.
 64-KiB Boot ROM, then opens the interactive TUI in the paused reset state with
 `PC = 0`. Starting emulation executes the Boot ROM; the host does not
 prepopulate kernel RAM. Use the command prompt to start, pause, resume, reset,
-inspect the paused machine, or quit. See `tui.md` for controls.
+inspect the paused machine, or quit. See the [TUI guide](tui.md) for controls.
 
 ```sh
 minemu run minimum-template/image/build/minimum.img \

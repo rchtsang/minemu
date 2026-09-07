@@ -1,12 +1,16 @@
 # TUI
 
+> **Status: Informative.** The platform ABI takes precedence over this usage
+> guide.
+
 `minemu run IMAGE --boot-rom BOOT_ROM` starts the terminal UI. Use `--headless
 --ticks N` for bounded automation. The TUI owns raw mode, mouse capture, and
 the alternate screen and restores them on normal exit, errors, and panic
 unwinding.
 
-The internal controller/widget design is documented in
-`tui-architecture.md`; `tui-design.md` is the visual interaction reference.
+The internal controller/widget design is documented in [TUI
+Architecture](tui-architecture.md); the [historical visual
+specification](../../tui-design.md) is the original interaction reference.
 
 ## Views
 

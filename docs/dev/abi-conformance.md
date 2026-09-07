@@ -1,8 +1,11 @@
 # ABI Conformance Matrix
 
-This matrix maps the normative rules in `emulator.md` to their required
-evidence. Rust tests validate platform, core, backend, image, and runtime
-behavior. A template smoke test builds the student platform, and
+> **Status: Informative.** This matrix records evidence for the normative
+> platform contract but does not define that contract.
+
+This matrix maps the normative rules in the [Emulator ABI](emulator.md) to
+their required evidence. Rust tests validate platform, core, backend, image,
+and runtime behavior. A template smoke test builds the student platform, and
 `minimum-tests` runs focused packed system-ROM images through `minemu test`.
 
 Evidence prefixed with "planned" does not exist yet. Other entries name current

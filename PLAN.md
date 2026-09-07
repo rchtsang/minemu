@@ -477,11 +477,11 @@ new documentation tree.
 
 ### Phase 2. Add Navigation
 
-- [ ] Add a parent `README.md` explaining `minemu`, `minimum-template`, and
+- [x] Add a parent `README.md` explaining `minemu`, `minimum-template`, and
   `minimum-tests` and linking documentation by audience.
-- [ ] Add `docs/README.md` as the documentation index.
-- [ ] Use real relative Markdown links rather than bare code-form filenames.
-- [ ] Mark the versioned platform documents as normative and all other guides
+- [x] Add `docs/README.md` as the documentation index.
+- [x] Use real relative Markdown links rather than bare code-form filenames.
+- [x] Mark the versioned platform documents as normative and all other guides
   as informative.
 
 Exit criterion: a new reader can identify the correct starting document without

@@ -1,5 +1,8 @@
 # overall behaviors
 
+> **Status: Informative and historical.** This visual specification is retained
+> for context and does not define current behavior or platform requirements.
+
 - errors should generally not crash the tui, but be displayed with red text in the dialog pane
 - emulation starts paused in TUI mode and requires an explicit start action
 - clipped pane content leaves one blank column before the right border

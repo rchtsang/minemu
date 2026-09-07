@@ -1,5 +1,8 @@
 # minemu Design
 
+> **Status: Informative.** This document describes implementation architecture,
+> not guest-visible platform requirements.
+
 ## Goals
 
 `minemu` is a Rust platform for a 14-week operating-systems course. It lets
@@ -155,5 +158,5 @@ virtualization.
 Before building the full platform, validate these capabilities in Rust:
 
 The feasibility spike completed these backend checks and is retained on the
-`spike` branch. `TODO.md` defines the staged production rewrite and its
-remaining backend, ABI, and student-platform gates.
+`spike` branch. The project [task record](../../TODO.md) defines the staged
+production rewrite and its remaining backend, ABI, and student-platform gates.

@@ -1,5 +1,8 @@
 # Emulator ABI
 
+> **Status: Normative and transitional.** This remains the platform contract
+> until it is replaced by the versioned documents under `docs/platform/`.
+
 ## Status And Scope
 
 This document is the normative ABI for the `minemu` A32 platform. Rust

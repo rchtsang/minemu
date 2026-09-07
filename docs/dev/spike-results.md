@@ -1,5 +1,8 @@
 # Feasibility Spike Results
 
+> **Status: Informative and historical.** This document records prototype
+> findings and does not describe the current implementation contract.
+
 ## Purpose
 
 The spike established that Unicorn can support the proposed A32 machine before

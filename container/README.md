@@ -79,8 +79,8 @@ environment depend only on `latest`.
 Run the local smoke and repository checks before publishing:
 
 ```sh
+just ci
 just --justfile container/justfile smoke
-just --justfile container/justfile ci
 ```
 
 Authenticate to GHCR with a narrowly scoped token supplied through the shell,
@@ -138,18 +138,6 @@ make test
 
 The Assignment 1 `make test` target is tracked separately in the Assignment 1
 release plan and must exist before that assignment goes live.
-
-## Maintainer CI Image
-
-The heavier `ci` target retains Rust and Unicorn build prerequisites and is not
-the student image. It exists to test the emulator repository itself:
-
-```sh
-just --justfile container/justfile ci
-```
-
-This mounts the current workspace and runs `just ci`. Docker remains separate
-from the normal host `just ci` command.
 
 ## Credentials And Host Access
 

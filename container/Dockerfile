@@ -4,7 +4,17 @@ FROM rust:1.96.0-bookworm AS minemu-builder
 
 ARG JUST_VERSION=1.57.0
 
-RUN apt-get update \
+# Avoid stale apt indexes from Docker Desktop or an intervening proxy.
+RUN printf '%s\n' \
+      'Acquire::http::No-Cache "true";' \
+      'Acquire::https::No-Cache "true";' \
+      'Acquire::http::Pipeline-Depth "0";' \
+      'Acquire::https::Pipeline-Depth "0";' \
+      'Acquire::Retries "3";' \
+      'Acquire::By-Hash "force";' \
+      > /etc/apt/apt.conf.d/99minemu-network \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
+    && apt-get update \
     && apt-get install --yes --no-install-recommends \
       build-essential \
       ca-certificates \
@@ -30,52 +40,24 @@ ARG OPENCODE_VERSION=1.18.29
 RUN npm install --global "opencode-ai@${OPENCODE_VERSION}" \
     && npm cache clean --force
 
-FROM rust:1.96.0-bookworm AS ci
-
-ARG DEV_UID=1000
-ARG DEV_GID=1000
-
-COPY --from=minemu-builder /usr/local/cargo/bin/just /usr/local/bin/just
-
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends \
-      binutils-arm-none-eabi \
-      build-essential \
-      ca-certificates \
-      clang \
-      cmake \
-      file \
-      gcc-arm-none-eabi \
-      git \
-      libclang-dev \
-      libglib2.0-dev \
-      make \
-      pkg-config \
-      zsh \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid "${DEV_GID}" dev \
-    && useradd \
-      --uid "${DEV_UID}" \
-      --gid dev \
-      --create-home \
-      --shell /usr/bin/zsh \
-      dev
-
-ENV HOME=/home/dev
-USER dev
-WORKDIR /workspace
-CMD ["just", "ci"]
-
 FROM debian:bookworm-slim AS student
 
 ARG DEV_UID=1000
 ARG DEV_GID=1000
 
-LABEL org.opencontainers.image.source="https://github.com/rchtsang/minemu" \
-      org.opencontainers.image.description="minemu student development environment" \
-      org.opencontainers.image.licenses="GPL-2.0-or-later"
+LABEL org.opencontainers.image.source="https://github.com/rchtsang/minemu"
 
-RUN apt-get update \
+# Each stage needs its own Docker Desktop/proxy-safe apt configuration.
+RUN printf '%s\n' \
+      'Acquire::http::No-Cache "true";' \
+      'Acquire::https::No-Cache "true";' \
+      'Acquire::http::Pipeline-Depth "0";' \
+      'Acquire::https::Pipeline-Depth "0";' \
+      'Acquire::Retries "3";' \
+      'Acquire::By-Hash "force";' \
+      > /etc/apt/apt.conf.d/99minemu-network \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
+    && apt-get update \
     && apt-get install --yes --no-install-recommends \
       binutils-arm-none-eabi \
       build-essential \

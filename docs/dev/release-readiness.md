@@ -11,12 +11,12 @@ gates remain before publishing and recommending a supported image:
 
 - Maintain a representative throughput floor of 100,000 strict instructions
   per second.
-- Verify the student image and repository CI target on a clean Docker host.
+- Verify the student image on a clean Docker host.
 - Verify that the image's GNU Arm compiler reproduces the checked-in canonical
   Boot ROM exactly.
 - Confirm the release binary's runtime shared-library dependencies.
-- Run the complete workspace, template, conformance, and container smoke checks
-  manually.
+- Run the complete workspace, template, and conformance checks with `just ci`,
+  then run the container smoke check manually.
 - Manually publish a versioned `linux/amd64` and `linux/arm64` image with Docker
   Buildx.
 - Make the GHCR package public and verify an unauthenticated pull.

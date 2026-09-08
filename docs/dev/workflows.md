@@ -106,7 +106,6 @@ Container validation remains an explicit maintainer workflow:
 
 ```sh
 just --justfile container/justfile smoke
-just --justfile container/justfile ci
 ```
 
 ## Cleaning

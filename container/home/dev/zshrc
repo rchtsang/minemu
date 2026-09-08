@@ -2,36 +2,13 @@ autoload -U compinit && compinit
 
 HISTSIZE="10000"
 SAVEHIST="10000"
-HISTFILE="/home/dev/.zsh_history"
+HISTFILE="$HOME/.zsh_history"
 
-# set shell options
-opts=(
-  HIST_FCNTL_LOCK
-  HIST_IGNORE_DUPS
-  HIST_IGNORE_SPACE
-  SHARE_HISTORY
-  NO_APPEND_HISTORY
-  NO_EXTENDED_HISTORY
-  NO_HIST_EXPIRE_DUPS_FIRST
-  NO_HIST_FIND_NO_DUPS
-  NO_HIST_IGNORE_ALL_DUPS
-  NO_HIST_SAVE_NO_DUPS
-)
-for opt in "${opts[@]}"; do
-  setopt "$opt"
-done
-unset opt opts
+setopt HIST_FCNTL_LOCK HIST_IGNORE_DUPS HIST_IGNORE_SPACE SHARE_HISTORY
 
-# prompt styling
 export CLICOLOR=1
 export LS_COLORS='di=34:ln=1;35:so=1;32:pi=1;33:ex=31:bd=34;46:cd=34;43:su=35:sg=35:tw=36:ow=36'
 export GREP_COLORS='mt=1;33:fn=36:ln=32'
 PS1='%F{yellow}%n%f:%F{green}%1~%f %# '
 
-# path management
-export PATH="$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
-export PATH="$HOME/.local/bin:$PATH"
-
-# aliases
 alias ls='ls --color=auto'
-

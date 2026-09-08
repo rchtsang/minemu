@@ -1,0 +1,21 @@
+{
+  "name": "minemu student environment",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "target": "student"
+  },
+  "containerUser": "dev",
+  "remoteUser": "dev",
+  "updateRemoteUserUID": true,
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "workspaceFolder": "/workspace",
+  "mounts": [
+    "source=minemu-opencode-config,target=/home/dev/.config/opencode,type=volume",
+    "source=minemu-opencode-data,target=/home/dev/.local/share/opencode,type=volume"
+  ],
+  "runArgs": [
+    "--add-host=host.docker.internal:host-gateway"
+  ],
+  "postCreateCommand": "/opt/minemu/container/smoke.sh"
+}

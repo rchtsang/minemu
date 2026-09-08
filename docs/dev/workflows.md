@@ -5,21 +5,24 @@
 
 ## Prerequisites
 
-Initialize both SSH-hosted submodules in a fresh checkout:
+Initialize both public HTTPS submodules in a fresh checkout:
 
 ```sh
 git submodule update --init --recursive
 ```
 
-This requires GitHub SSH access. The workspace pins Rust `1.96.0` with the
-minimal rustup profile plus `clippy` and `rustfmt`. Install or select the pinned
-toolchain through `rust-toolchain.toml`.
+The workspace pins Rust `1.96.0` with the minimal rustup profile plus `clippy`
+and `rustfmt`. Install or select the pinned toolchain through
+`rust-toolchain.toml`.
 
 Host development also requires `just`, `zsh`, GNU Make, native C/C++ build
 tools, CMake, pkg-config, Clang/libclang, GLib development files, and the GNU Arm
 Embedded tools (`arm-none-eabi-gcc`, `ar`, `objcopy`, `readelf`, and `nm`). The
-repository `container/Dockerfile` records the Debian package set, but no student
-container image is currently released.
+repository `container/Dockerfile` records the complete build package set and
+produces the smaller student runtime image. See
+[`container/README.md`](../../container/README.md) for local image and Dev
+Container workflows. Course documentation must pin a tested image digest rather
+than assuming that an unpublished or moving tag exists.
 
 Guest Makefiles use `ARM_PREFIX=arm-none-eabi-` by default. Override it when the
 toolchain uses another prefix. Root Just recipes use `CARGO=cargo` by default;
@@ -98,6 +101,13 @@ fmt -> check -> lint -> test -> docs -> template -> conformance
 It checks Rust formatting and all targets, denies Clippy warnings, runs all Rust
 tests, smoke-tests CLI help, verifies/packages the template, and runs baseline
 plus focused guest conformance. It does not build or run Docker automatically.
+
+Container validation remains an explicit maintainer workflow:
+
+```sh
+just --justfile container/justfile smoke
+just --justfile container/justfile ci
+```
 
 ## Cleaning
 

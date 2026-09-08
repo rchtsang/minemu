@@ -1,42 +1,56 @@
 set shell := ["zsh", "-eu", "-o", "pipefail", "-c"]
 
 workspace := parent_directory(justfile_directory())
-context := justfile_directory()
 dockerfile := justfile_directory() / "Dockerfile"
-image := "minemu-dev"
+docker := env_var_or_default("DOCKER", "docker")
+image := env_var_or_default("IMAGE", "minemu-dev:local")
+dev_uid := `uid="$(id -u)"; if [ "$uid" -eq 0 ]; then printf 1000; else printf %s "$uid"; fi`
 
-# build docker image
+# Build the lightweight student image.
 build:
-  sudo docker build \
-    --file "{{ dockerfile }}" \
-    --tag "{{ image }}" \
-    "{{ context }}"
+    {{ docker }} build \
+      --file "{{ dockerfile }}" \
+      --target student \
+      --build-arg DEV_UID="{{ dev_uid }}" \
+      --tag "{{ image }}" \
+      "{{ workspace }}"
 
-# rebuild docker image ignore cache
+# Rebuild the student image without cached layers.
 rebuild:
-  sudo docker build \
-    --file "{{ dockerfile }}" \
-    --no-cache \
-    --tag "{{ image }}" \
-    "{{ context }}"
+    {{ docker }} build \
+      --file "{{ dockerfile }}" \
+      --target student \
+      --no-cache \
+      --build-arg DEV_UID="{{ dev_uid }}" \
+      --tag "{{ image }}" \
+      "{{ workspace }}"
 
-# run workspace tests in container
-test:
-  sudo docker run --rm \
-    --volume "{{ workspace }}:/workspace" \
-    --workdir /workspace \
-    "{{ image }}" \
-    just ci
+# Check the installed student tools.
+smoke: build
+    {{ docker }} run --rm "{{ image }}" /opt/minemu/container/smoke.sh
 
-# ssh into container
-shell:
-  sudo docker run --rm \
-    --interactive \
-    --tty \
-    --volume "{{ workspace }}:/workspace" \
-    --workdir /workspace \
-    "{{ image }}"
+# Run the complete repository checks in the heavier CI target.
+ci:
+    {{ docker }} build \
+      --file "{{ dockerfile }}" \
+      --target ci \
+      --build-arg DEV_UID="{{ dev_uid }}" \
+      --tag minemu-ci:local \
+      "{{ workspace }}"
+    {{ docker }} run --rm \
+      --volume "{{ workspace }}:/workspace:Z" \
+      --workdir /workspace \
+      minemu-ci:local
 
-# delete the docker image
+# Open a non-root shell with the repository mounted.
+shell: build
+    {{ docker }} run --rm --interactive --tty \
+      --add-host host.docker.internal:host-gateway \
+      --volume "{{ workspace }}:/workspace:Z" \
+      --workdir /workspace \
+      "{{ image }}"
+
+# Remove locally built images.
 clean:
-  sudo docker image rm "{{ image }}"
+    -{{ docker }} image rm "{{ image }}"
+    -{{ docker }} image rm minemu-ci:local

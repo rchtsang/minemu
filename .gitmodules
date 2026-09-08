@@ -1,6 +1,6 @@
 [submodule "minimum-template"]
 	path = minimum-template
-	url = git@github.com:rchtsang/minimum-template.git
+	url = https://github.com/rchtsang/minimum-template.git
 [submodule "minimum-tests"]
 	path = minimum-tests
-	url = git@github.com:rchtsang/minimum-tests.git
+	url = https://github.com/rchtsang/minimum-tests.git

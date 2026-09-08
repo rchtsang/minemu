@@ -1,176 +1,208 @@
-# Dual Block-Device ABI Plan
+# Multi-Unit Block Controller ABI Plan
 
 ## Goal
 
-Extend `minemu` from one guest-visible block device to two symmetric devices so
-the `minimum` teaching OS can use independent media for persistent files and
-virtual-memory swap:
+Extend the existing guest-visible block controller from one attached medium to
+two selectable media units so the `minimum` teaching OS can use independent
+storage for persistent files and virtual-memory swap:
 
-- BLOCK0 is the general-purpose/filesystem device.
-- BLOCK1 is the dedicated swap device in the assignment environment.
+- Unit 0 is the general-purpose/filesystem disk.
+- Unit 1 is the dedicated swap disk in the assignment environment.
 
-Both devices expose the existing block-register interface and behavior. The
-change must preserve all existing BLOCK0 addresses, register offsets, source
-IDs, CLI behavior, and guest aliases while adding independent BLOCK1 state,
-interrupts, media attachment, persistence, inspection, and tests.
+The controller remains at its existing MMIO base and retains one interrupt
+source, one register bank, and one active request. A new `UNIT` register selects
+the medium for the next command. Requests to either unit serialize through the
+single controller.
+
+The change must preserve all existing register offsets, command behavior, IRQ
+behavior, CLI usage, headless manifests, and guest names for unit 0.
 
 This plan assumes ABI v1 has not been released as an immutable external
 contract. The implementation therefore amends the current v1 documents while
 preserving existing guest behavior. If v1 has external frozen consumers before
-implementation begins, stop and publish the machine/device change as v2
-instead. Do not bump the system-image or boot-info wire-format version: those
-formats do not change.
+implementation begins, stop and publish the device change as v2 instead. Do not
+bump the system-image or boot-info wire-format version; those formats do not
+change.
 
 ## ABI Decisions
 
-### Device Map
+### Controller And Units
 
-| Device | Base PA | Size | IRQ source | Reset priority |
-|---|---:|---:|---:|---:|
-| BLOCK0 | `0x1000_2000` | 4 KiB | `3` | `128` |
-| BLOCK1 | `0x1000_6000` | 4 KiB | `4` | `128` |
+The block controller remains at PA `0x1000_2000` with interrupt source ID `3`.
+No MMIO region or interrupt-controller register moves, and no new interrupt
+source is added.
 
-BLOCK1 occupies the first currently unused MMIO page. Existing RNG, UART, and
-trace addresses do not move. The Unicorn backend already maps the complete
-`0x1000_0000..0x1001_0000` MMIO window, and the supplied bootstrap already
-identity-maps that window, so no physical mapping expansion is required.
-
-Both devices use the existing register layout:
-
-| Offset | Register |
+| Unit | Course use |
 |---:|---|
-| `0x00` | `COMMAND` |
-| `0x04` | `LBA` |
-| `0x08` | `SECTOR_COUNT` |
-| `0x0c` | `PADDR` |
-| `0x10` | `STATUS` |
-| `0x14` | `ERROR` |
-| `0x18` | `ACK` |
-| `0x1c` | `CONTROL` |
+| `0` | General-purpose and filesystem media |
+| `1` | Swap media |
 
-Sector size, command values, status bits, error values, 32-tick completion
-latency, DMA rules, ACK behavior, and write-back persistence semantics remain
-identical.
+The course convention does not change the machine ABI: both units have
+identical raw-sector behavior and guest software may use them for other
+purposes.
 
-### Interrupt Controller
+### Register Layout
 
-- Append BLOCK1 priority at interrupt-controller offset `0x20`.
-- Expand the valid source and enable mask from `0x0f` to `0x1f`.
-- Preserve every existing register offset.
-- Equal-priority arbitration continues to choose the lower source ID, so BLOCK0
-  wins a tie with BLOCK1.
-- BLOCK0 and BLOCK1 interrupt levels assert and deassert independently.
-- `CLAIM` and `EOI` accept source IDs `3` and `4` under the existing rules.
+Append one register to the existing block-controller layout:
 
-### Determinism
+| Offset | Register | Access | Value |
+|---:|---|---|---|
+| `0x00` | `COMMAND` | W | `1` media-to-RAM read, `2` RAM-to-media write |
+| `0x04` | `LBA` | R/W | First 512-byte logical block |
+| `0x08` | `SECTOR_COUNT` | R/W | Transfer length in sectors |
+| `0x0c` | `PADDR` | R/W | First DMA PA |
+| `0x10` | `STATUS` | R | Busy, complete, and error bits |
+| `0x14` | `ERROR` | R | Completion error code |
+| `0x18` | `ACK` | W | Exact value `1` clears complete and error |
+| `0x1c` | `CONTROL` | R/W | Completion IRQ enable |
+| `0x20` | `UNIT` | R/W | Medium selected for the next command |
 
-If both block requests complete at the same virtual tick, process BLOCK0 before
-BLOCK1. This order is guest-visible when transfers use overlapping RAM and must
-be normative and tested.
+Reset sets `UNIT` to zero.
+
+A `COMMAND` write while idle snapshots `UNIT` together with `COMMAND`, `LBA`,
+`SECTOR_COUNT`, and `PADDR`. Later writes to the staging registers, including
+`UNIT`, do not change the active request.
+
+Only one request may be active across both units. A command written while Busy
+retains the existing Busy-error behavior regardless of the staged or active
+unit.
+
+Sector size, command values, status bits, 32-tick completion latency, DMA rules,
+ACK behavior, control behavior, and write-back persistence semantics otherwise
+remain unchanged.
+
+### Unit Errors
+
+Add block error code `7`, Invalid Unit. A command that snapshots a unit other
+than `0` or `1` completes after the normal 32-tick latency with Complete, Error,
+and Invalid Unit set. A valid unit without attached media completes with the
+existing No Media error.
+
+Keeping invalid-unit handling in the command state machine makes success and
+failure timing identical and avoids turning ordinary device selection errors
+into MMIO access faults.
+
+### Interrupts And Serialization
+
+- Both units share interrupt source ID `3` and the existing block priority.
+- The interrupt controller remains unchanged with source mask `0x0f`.
+- `STATUS`, `ERROR`, `ACK`, and `CONTROL` are controller-wide.
+- Completion from either unit asserts the shared interrupt according to the
+  existing `Complete AND irq_enable` rule.
+- Software identifies the completed operation from its own serialized request
+  state; no completion-unit register is needed because only one request can be
+  active.
+- A driver must serialize callers across both units until the active request is
+  acknowledged.
+
+Because there is only one active request, simultaneous or same-tick completion
+ordering between units is not part of the ABI.
 
 ### Media And Persistence
 
-- Each device has an independent optional raw-media path and in-memory
-  write-back copy.
-- Reject attaching the same canonical host path to both devices.
+- Each unit has an independent optional raw-media path and in-memory write-back
+  copy.
+- Dirty sectors are tracked per unit.
+- Reject attaching the same canonical host path to both units.
 - Flush both dirty media at every existing pause, reset, shutdown, and terminal
   failure boundary.
 - Attempt both flushes even when one fails.
 - Preserve dirty tracking independently after each failed flush.
-- Report flush errors with the block-device identity. If both fail, return the
-  BLOCK0 error first after both attempts have completed.
-- Reset preserves both attached media while resetting both devices' command,
-  status, error, deadline, and interrupt state.
+- Report flush errors with the unit identity. If both fail, report unit 0 first
+  after both attempts have completed.
+- Reset preserves both attached media while resetting controller registers,
+  active request, deadline, completion state, and IRQ state.
 
-### Compatibility Names
+### Compatibility
 
-Guest C compatibility is concrete because the current template and tests use
-the singular names. Preserve these aliases:
+Existing binaries never access offset `0x20`, so they continue selecting unit 0
+after reset. Existing guest names remain unchanged:
 
-- `MINEMU_BLOCK_BASE` aliases `MINEMU_BLOCK0_BASE`.
-- `MINEMU_BLOCK` aliases `MINEMU_BLOCK0`.
-- `MINEMU_IRQ_BLOCK` aliases `MINEMU_IRQ_BLOCK0`.
-- The existing BLOCK priority field remains at offset `0x1c` and represents
-  BLOCK0.
+- `MINEMU_BLOCK_BASE`
+- `MINEMU_BLOCK`
+- `MINEMU_IRQ_BLOCK`
 
-New guest names are `MINEMU_BLOCK0`, `MINEMU_BLOCK1`,
-`MINEMU_IRQ_BLOCK0`, and `MINEMU_IRQ_BLOCK1`.
+Add these guest constants:
 
-Preserve `--block-media`/`-m` as a CLI alias for BLOCK0. Add explicit
-`--block0-media` and `--block1-media` spellings. The legacy and explicit BLOCK0
+- `MINEMU_BLOCK_UNIT_FILESYSTEM = 0`
+- `MINEMU_BLOCK_UNIT_SWAP = 1`
+- `MINEMU_BLOCK_ERROR_INVALID_UNIT = 7`
+
+The course-oriented names are aliases for numeric units, not separate hardware
+types.
+
+Preserve `--block-media`/`-m` as the CLI spelling for unit 0. Add explicit
+`--block0-media` and `--block1-media` spellings. The legacy and explicit unit-0
 spellings must not be accepted together in one invocation.
 
-Headless manifests preserve `block_media` as a BLOCK0 alias and add
+Headless manifests preserve `block_media` as a unit-0 alias and add
 `block0_media` and `block1_media`. Existing block-media assertions default to
-BLOCK0; add an explicit device selector for BLOCK1 assertions.
-
-Internal Rust names should be corrected from the misleading singular `Dma` and
-`Block` names to explicit block identities. Compatibility wrappers are not
-required for workspace-internal APIs unless implementation discovers an actual
-external consumer.
+unit 0; add a unit selector for assertions against unit 1.
 
 ## Phase 1: Platform Definitions
 
-- Add BLOCK0 and BLOCK1 identities to the physical memory map.
-- Decode each MMIO page to a distinct target while reusing the shared block
-  register enum.
-- Add interrupt source `Block1 = 4` and explicit BLOCK0 naming for source `3`.
-- Add the BLOCK1 priority register at `0x20`.
-- Replace hard-coded source counts and masks with shared constants.
-- Expand interrupt priority inspection from four to five entries.
-- Replace singular block inspection with two independently identified
-  snapshots.
+- Add `UNIT` at block-controller offset `0x20`.
+- Add unit constants and Invalid Unit error code `7`.
+- Extend block register decoding and access validation.
+- Extend block inspection with the staged unit and per-unit attachment/dirty
+  state.
+- Keep the physical map and interrupt definitions unchanged.
 - Update stable peripheral constant and MMIO decode tests.
 
 Primary files:
 
-- `crates/minemu-platform/src/mmap.rs`
-- `crates/minemu-platform/src/mmio.rs`
-- `crates/minemu-platform/src/peripherals/interrupt.rs`
 - `crates/minemu-platform/src/peripherals/block.rs`
+- `crates/minemu-platform/src/mmio.rs`
 - `crates/minemu-platform/src/observability.rs`
 - `crates/minemu-platform/tests/abi.rs`
 
-## Phase 2: Core Machine
+Required focused tests:
 
-- Make each `BlockDevice` instance carry its interrupt source identity.
-- Instantiate BLOCK0 and BLOCK1 with independent media, registers, active
-  commands, deadlines, dirty sectors, and IRQ state.
-- Route MMIO transactions by block identity.
-- Advance both devices and impose BLOCK0-before-BLOCK1 ordering at equal
-  deadlines.
-- Expand interrupt-controller storage and claim arbitration to five sources.
+- Offset `0x20` decodes as the UNIT register.
+- Offset `0x24` remains invalid.
+- Reset inspection selects unit 0.
+- Existing offsets and constants retain their values.
+
+## Phase 2: Core Controller
+
+- Store two independent optional media images and dirty-sector sets in the
+  existing `BlockDevice`.
+- Add a staged unit register to the controller.
+- Snapshot the staged unit into each active request.
+- Route completion against the snapshotted unit.
+- Return Invalid Unit at the scheduled completion deadline.
+- Return No Media for a valid unattached unit.
+- Keep one active request and one completion/IRQ state for the controller.
+- Expose per-unit attach, detach, clone, flush, and inspection operations.
 - Preserve both media in machine reset clones.
-- Include both block statuses and inspections in machine snapshots.
-- Qualify block media and flush errors with device identity.
+- Qualify media and flush errors with unit identity.
 
 Primary files:
 
 - `crates/minemu-core/src/block.rs`
 - `crates/minemu-core/src/bus.rs`
-- `crates/minemu-core/src/interrupt.rs`
 - `crates/minemu-core/src/machine.rs`
 - `crates/minemu-core/src/error.rs`
 
 Required focused tests:
 
-- Register state is independent between BLOCK0 and BLOCK1.
-- Both devices can have active requests concurrently.
-- Same-tick completion follows device-index order.
-- Source IDs 3 and 4 assert, claim, ACK, and EOI independently.
-- Equal priorities choose source 3 first.
-- Both in-memory media survive reset.
+- Reads and writes target the selected unit only.
+- Changing UNIT while Busy does not redirect the active request.
+- A second command while Busy is rejected across unit boundaries.
+- Invalid units fail at the normal deadline with error code `7`.
+- Valid unattached units report No Media.
+- Dirty tracking and media bytes remain independent.
+- Both in-memory media survive reset while UNIT returns to zero.
 
 ## Phase 3: Runtime Persistence
 
 - Represent two optional media paths in runtime configuration.
 - Attach and initialize each configured medium independently.
-- Flush both devices at every existing lifecycle boundary.
-- Attempt the second flush after the first fails.
-- Preserve each device's dirty state after its own flush failure.
+- Flush both units at every existing lifecycle boundary.
+- Attempt unit 1 after a unit-0 flush failure.
+- Preserve each unit's dirty state after its own flush failure.
 - Reject duplicate canonical paths.
-- Extend runtime status and inspection responses without duplicating control
-  flow for each device.
+- Extend runtime status and inspection without duplicating the controller.
 
 Primary files:
 
@@ -181,21 +213,21 @@ Primary files:
 Required focused tests:
 
 - Both media flush on pause, reset, shutdown, and terminal failure.
-- A failure on either device identifies that device.
+- A failure on either unit identifies that unit.
 - One failed flush does not prevent the other from being attempted.
-- Reset reconstructs both attachments and clears transient device state.
+- Reset reconstructs both attachments and clears transient controller state.
 - Duplicate host paths are rejected.
 
 ## Phase 4: CLI And Headless Tests
 
-- Add explicit BLOCK0 and BLOCK1 run options while retaining the legacy BLOCK0
+- Add explicit unit-0 and unit-1 run options while retaining the legacy unit-0
   spelling.
-- Reject conflicting legacy and explicit BLOCK0 arguments.
+- Reject conflicting legacy and explicit unit-0 arguments.
 - Add strict headless-manifest fields for both media.
-- Keep old manifests valid through the BLOCK0 alias.
-- Add a device selector to persisted-media assertions, defaulting to BLOCK0.
+- Keep old manifests valid through the unit-0 alias.
+- Add a unit selector to persisted-media assertions, defaulting to unit 0.
 - Resolve and validate both paths relative to the manifest.
-- Ensure diagnostics identify the selected device and path.
+- Ensure diagnostics identify the selected unit and path.
 
 Primary files:
 
@@ -205,22 +237,22 @@ Primary files:
 
 Required focused tests:
 
-- Legacy CLI and TOML spellings still select BLOCK0.
-- Explicit BLOCK0 and BLOCK1 paths can be supplied together.
-- Conflicting BLOCK0 spellings fail clearly.
-- Assertions read the requested device's persisted medium.
-- Unknown fields and invalid device selectors remain rejected.
+- Legacy CLI and TOML spellings still select unit 0.
+- Explicit unit-0 and unit-1 paths can be supplied together.
+- Conflicting unit-0 spellings fail clearly.
+- Assertions read the requested unit's persisted medium.
+- Unknown fields and invalid assertion unit selectors remain rejected.
 
 ## Phase 5: TUI And Backend Integration
 
 - Pass both media paths through TUI startup and runtime construction.
-- Render BLOCK0 and BLOCK1 state separately in peripheral inspection.
-- Show all five interrupt priorities.
-- Label claimed sources 3 and 4 distinctly.
-- Add BLOCK1 formatting and source-name tests.
-- Add Unicorn integration tests for MMIO access at `0x1000_6000`, BLOCK1 IRQ
-  delivery, and invalid access to a still-reserved neighboring MMIO page.
-- Verify virtual-memory inspection rejects both block pages as devices.
+- Render the shared controller registers once.
+- Render attachment and dirty-sector state for units 0 and 1 separately.
+- Label the staged UNIT value and active request unit when Busy.
+- Add formatting tests for both media states.
+- Add Unicorn integration tests for UNIT MMIO read/write and command snapshot
+  behavior.
+- Verify inspection still treats the controller page as one device page.
 
 Primary files:
 
@@ -229,65 +261,71 @@ Primary files:
 - `crates/minemu/src/tui/widgets/secondary.rs`
 - `crates/minemu-unicorn/src/backend.rs`
 
-## Phase 6: Guest Headers And Examples
+## Phase 6: Guest Headers And Supplied Driver
 
 Apply synchronized ABI definitions to `minimum-template`, `minimum-tests`, and
 the active `minimum-rtsang` course repository:
 
-- Add `MINEMU_BLOCK0_BASE`, `MINEMU_BLOCK1_BASE`, and compatibility aliases.
-- Add BLOCK0/BLOCK1 MMIO pointers and IRQ source constants.
-- Change `MINEMU_IRQ_ENABLE_MASK` to `0x1f`.
-- Add BLOCK1 reset-priority constants.
-- Append `priority_block1` to `struct minemu_interrupt_regs`.
-- Update its size assertion from 32 to 36 bytes while preserving old field
-  offsets.
-- Keep one shared `struct minemu_block_regs`.
-- Update IRQ and MMIO examples to identify both devices where relevant.
+- Append `unit` to `struct minemu_block_regs` at offset `0x20`.
+- Update its size assertion from 32 to 36 bytes while preserving every existing
+  field offset.
+- Add filesystem-unit, swap-unit, and Invalid Unit constants.
+- Keep all existing block base, pointer, and IRQ names unchanged.
+- Do not change the interrupt-controller struct or constants.
 
-The supplied course block layer should provide one common synchronous API over
-both devices. Assignment 6 uses BLOCK1 for swap; Assignment 7 uses BLOCK0 for
-the filesystem. Students do not implement the low-level device driver.
+Add an instructor-supplied synchronous block layer that:
+
+- Accepts a unit, LBA, sector count, and physical DMA address.
+- Serializes all operations through the one controller.
+- Waits for completion and validates controller status.
+- Acknowledges completion before releasing the controller.
+- Returns course-defined errors without hiding Invalid Unit, No Media, DMA, or
+  LBA failures.
+
+Assignment 6 uses unit 1 for swap. Assignment 7 uses unit 0 for the filesystem.
+Students do not implement the low-level controller driver.
 
 ## Phase 7: Conformance
 
 Extend the block fixture to attach two disposable media images and verify:
 
-- Independent read, write, busy, error, ACK, and control state.
+- Independent reads, writes, contents, and dirty tracking.
+- UNIT readback and reset value.
+- UNIT snapshot behavior while a command is active.
+- Controller-wide Busy serialization across units.
+- Invalid Unit and valid-unattached-unit errors at the scheduled deadline.
+- Shared IRQ completion, ACK, and EOI behavior for both units.
 - Independent persistence and reset behavior.
-- BLOCK0 and BLOCK1 DMA success and failure paths.
-- Source IDs 3 and 4 and the appended priority register.
-- Equal-priority arbitration.
-- Concurrent requests and same-tick completion ordering.
 - Persisted-media assertions against both host files.
 
-Extend interrupt conformance to prove enable bit 4, priority offset `0x20`,
-claim/EOI source 4, and unchanged ordering for existing sources.
+The interrupt-controller conformance fixture should remain unchanged except for
+any terminology updates; no source, mask, priority, or register is added.
 
 Primary areas:
 
 - `minimum-tests/headless/block/`
-- `minimum-tests/headless/interrupts/`
 - `minimum-tests/docs/conformance-authoring.md`
 - `minimum-tests/README.md`
 
 ## Phase 8: Documentation
 
-Update all normative and informative references from a singular block device to
-BLOCK0/BLOCK1 where cardinality matters:
+Update normative and informative block documentation where media cardinality or
+the register layout matters:
 
-- Amend `docs/platform/abi-v1.md` with the BLOCK1 page.
-- Amend `docs/platform/devices-v1.md` with both instances, source 4, priority
-  offset `0x20`, mask `0x1f`, and deterministic equal-tick order.
-- Update `docs/user/cli.md` for both media flags and compatibility spelling.
+- Keep `docs/platform/abi-v1.md` physical-map and interrupt sections unchanged.
+- Amend `docs/platform/devices-v1.md` with UNIT offset `0x20`, two supported
+  units, Invalid Unit error `7`, command snapshot behavior, and controller-wide
+  serialization.
+- Update `docs/user/cli.md` for two media paths and the compatibility spelling.
 - Update `docs/dev/headless-testing.md` for dual media and assertion selection.
 - Update architecture and persistence descriptions.
 - Update the ABI conformance matrix with all new evidence.
-- Update guest and assignment documentation to reserve BLOCK1 for swap and
-  BLOCK0 for files in the course environment.
+- Update guest and assignment documentation to reserve unit 1 for swap and unit
+  0 for files in the course environment.
 
 ## Validation
 
-Run verification in each repository after synchronizing the guest artifacts:
+Run verification in each repository after synchronizing guest artifacts:
 
 ```sh
 cargo fmt --all -- --check
@@ -300,21 +338,22 @@ just ci
 git diff --check
 ```
 
-Do not run Docker automatically. Manually verify the TUI shows both devices and
-that two distinct host media files can be attached, modified, paused, reset, and
-shut down without cross-device state or persistence leakage.
+Do not run Docker automatically. Manually verify the TUI displays the shared
+controller and both units, and that two distinct host media files can be
+attached, modified, paused, reset, and shut down without cross-unit state or
+persistence leakage.
 
 ## Completion Criteria
 
-- Existing BLOCK0 guests, CLI invocations, and headless manifests retain their
+- Existing unit-0 guests, CLI invocations, and headless manifests retain their
   behavior.
-- BLOCK1 has independent MMIO state, media, timing, IRQ, persistence, and
-  inspection.
-- No old MMIO address or interrupt-controller offset moves.
-- Both simultaneous and same-tick block operations are deterministic.
+- UNIT resets to zero and is snapshotted when a command begins.
+- Units 0 and 1 have independent media contents and dirty tracking.
+- The controller permits only one active request across both units.
+- No MMIO address, existing register offset, or interrupt definition moves.
 - Both media are flushed at every documented lifecycle boundary.
 - Guest headers agree across all three teaching/conformance repositories.
 - Normative constants agree with Rust implementation and conformance fixtures.
-- Assignment 6 can use BLOCK1 exclusively for swap through supplied code.
-- Assignment 7 can use BLOCK0 exclusively for its inode filesystem.
+- Assignment 6 can use unit 1 exclusively for swap through supplied code.
+- Assignment 7 can use unit 0 exclusively for its inode filesystem.
 - Full workspace, template, and conformance CI passes.

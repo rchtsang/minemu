@@ -242,6 +242,7 @@ impl Emulator {
             uart_capacity: 0,
             block_media_path: self.block_media_path.clone(),
             initial_ram_writes: self.initial_ram_writes.clone(),
+            start_paused: false,
             execution_deadline: None,
             scheduled_uart: Vec::new(),
         };
@@ -383,7 +384,11 @@ impl Service {
                 return;
             }
         };
-        let mut lifecycle = LifecycleState::Running;
+        let mut lifecycle = if self.config.start_paused {
+            LifecycleState::Paused
+        } else {
+            LifecycleState::Running
+        };
         let mut last_publish = Instant::now();
         info!(
             lifecycle = ?lifecycle,

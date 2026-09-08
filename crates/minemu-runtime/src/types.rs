@@ -101,6 +101,7 @@ pub struct RuntimeConfig {
     pub uart_capacity: usize,
     pub block_media_path: Option<PathBuf>,
     pub initial_ram_writes: Vec<(PhysicalAddress, Vec<u8>)>,
+    pub start_paused: bool,
     pub execution_deadline: Option<u64>,
     pub scheduled_uart: Vec<ScheduledUartInput>,
 }
@@ -117,6 +118,7 @@ impl RuntimeConfig {
             uart_capacity: 4096,
             block_media_path: None,
             initial_ram_writes: Vec::new(),
+            start_paused: false,
             execution_deadline: None,
             scheduled_uart: Vec::new(),
         }

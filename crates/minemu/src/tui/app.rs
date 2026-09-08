@@ -49,10 +49,6 @@ impl App {
     pub fn start(image: PathBuf, boot_rom: PathBuf, block_media: Option<PathBuf>) -> Result<Self> {
         let handle = start_runtime(&image, &boot_rom, block_media, None)?;
         let mut runtime = RuntimeController::new(handle);
-        runtime.pause().map_err(|error| {
-            error!(error = %error, "failed to request initial TUI pause");
-            CliError::RuntimeSetup
-        })?;
         for _ in 0..500 {
             runtime.refresh_status();
             if runtime.status().lifecycle == LifecycleState::Paused {

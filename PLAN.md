@@ -523,17 +523,17 @@ the supplied guest runtime.
 
 ### Phase 5. Split CLI Use From Test Authoring
 
-- [ ] Rewrite the generated CLI descriptions so `run` is TUI-first and
+- [x] Rewrite the generated CLI descriptions so `run` is TUI-first and
   `--headless` is explicit.
-- [ ] Document that `--ticks` has no effect in TUI mode, or change the CLI to
+- [x] Document that `--ticks` has no effect in TUI mode, or change the CLI to
   reject that combination.
-- [ ] Document manifest-relative paths separately from process-relative CLI
+- [x] Document manifest-relative paths separately from process-relative CLI
   paths.
-- [ ] Document buffered UART output, limits, and exit behavior.
-- [ ] Create the complete headless-test schema reference.
-- [ ] Document all assertion fields, defaults, exact comparison rules, and
+- [x] Document buffered UART output, limits, and exit behavior.
+- [x] Create the complete headless-test schema reference.
+- [x] Document all assertion fields, defaults, exact comparison rules, and
   block-media post-shutdown assertions.
-- [ ] Apply decisions D7 through D10 to timing, lifecycle, and validation prose.
+- [x] Apply decisions D7 through D10 to timing, lifecycle, and validation prose.
 
 Exit criterion: `docs/user/cli.md`, generated `--help`, and actual CLI behavior
 agree, while conformance-only setup is absent from student instructions.

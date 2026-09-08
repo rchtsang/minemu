@@ -30,6 +30,14 @@ pub struct RunOptions {
     pub inputs: Vec<HeadlessInput>,
 }
 
+enum RuntimeStart<'a> {
+    Paused,
+    RunningUntil {
+        deadline: u64,
+        inputs: &'a [HeadlessInput],
+    },
+}
+
 /// One UART byte sequence injected once virtual time reaches `at_tick`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,8 +135,10 @@ fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Re
         options.block_media_path,
         options.instruction_batch,
         ram_prefill,
-        Some(options.max_ticks),
-        &options.inputs,
+        RuntimeStart::RunningUntil {
+            deadline: options.max_ticks,
+            inputs: &options.inputs,
+        },
     )?;
 
     loop {
@@ -200,8 +210,7 @@ pub(crate) fn start_runtime(
         block_media_path,
         instruction_batch,
         &[],
-        None,
-        &[],
+        RuntimeStart::Paused,
     )
 }
 
@@ -211,8 +220,7 @@ fn start_runtime_with_prefill(
     block_media_path: Option<PathBuf>,
     instruction_batch: Option<NonZeroUsize>,
     ram_prefill: &[RamPrefill],
-    execution_deadline: Option<u64>,
-    inputs: &[HeadlessInput],
+    start: RuntimeStart<'_>,
 ) -> Result<RuntimeHandle> {
     let image = minemu_image::SystemImage::parse(&read(image_path)?)?;
     let boot_rom = read(boot_rom_path)?;
@@ -223,7 +231,11 @@ fn start_runtime_with_prefill(
             actual: boot_rom.len(),
         });
     }
-    let config = runtime_config(
+    let (execution_deadline, inputs, start_paused) = match start {
+        RuntimeStart::Paused => (None, &[][..], true),
+        RuntimeStart::RunningUntil { deadline, inputs } => (Some(deadline), inputs, false),
+    };
+    let mut config = runtime_config(
         &boot_rom,
         &image,
         block_media_path,
@@ -232,6 +244,7 @@ fn start_runtime_with_prefill(
         execution_deadline,
         inputs,
     )?;
+    config.start_paused = start_paused;
     RuntimeHandle::spawn(config).map_err(|_| CliError::RuntimeSetup)
 }
 

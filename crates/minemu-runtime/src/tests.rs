@@ -47,6 +47,23 @@ fn lifecycle_commands_run_on_the_emulator_thread() {
 }
 
 #[test]
+fn configured_runtime_starts_paused_before_execution() {
+    let mut machine = Machine::default();
+    let entry = MemRegion::Ram.base().get();
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(entry), &[0xfe, 0xff, 0xff, 0xea])
+        .unwrap();
+    let mut config = RuntimeConfig::new(machine, entry);
+    config.start_paused = true;
+    let runtime = RuntimeHandle::spawn(config).unwrap();
+
+    wait_for(&runtime, LifecycleState::Paused);
+    assert_eq!(runtime.status().machine.ticks, 0);
+    runtime.shutdown().unwrap();
+}
+
+#[test]
 fn bounded_resume_executes_exact_instruction_count_and_pauses() {
     let runtime = running_runtime();
     wait_for(&runtime, LifecycleState::Running);

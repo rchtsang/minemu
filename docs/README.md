@@ -9,7 +9,7 @@ the [project overview](../README.md) for the relationship among the repositories
 | Audience | Start here | Continue with |
 |---|---|---|
 | Students | [`minimum-template` quickstart](../minimum-template/README.md) | [TUI guide](dev/tui.md), [platform ABI v1](platform/abi-v1.md) |
-| Emulator users | [CLI and headless usage](dev/cli.md) | [TUI guide](dev/tui.md) |
+| Emulator users | [Command-line interface](user/cli.md) | [TUI guide](dev/tui.md) |
 | Conformance authors | [`minimum-tests` overview](../minimum-tests/README.md) | [ABI conformance matrix](dev/abi-conformance.md), [versioned specifications](#normative-platform-specifications) |
 | Emulator contributors | [Design](dev/design.md) | [TUI architecture](dev/tui-architecture.md), [ABI conformance matrix](dev/abi-conformance.md) |
 
@@ -39,7 +39,8 @@ contract. Every other guide is informative and defers to those specifications.
 | [Template memory layout](student/template-memory-layout.md) | **Informative** | Supplied bootstrap tables, mappings, and stack policy |
 | [Supplied kernel runtime](student/kernel-runtime.md) | **Informative** | Supplied vector stubs, trap frame, and IRQ flow |
 | [Module format and loading](student/module-format-and-loading.md) | **Informative** | Kernel policy for packaged fixed-VA modules |
-| [CLI and headless tests](dev/cli.md) | **Informative** | Image packaging, interactive/headless execution, and test manifests |
+| [Command-line interface](user/cli.md) | **Informative** | Image packaging, interactive and headless runs, paths, output, and exit behavior |
+| [Headless testing](dev/headless-testing.md) | **Informative** | Complete test-manifest schema, timing, assertions, and failure behavior |
 | [TUI](dev/tui.md) | **Informative** | Terminal UI views, controls, commands, and inspection behavior |
 | [Design](dev/design.md) | **Informative** | Emulator goals, components, and architectural decisions |
 | [TUI architecture](dev/tui-architecture.md) | **Informative** | Controller, widget, event, and inspection implementation |

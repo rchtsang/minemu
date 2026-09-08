@@ -12,7 +12,7 @@ use tracing_subscriber::EnvFilter;
 #[command(
     name = "minemu",
     about = "Package, boot, and test A32 teaching-platform images.",
-    long_about = "Package independently linked A32 kernel and user ELFs into a system image, then boot it headlessly through the same deterministic runtime used by tests.",
+    long_about = "Package independently linked A32 kernel and user ELFs into a system image, boot it in an interactive terminal UI, or run it headlessly through the deterministic test runtime.",
     after_help = "Examples:\n  minemu image minimum-template/image/minimum.toml --output minimum-template/image/build/minimum.img\n  minemu run minimum-template/image/build/minimum.img --boot-rom minimum-template/bootloader/bootloader.bin\n  minemu test minimum-tests/image/minimum-test.toml"
 )]
 struct Cli {
@@ -34,7 +34,7 @@ enum Command {
         #[arg(short, long, value_name = "IMAGE")]
         output: PathBuf,
     },
-    /// Boot a system image headlessly for a bounded virtual-time budget.
+    /// Boot a system image in the terminal UI, or run it headlessly.
     Run {
         /// Versioned system-ROM image produced by `minemu image`.
         #[arg(value_name = "IMAGE")]
@@ -45,10 +45,10 @@ enum Command {
         /// Optional host raw-disk file attached as write-back block media.
         #[arg(short = 'm', long)]
         block_media: Option<PathBuf>,
-        /// Maximum completed virtual instruction ticks before stopping.
-        #[arg(short = 't', long, default_value_t = 100_000)]
-        ticks: u64,
-        /// Run without the terminal UI and stop after `--ticks`.
+        /// Headless virtual-time deadline (default: 100000).
+        #[arg(short = 't', long, requires = "headless")]
+        ticks: Option<u64>,
+        /// Run without the terminal UI and stop at the tick deadline.
         #[arg(long)]
         headless: bool,
     },
@@ -116,7 +116,7 @@ fn execute(command: Command) -> minemu::Result<()> {
                 boot_rom,
                 block_media_path: block_media,
                 instruction_batch: None,
-                max_ticks: ticks,
+                max_ticks: ticks.unwrap_or(100_000),
                 inputs: Vec::new(),
             })?;
             print!("{}", String::from_utf8_lossy(&result.uart0_output));
@@ -134,5 +134,56 @@ fn execute(command: Command) -> minemu::Result<()> {
             run_headless(manifest)?;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::Cli;
+
+    #[test]
+    fn generated_help_describes_tui_first_run_mode() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("boot it in an interactive terminal UI"));
+
+        let run = Cli::command()
+            .find_subcommand("run")
+            .expect("run subcommand")
+            .clone()
+            .render_long_help()
+            .to_string();
+        assert!(run.contains("Boot a system image in the terminal UI"));
+        assert!(run.contains("Headless virtual-time deadline"));
+    }
+
+    #[test]
+    fn ticks_requires_explicit_headless_mode() {
+        assert!(
+            Cli::try_parse_from([
+                "minemu",
+                "run",
+                "image.bin",
+                "--boot-rom",
+                "boot.bin",
+                "--ticks",
+                "1",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "minemu",
+                "run",
+                "image.bin",
+                "--boot-rom",
+                "boot.bin",
+                "--headless",
+                "--ticks",
+                "1",
+            ])
+            .is_ok()
+        );
     }
 }

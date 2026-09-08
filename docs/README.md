@@ -10,8 +10,8 @@ the [project overview](../README.md) for the relationship among the repositories
 |---|---|---|
 | Students | [`minimum-template` quickstart](../minimum-template/README.md) | [TUI guide](dev/tui.md), [platform ABI v1](platform/abi-v1.md) |
 | Emulator users | [Command-line interface](user/cli.md) | [TUI guide](dev/tui.md) |
-| Conformance authors | [`minimum-tests` overview](../minimum-tests/README.md) | [ABI conformance matrix](dev/abi-conformance.md), [versioned specifications](#normative-platform-specifications) |
-| Emulator contributors | [Design](dev/design.md) | [TUI architecture](dev/tui-architecture.md), [ABI conformance matrix](dev/abi-conformance.md) |
+| Conformance authors | [`minimum-tests` overview](../minimum-tests/README.md) | [Conformance authoring](../minimum-tests/docs/conformance-authoring.md), [ABI matrix](dev/abi-conformance.md), [versioned specifications](#normative-platform-specifications) |
+| Emulator contributors | [Architecture](dev/architecture.md) | [Development workflows](dev/workflows.md), [TUI architecture](dev/tui-architecture.md), [ABI conformance matrix](dev/abi-conformance.md) |
 
 ## Document Status
 
@@ -42,7 +42,8 @@ contract. Every other guide is informative and defers to those specifications.
 | [Command-line interface](user/cli.md) | **Informative** | Image packaging, interactive and headless runs, paths, output, and exit behavior |
 | [Headless testing](dev/headless-testing.md) | **Informative** | Complete test-manifest schema, timing, assertions, and failure behavior |
 | [TUI](dev/tui.md) | **Informative** | Terminal UI views, controls, commands, and inspection behavior |
-| [Design](dev/design.md) | **Informative** | Emulator goals, components, and architectural decisions |
+| [Architecture](dev/architecture.md) | **Informative** | Implemented crate boundaries, ownership, execution, runtime, inspection, and persistence |
+| [Development workflows](dev/workflows.md) | **Informative** | Exact Rust, template, conformance, CI, and clean commands |
 | [TUI architecture](dev/tui-architecture.md) | **Informative** | Controller, widget, event, and inspection implementation |
 | [ABI conformance matrix](dev/abi-conformance.md) | **Informative** | Mapping from platform requirements to test evidence |
 | [Feasibility spike results](dev/spike-results.md) | **Informative, historical** | Early prototype findings; not a current implementation contract |

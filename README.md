@@ -26,7 +26,7 @@ git submodule update --init --recursive
 | Students using the starter | [Template quickstart](minimum-template/README.md), [TUI guide](docs/dev/tui.md), and [platform ABI v1](docs/platform/abi-v1.md) |
 | Emulator users | [Command-line interface](docs/user/cli.md) and [TUI guide](docs/dev/tui.md) |
 | Conformance authors | [Conformance matrix](docs/dev/abi-conformance.md) and [minimum-tests](minimum-tests/README.md) |
-| Emulator contributors | [Design](docs/dev/design.md), [TUI architecture](docs/dev/tui-architecture.md), and [documentation index](docs/README.md) |
+| Emulator contributors | [Architecture](docs/dev/architecture.md), [development workflows](docs/dev/workflows.md), and [documentation index](docs/README.md) |
 
 The [documentation index](docs/README.md) identifies which documents are
 normative platform contracts and which are informative guides.

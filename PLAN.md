@@ -540,16 +540,16 @@ agree, while conformance-only setup is absent from student instructions.
 
 ### Phase 6. Document Development And Conformance Workflows
 
-- [ ] Rewrite `docs/dev/design.md` as present-tense architecture or replace it
+- [x] Rewrite `docs/dev/design.md` as present-tense architecture or replace it
   with `docs/dev/architecture.md`.
-- [ ] Document parent Just recipes and their exact scope.
-- [ ] Rewrite `minimum-tests/README.md` for conformance maintainers.
-- [ ] State that `make test` runs the baseline and all focused cases.
-- [ ] Add `minimum-tests/docs/conformance-authoring.md`.
-- [ ] Document case anatomy, registration in `headless/Makefile`,
+- [x] Document parent Just recipes and their exact scope.
+- [x] Rewrite `minimum-tests/README.md` for conformance maintainers.
+- [x] State that `make test` runs the baseline and all focused cases.
+- [x] Add `minimum-tests/docs/conformance-authoring.md`.
+- [x] Document case anatomy, registration in `headless/Makefile`,
   `MINEMU_REQUIRE`, trace success/failure oracles, tick budgets, scripted input,
   and disposable block-media fixtures.
-- [ ] Split guest ABI evidence from product/runtime/release checks in the
+- [x] Split guest ABI evidence from product/runtime/release checks in the
   conformance matrix.
 
 Exit criterion: an emulator contributor can run CI-equivalent checks and add a

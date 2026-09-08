@@ -148,7 +148,23 @@ unit 0; add a unit selector for assertions against unit 1.
 
 ## Phase 0: Pre-Writing Course Corrections
 
-Complete these corrections before drafting the individual assignments.
+Complete each correction before the first assignment that depends on it becomes
+authoritative. Assignment 1 may release before the eager address-space and
+multi-unit block foundations because it uses neither facility.
+
+### Assignment 1 Release Gate
+
+Before Assignment 1 goes live, the student-facing bootstrap layout must match
+the supplied starter, and the Assignment 1 handout, kernel-runtime guide,
+starter IRQ ownership, frozen platform/trap/IRQ headers, sparse public tests,
+and development image must agree. Later user-mode, page-allocation, and storage
+foundations do not block this release.
+
+The bootstrap and module-format documentation corrections below are complete.
+Replacing bootstrap literals with allocator-facing linker symbols and adding
+the eager address-space implementation remain Assignment 2 prerequisites. The
+multi-unit block foundation and all subsequent block-device phases remain
+deferred for Assignments 6 and 7.
 
 ### Bootstrap Workspace
 
@@ -162,15 +178,15 @@ workspace:
 | `[0x4001_2000, 0x4002_2000)` | Sixteen RAM direct-map tables |
 | `[0x4002_2000, 0x4002_3000)` | Supervisor MMIO table |
 
-`docs/student/template-memory-layout.md` still describes older addresses and
-claims sixteen direct-map tables in a range that contains only four pages.
-Update the informative document to the implemented layout.
+`docs/student/template-memory-layout.md` now records the implemented layout and
+the full sixteen-table direct-map range.
 
-In `minimum-template`, replace duplicated bootstrap workspace literals with
-named linker symbols or shared assembly constants where practical. Export the
-complete reserved range to the supplied memory-management foundation so a
-student allocator cannot hand page-table frames to user processes. Apply the
-same bootstrap artifact changes to `minimum-tests` and `minimum-rtsang`.
+Before Assignment 2, replace duplicated bootstrap workspace literals in
+`minimum-template` with named linker symbols or shared assembly constants where
+practical. Export the complete reserved range to the supplied memory-management
+foundation so a student allocator cannot hand page-table frames to user
+processes. Apply those bootstrap artifact changes to `minimum-tests` and
+`minimum-rtsang`. This implementation work does not block Assignment 1.
 
 Primary files:
 
@@ -181,14 +197,15 @@ Primary files:
 
 ### Module Flags
 
-Correct `docs/student/module-format-and-loading.md`: serialized module-segment
-flags are Readable, Writable, and Executable. There is no serialized User flag.
-The kernel applies `MINEMU_PTE_USER` as address-space policy when mapping a user
-module.
+`docs/student/module-format-and-loading.md` now states that serialized
+module-segment flags are Readable, Writable, and Executable. There is no
+serialized User flag. The kernel applies `MINEMU_PTE_USER` as address-space
+policy when mapping a user module.
 
-Ensure the supplied loader interfaces consume the shared segment flag constants
-from `minemu/boot.h`, derive PTE permissions explicitly, and reject unsupported
-flag combinations rather than treating module flags as raw PTE bits.
+Before Assignment 2, ensure the supplied loader interfaces consume the shared
+segment flag constants from `minemu/boot.h`, derive PTE permissions explicitly,
+and reject unsupported flag combinations rather than treating module flags as
+raw PTE bits.
 
 Primary files:
 

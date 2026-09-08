@@ -7,8 +7,10 @@
 ## Packaged Metadata
 
 Each module has a UTF-8 name, an A32 entry VA, and fixed-VA load segments. Each
-segment supplies initialized bytes, an in-memory size, and writable/user/
-executable flags. No module record assigns a physical address.
+segment supplies initialized bytes, an in-memory size, and readable, writable,
+and executable flags. No module record assigns a physical address or serializes
+user accessibility; the kernel adds `MINEMU_PTE_USER` when its address-space
+policy maps the segment for user execution.
 
 ## Typical Loader
 

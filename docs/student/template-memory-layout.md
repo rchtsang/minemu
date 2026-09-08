@@ -14,10 +14,10 @@ The reference linker script and bootstrap use this physical RAM layout:
 | `[0x4000_6000, 0x4000_7000)` | Firmware stack workspace reserved by the boot ABI |
 | `[0x4000_7000, 0x4000_7040)` | Boot-info record reserved by the boot ABI |
 | `0x4000_8000` | Required physical bootstrap entry |
-| `[0x4000_a000, 0x4000_b000)` | Initial page directory |
-| `[0x4000_b000, 0x4000_c000)` | Identity-map page table |
-| `[0x4000_c000, 0x4000_d000)` | Initial MMIO page table |
-| `[0x4000_d000, 0x4001_1000)` | Sixteen RAM direct-map page tables |
+| `[0x4001_0000, 0x4001_1000)` | Initial page directory |
+| `[0x4001_1000, 0x4001_2000)` | Identity-map page table |
+| `[0x4001_2000, 0x4002_2000)` | Sixteen RAM direct-map page tables |
+| `[0x4002_2000, 0x4002_3000)` | Initial MMIO page table |
 
 The bootstrap identity-maps enough low RAM to survive enabling translation,
 maps the platform MMIO pages for early drivers, and installs the complete

@@ -61,11 +61,13 @@ impl SystemImage {
         for index in 0..header.kernel_segment_count as usize {
             let offset = header.kernel_segment_table_offset as usize + index * KERNEL_SEGMENT_SIZE;
             let segment = KernelSegment::decode(&bytes[offset..offset + KERNEL_SEGMENT_SIZE])?;
-            image_map.occupy(
-                Span::from_offset_length(segment.data_offset, segment.file_size)?,
-                bytes.len(),
-                "overlapping image data",
-            )?;
+            if segment.file_size != 0 {
+                image_map.occupy(
+                    Span::from_offset_length(segment.data_offset, segment.file_size)?,
+                    bytes.len(),
+                    "overlapping image data",
+                )?;
+            }
             kernel_segments.push(segment);
         }
         validate_kernel_records(&kernel_segments, header.kernel_entry_vaddr)?;
@@ -95,11 +97,13 @@ impl SystemImage {
                 let segment = ModuleSegment::decode(
                     &bytes[segment_offset..segment_offset + MODULE_SEGMENT_SIZE],
                 )?;
-                image_map.occupy(
-                    Span::from_offset_length(segment.data_offset, segment.file_size)?,
-                    bytes.len(),
-                    "overlapping image data",
-                )?;
+                if segment.file_size != 0 {
+                    image_map.occupy(
+                        Span::from_offset_length(segment.data_offset, segment.file_size)?,
+                        bytes.len(),
+                        "overlapping image data",
+                    )?;
+                }
                 segments.push(segment);
             }
             validate_module_records(&segments, record.entry_virtual_address)?;

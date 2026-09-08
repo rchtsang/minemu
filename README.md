@@ -38,10 +38,12 @@ The root [`justfile`](justfile) provides the main workflows:
 ```sh
 just build
 just test
+just docs
 just template
 just conformance
 just ci
 ```
 
-`just ci` checks formatting and linting, runs the Rust workspace tests, builds
-the student template, packages its image, and runs the conformance suite.
+`just ci` checks formatting, linting, and CLI help; runs the Rust workspace
+tests; builds the student template; packages its image; and runs the
+conformance suite.

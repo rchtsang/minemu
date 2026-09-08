@@ -9,8 +9,7 @@ the alternate screen and restores them on normal exit, errors, and panic
 unwinding.
 
 The internal controller/widget design is documented in [TUI
-Architecture](tui-architecture.md); the [historical visual
-specification](../../tui-design.md) is the original interaction reference.
+Architecture](tui-architecture.md).
 
 ## Views
 

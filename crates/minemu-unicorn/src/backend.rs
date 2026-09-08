@@ -813,6 +813,18 @@ mod hooks {
             access,
             user_mode,
         ) {
+            Ok(physical)
+                if matches!(access, Access::Fetch)
+                    && Option::<MemRegion>::from(physical).is_some_and(MemRegion::is_device) =>
+            {
+                let fault = machine.mmu.record_invalid_mmio_fault(
+                    VirtualAddress::new(address as u32),
+                    access,
+                    user_mode,
+                );
+                *callback_stop = Some(BackendStop::MmuFault(fault));
+                None
+            }
             Ok(physical) => Some(TlbEntry {
                 paddr: u64::from(physical.get()),
                 perms: match access {
@@ -1388,6 +1400,21 @@ mod tests {
         assert_eq!(fault.address, VirtualAddress::new(invalid_address));
         assert_eq!(fault.status.cause(), Some(FaultCause::DeviceAccess));
         assert!(!fault.status.is_write());
+    }
+
+    #[test]
+    fn physical_mmio_fetch_enters_prefetch_abort() {
+        let address = MemRegion::Rng.base().get();
+        let mut backend = UnicornBackend::new(Machine::default()).unwrap();
+
+        assert_eq!(
+            backend.run(address, address + 4, 1),
+            BackendStop::Exception(minemu_platform::ExceptionKind::PrefetchAbort)
+        );
+        let fault = backend.machine().mmu.last_fault().unwrap();
+        assert_eq!(fault.address, VirtualAddress::new(address));
+        assert_eq!(fault.status.cause(), Some(FaultCause::DeviceAccess));
+        assert!(fault.status.is_fetch());
     }
 
     #[test]

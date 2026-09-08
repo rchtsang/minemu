@@ -142,8 +142,9 @@ Success and guest-visible failure have the same 32-tick latency.
 
 **MINEMU-DEV1-BLOCK-003:** The DMA PA MUST be 512-byte aligned and the half-open
 range `[PADDR, PADDR + 512 * SECTOR_COUNT)` MUST fit completely in RAM without
-arithmetic overflow. The media range beginning at LBA with the same byte length
-MUST fit the attached medium.
+arithmetic overflow. `SECTOR_COUNT` MUST be nonzero; zero reports Invalid DMA.
+The media range beginning at LBA with the same byte length MUST fit the attached
+medium.
 
 **MINEMU-DEV1-BLOCK-004:** Command `1` MUST copy media bytes into RAM. Command
 `2` MUST copy RAM bytes into the device's write-back media and mark every

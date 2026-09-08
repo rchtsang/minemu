@@ -44,7 +44,6 @@ contract. Every other guide is informative and defers to those specifications.
 | [TUI](dev/tui.md) | **Informative** | Terminal UI views, controls, commands, and inspection behavior |
 | [Architecture](dev/architecture.md) | **Informative** | Implemented crate boundaries, ownership, execution, runtime, inspection, and persistence |
 | [Development workflows](dev/workflows.md) | **Informative** | Exact Rust, template, conformance, CI, and clean commands |
+| [Release readiness](dev/release-readiness.md) | **Informative** | Outstanding performance, development-container, and release-image gates |
 | [TUI architecture](dev/tui-architecture.md) | **Informative** | Controller, widget, event, and inspection implementation |
 | [ABI conformance matrix](dev/abi-conformance.md) | **Informative** | Mapping from platform requirements to test evidence |
-| [Feasibility spike results](dev/spike-results.md) | **Informative, historical** | Early prototype findings; not a current implementation contract |
-| [Historical TUI visual specification](../tui-design.md) | **Informative, historical** | Original interaction and layout design |

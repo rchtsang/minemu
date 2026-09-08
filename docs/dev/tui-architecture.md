@@ -3,9 +3,8 @@
 > **Status: Informative.** This document describes implementation architecture,
 > not guest-visible platform requirements.
 
-This is the architecture implemented for the redesign specified by
-the [historical visual specification](../../tui-design.md). The [TUI
-guide](tui.md) documents its user-facing controls.
+This is the architecture of the implemented TUI redesign. The [TUI guide](tui.md)
+documents its user-facing controls.
 
 ## Ownership
 

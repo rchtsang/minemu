@@ -159,6 +159,24 @@ fn packer_accepts_utf8_module_names() {
     assert_eq!(image.modules()[0].name, "shel\u{00e9}");
 }
 
+#[test]
+fn empty_payload_does_not_require_an_in_image_data_offset() {
+    let kernel = elf(
+        0xc000_9000,
+        &[
+            (0x4000_8000, &[1, 2, 3, 4], 4),
+            (0x4000_a000, &[], 4),
+            (0xc000_9000, &[5, 6, 7, 8], 4),
+        ],
+    );
+    let image = ImageBuilder::new(&kernel).build().unwrap();
+    let mut bytes = image.bytes().to_vec();
+    let bss_record = image.header().kernel_segment_table_offset as usize + 32;
+    bytes[bss_record..bss_record + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+
+    assert!(SystemImage::parse(&bytes).is_ok());
+}
+
 fn kernel() -> Vec<u8> {
     elf(
         0xc000_9000,

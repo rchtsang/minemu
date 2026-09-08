@@ -34,6 +34,7 @@ the environment variable may select another Cargo executable.
 | `just check` | `cargo check --workspace --all-targets` |
 | `just lint` | `cargo clippy --workspace --all-targets -- -D warnings` |
 | `just fmt` | `cargo fmt --all -- --check` |
+| `just docs` | Smoke-test generated CLI help |
 
 The workspace contains `minemu-platform`, `minemu-core`, `minemu-image`,
 `minemu-unicorn`, `minemu-runtime`, and `minemu`.
@@ -91,12 +92,12 @@ just ci
 The recipe runs, in order:
 
 ```text
-fmt -> check -> lint -> test -> template -> conformance
+fmt -> check -> lint -> test -> docs -> template -> conformance
 ```
 
 It checks Rust formatting and all targets, denies Clippy warnings, runs all Rust
-tests, verifies/packages the template, and runs baseline plus focused guest
-conformance. It does not build or run Docker automatically.
+tests, smoke-tests CLI help, verifies/packages the template, and runs baseline
+plus focused guest conformance. It does not build or run Docker automatically.
 
 ## Cleaning
 

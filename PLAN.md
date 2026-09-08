@@ -1,4 +1,4 @@
-# Multi-Unit Block Controller ABI Plan
+# Multi-Unit Block ABI And Course Foundation Plan
 
 ## Goal
 
@@ -16,6 +16,13 @@ single controller.
 
 The change must preserve all existing register offsets, command behavior, IRQ
 behavior, CLI usage, headless manifests, and guest names for unit 0.
+
+Before the assignment documents become authoritative, this work also reconciles
+the supplied template's documented bootstrap layout, corrects the module-flag
+guide, and adds the instructor-owned virtual-memory and block-I/O foundations
+required by the course progression. `minimum-template` is the canonical source
+for those supplied guest components; synchronize them into `minimum-tests` and
+the `minimum-rtsang` course repository after validation.
 
 This plan assumes ABI v1 has not been released as an immutable external
 contract. The implementation therefore amends the current v1 documents while
@@ -138,6 +145,92 @@ spellings must not be accepted together in one invocation.
 Headless manifests preserve `block_media` as a unit-0 alias and add
 `block0_media` and `block1_media`. Existing block-media assertions default to
 unit 0; add a unit selector for assertions against unit 1.
+
+## Phase 0: Pre-Writing Course Corrections
+
+Complete these corrections before drafting the individual assignments.
+
+### Bootstrap Workspace
+
+The three current guest repositories agree on this implemented bootstrap
+workspace:
+
+| Half-open PA range | Purpose |
+|---|---|
+| `[0x4001_0000, 0x4001_1000)` | Initial page directory |
+| `[0x4001_1000, 0x4001_2000)` | Low-RAM identity-map table |
+| `[0x4001_2000, 0x4002_2000)` | Sixteen RAM direct-map tables |
+| `[0x4002_2000, 0x4002_3000)` | Supervisor MMIO table |
+
+`docs/student/template-memory-layout.md` still describes older addresses and
+claims sixteen direct-map tables in a range that contains only four pages.
+Update the informative document to the implemented layout.
+
+In `minimum-template`, replace duplicated bootstrap workspace literals with
+named linker symbols or shared assembly constants where practical. Export the
+complete reserved range to the supplied memory-management foundation so a
+student allocator cannot hand page-table frames to user processes. Apply the
+same bootstrap artifact changes to `minimum-tests` and `minimum-rtsang`.
+
+Primary files:
+
+- `docs/student/template-memory-layout.md`
+- `minimum-template/kernel/src/startup/boot.S`
+- `minimum-template/kernel/linker/kernel.ld`
+- Mirrored startup and linker files in `minimum-tests` and `minimum-rtsang`
+
+### Module Flags
+
+Correct `docs/student/module-format-and-loading.md`: serialized module-segment
+flags are Readable, Writable, and Executable. There is no serialized User flag.
+The kernel applies `MINEMU_PTE_USER` as address-space policy when mapping a user
+module.
+
+Ensure the supplied loader interfaces consume the shared segment flag constants
+from `minemu/boot.h`, derive PTE permissions explicitly, and reject unsupported
+flag combinations rather than treating module flags as raw PTE bits.
+
+Primary files:
+
+- `docs/student/module-format-and-loading.md`
+- `minimum-template/kernel/include/minemu/boot.h`
+- New supplied loader/address-space implementation in `minimum-template`
+
+### Supplied Eager Address-Space Foundation
+
+Assignment 2 introduces user mode before students have studied page-table
+implementation. Add a narrow instructor-owned foundation to `minimum-template`
+that can:
+
+- Reserve bootstrap, kernel, and page-table physical ranges.
+- Allocate and release contiguous page-aligned user backing ranges.
+- Create and destroy eager user address spaces while preserving supervisor
+  kernel, vector, and MMIO mappings.
+- Map packaged module segments with derived user permissions.
+- Map and zero a fixed user stack.
+- Validate user buffer ranges and required read/write access.
+- Activate an address space using TTBR0 followed by TLBIALL.
+- Eagerly clone a single-threaded process address space for Assignment 3
+  `fork`.
+
+Keep process tables, scheduling, syscall policy, `fork` return semantics, and
+page-replacement policy student-owned. The supplied API should teach virtual
+layout and protection without requiring students to construct PDEs and PTEs
+before Assignment 6.
+
+Add focused template tests or reference examples for segment loading, BSS
+zeroing, user-stack mapping, permission derivation, user-range validation,
+address-space switching, and eager cloning. Synchronize the validated
+foundation into `minimum-rtsang`; conformance-specific copies or fixtures belong
+in `minimum-tests`.
+
+### Supplied Multi-Unit Block Foundation
+
+`minimum-template` must become the canonical implementation of the
+instructor-supplied synchronous block interface described in Phase 6. Add it
+only after the parent ABI and runtime support two media units. The interface
+must serialize requests across units and remain policy-neutral: course code
+chooses unit 1 for swap and unit 0 for filesystems.
 
 ## Phase 1: Platform Definitions
 
@@ -263,8 +356,9 @@ Primary files:
 
 ## Phase 6: Guest Headers And Supplied Driver
 
-Apply synchronized ABI definitions to `minimum-template`, `minimum-tests`, and
-the active `minimum-rtsang` course repository:
+Implement the canonical guest ABI definitions and driver in
+`minimum-template`, validate them there, then synchronize the shared artifacts
+into `minimum-tests` and the active `minimum-rtsang` course repository:
 
 - Append `unit` to `struct minemu_block_regs` at offset `0x20`.
 - Update its size assertion from 32 to 36 bytes while preserving every existing
@@ -322,6 +416,8 @@ the register layout matters:
 - Update the ABI conformance matrix with all new evidence.
 - Update guest and assignment documentation to reserve unit 1 for swap and unit
   0 for files in the course environment.
+- Verify the corrected bootstrap workspace and module-flag guidance remain
+  aligned with the final `minimum-template` implementation.
 
 ## Validation
 
@@ -352,6 +448,14 @@ persistence leakage.
 - The controller permits only one active request across both units.
 - No MMIO address, existing register offset, or interrupt definition moves.
 - Both media are flushed at every documented lifecycle boundary.
+- `docs/student/template-memory-layout.md` matches the actual supplied
+  bootstrap workspace and reserves all page-table frames.
+- Module documentation and supplied loader code use Readable, Writable, and
+  Executable segment flags; user access remains kernel mapping policy.
+- `minimum-template` supplies the eager address-space helpers required by
+  Assignments 2 and 3 without implementing student-owned process policy.
+- `minimum-template` supplies one serialized synchronous block interface for
+  both media units.
 - Guest headers agree across all three teaching/conformance repositories.
 - Normative constants agree with Rust implementation and conformance fixtures.
 - Assignment 6 can use unit 1 exclusively for swap through supplied code.

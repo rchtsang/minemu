@@ -23,7 +23,7 @@ required evidence is green in CI.
 | Requirement IDs | Contract area | Evidence |
 |---|---|---|
 | [`MINEMU-BOOT1-ADDR-001`-`003`](../platform/boot-v1.md#fixed-locations) | Boot workspace, info, and bootstrap locations | `minemu-platform` constants/range tests; `minemu-image` overlap/bootstrap tests |
-| [`MINEMU-BOOT1-HOST-001`-`003`](../platform/boot-v1.md#host-preconditions) | Host validation and ROM placement | `minemu-cli` argument tests; `minemu-image` parser tests; template firmware check |
+| [`MINEMU-BOOT1-HOST-001`-`003`](../platform/boot-v1.md#host-preconditions) | Host validation and ROM placement | `minemu` CLI argument tests; `minemu-image` parser tests; template firmware check |
 | [`MINEMU-BOOT1-LOAD-001`-`002`](../platform/boot-v1.md#reset-firmware-sequence) | Segment copy, BSS clear, and handoff order | template firmware comparison; [baseline guest test](../../minimum-tests/image/minimum-test.toml) |
 | [`MINEMU-BOOT1-HANDOFF-001`-`004`](../platform/boot-v1.md#bootstrap-handoff) | Future boot-info VA, MMU/vector setup, and entry | [baseline](../../minimum-tests/image/minimum-test.toml); [MMU case](../../minimum-tests/headless/mmu/test.toml); template linker/firmware checks |
 | [`MINEMU-BOOT1-INFO-001`-`003`](../platform/boot-v1.md#boot-info-record) | Boot-info wire record and direct-map alias | `minemu-platform` boot-info encode/decode tests; [baseline](../../minimum-tests/image/minimum-test.toml) |
@@ -90,8 +90,8 @@ implementation part of the platform ABI.
 | Area | Evidence/status |
 |---|---|
 | Full source, template, and conformance gate | `just ci` |
-| Development-container smoke test | Planned; no student image is released |
-| Release assets and supported OCI architectures | Planned release CI |
+| Development-container smoke test | Implemented in `container/smoke.sh`; published-image verification remains pending |
+| Release assets and supported OCI architectures | Manual Buildx workflow for `linux/amd64` and `linux/arm64`; publication verification pending |
 | Process/context-switch coursework gate | [TTBR-switch plus TLBIALL](../../minimum-tests/headless/ttbr-switch/test.toml) |
 
 The TTBR0-switch plus TLBIALL test remains a hard release gate for process and

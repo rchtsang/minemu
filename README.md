@@ -54,5 +54,5 @@ conformance suite.
 The multi-stage [`container/Dockerfile`](container/Dockerfile) builds a
 lightweight student environment containing an installed `minemu`, the GNU Arm
 Embedded toolchain, common development tools, and optional OpenCode support.
-Local build, Dev Container, smoke-test, and release-image instructions are in
+Local build, optional Dev Container, smoke-test, and release-image instructions are in
 [`container/README.md`](container/README.md).

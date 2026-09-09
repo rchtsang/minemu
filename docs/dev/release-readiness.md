@@ -5,9 +5,9 @@
 
 The emulator, template, and conformance repositories are usable directly from
 source. The multi-stage Dockerfile, student-tool smoke check, local workflows,
-Dev Container configuration, and manual publication instructions now exist
-under `container/`. This project does not use GitHub Actions. The following
-gates remain before publishing and recommending a supported image:
+optional Dev Container configuration, and manual publication instructions now
+exist under `container/`. This project does not use GitHub Actions. The
+following gates remain before publishing and recommending a supported image:
 
 - Maintain a representative throughput floor of 100,000 strict instructions
   per second.

@@ -15,14 +15,15 @@ The workspace pins Rust `1.96.0` with the minimal rustup profile plus `clippy`
 and `rustfmt`. Install or select the pinned toolchain through
 `rust-toolchain.toml`.
 
-Host development also requires `just`, `zsh`, GNU Make, native C/C++ build
+Host development also requires `just`, GNU Make, native C/C++ build
 tools, CMake, pkg-config, Clang/libclang, GLib development files, and the GNU Arm
-Embedded tools (`arm-none-eabi-gcc`, `ar`, `objcopy`, `readelf`, and `nm`). The
+Embedded tools (`arm-none-eabi-gcc`, `arm-none-eabi-ar`,
+`arm-none-eabi-objcopy`, `arm-none-eabi-readelf`, and `arm-none-eabi-nm`). The
 repository `container/Dockerfile` records the complete build package set and
 produces the smaller student runtime image. See
-[`container/README.md`](../../container/README.md) for local image and Dev
-Container workflows. Course documentation must pin a tested image digest rather
-than assuming that an unpublished or moving tag exists.
+[`container/README.md`](../../container/README.md) for local image and optional
+Dev Container workflows. Course documentation must pin a tested image digest
+rather than assuming that an unpublished or moving tag exists.
 
 Guest Makefiles use `ARM_PREFIX=arm-none-eabi-` by default. Override it when the
 toolchain uses another prefix. Root Just recipes use `CARGO=cargo` by default;

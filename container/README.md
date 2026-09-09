@@ -11,7 +11,7 @@ The `container/` directory defines the student development environment for
 
 Rust, Clang, CMake, libclang, and the native Unicorn build dependencies remain
 in build-only stages. Students do not need them to build and run `minimum`, so
-they are omitted from the published student image.
+they are omitted from the final student image.
 
 ## Local Build
 
@@ -41,7 +41,7 @@ The build uses the repository root as its context. Docker automatically applies
 nested course repositories, common credential-file patterns, and files outside
 the explicit emulator-source allowlist.
 
-## Published Image
+## Planned Published Image
 
 Maintainers manually publish `linux/amd64` and `linux/arm64` images to:
 
@@ -61,9 +61,10 @@ docker run --rm -it \
 ```
 
 The published image uses UID and GID 1000. On a Linux host with different IDs,
-use the Dev Container workflow, which updates the remote user, or build the
-image locally with the supplied Just recipe before mounting a writable
-workspace. The `:Z` mount option permits access on SELinux-enforcing hosts.
+build the image locally with the supplied Just recipe before mounting a writable
+workspace. The optional Dev Container workflow can instead update the remote
+user automatically. The `:Z` mount option permits access on SELinux-enforcing
+hosts.
 
 Configure `rtsang1/cs492-stevens.edu` as a public Docker Hub repository before
 announcing it to students, then verify that the pull command works without
@@ -133,10 +134,11 @@ REPOSITORY=OWNER/REPOSITORY \
 just --justfile container/justfile publish
 ```
 
-## Dev Container
+## Optional Dev Container
 
-`container/devcontainer.json` is the canonical Dev Container configuration. The
-Dev Container CLI can use it directly:
+Dev Container tooling is not required to build, run, or publish the image.
+Editors and users that prefer it may use `container/devcontainer.json` through
+the Dev Container CLI:
 
 ```sh
 devcontainer up \
@@ -167,8 +169,8 @@ make image
 just test-all hw1
 ```
 
-The HW1 Just workflow is tracked separately in the HW1 release plan and must
-exist before that homework goes live.
+The HW1 Just workflow is implemented in the starter and course repositories and
+has been validated against the completed course implementation.
 
 ## Credentials And Host Access
 

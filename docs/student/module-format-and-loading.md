@@ -26,8 +26,9 @@ A kernel loader can:
 7. Execute TLBIALL before relying on changed active mappings.
 8. Initialize a user context at the module entry VA.
 
-The reference runtime exposes helper hooks for these steps, but their names and
-replacement algorithm are not platform ABI.
+Future assignment starters may supply helper hooks for these steps, but those
+helpers are not present in the current starter and their names and replacement
+algorithm are not platform ABI.
 
 ## Address Policy
 

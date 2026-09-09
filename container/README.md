@@ -85,17 +85,18 @@ following Docker's
 Build `linux/amd64` and `linux/arm64` without publishing them:
 
 ```sh
-just --justfile container/justfile multiarch VERSION
+just --justfile container/justfile multiarch
 ```
 
 This exports a multi-platform OCI archive to
 `container/build/cs492-stevens.edu.oci.tar`. Override the destination or
-platform list when needed:
+platform list when needed. The image tag is derived from the `minemu` package
+version reported by `cargo metadata`.
 
 ```sh
 ARCHIVE=/tmp/cs492-stevens.edu.oci.tar \
 PLATFORMS=linux/amd64,linux/arm64 \
-just --justfile container/justfile multiarch VERSION
+just --justfile container/justfile multiarch
 ```
 
 Docker's classic local image store cannot load a multi-platform image as one
@@ -116,19 +117,20 @@ then build and push both supported architectures:
 
 ```sh
 docker login --username rtsang1
-just --justfile container/justfile publish VERSION
+just --justfile container/justfile publish
 ```
 
 The recipe pushes one manifest-list tag containing `linux/amd64` and
-`linux/arm64`, then runs `docker buildx imagetools inspect` for that tag. Record
-the multi-architecture digest from the inspection output. Do not put the Docker
-Hub access token in the command line, Dockerfile, repository, or image.
+`linux/arm64`, tagged with the `minemu` package version from `cargo metadata`,
+then runs `docker buildx imagetools inspect` for that tag. Record the
+multi-architecture digest from the inspection output. Do not put the Docker Hub
+access token in the command line, Dockerfile, repository, or image.
 
 Override the destination repository for a fork or another registry:
 
 ```sh
 REPOSITORY=OWNER/REPOSITORY \
-just --justfile container/justfile publish VERSION
+just --justfile container/justfile publish
 ```
 
 ## Dev Container

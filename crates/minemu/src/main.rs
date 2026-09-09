@@ -11,6 +11,7 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser)]
 #[command(
     name = "minemu",
+    version,
     about = "Package, boot, and test A32 teaching-platform images.",
     long_about = "Package independently linked A32 kernel and user ELFs into a system image, boot it in an interactive terminal UI, or run it headlessly through the deterministic test runtime.",
     after_help = "Examples:\n  minemu image minimum-template/image/minimum.toml --output minimum-template/image/build/minimum.img\n  minemu run minimum-template/image/build/minimum.img --boot-rom minimum-template/bootloader/bootloader.bin\n  minemu test minimum-tests/image/minimum-test.toml"

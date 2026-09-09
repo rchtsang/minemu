@@ -1,4 +1,4 @@
-set shell := ["zsh", "-eu", "-o", "pipefail", "-c"]
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 workspace := parent_directory(justfile_directory())
 container := justfile_directory()
@@ -43,32 +43,38 @@ buildx-builder:
     {{ docker }} buildx inspect "{{ buildx_builder }}" --bootstrap
 
 # Build both supported architectures into a local OCI archive.
-multiarch version: buildx-builder
+multiarch: buildx-builder
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="$(cargo metadata --manifest-path "{{ workspace }}/Cargo.toml" --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "minemu") | .version')"
     mkdir -p "{{ container }}/build"
     {{ docker }} buildx build \
       --builder "{{ buildx_builder }}" \
       --platform "{{ platforms }}" \
       --file "{{ dockerfile }}" \
       --target student \
-      --tag "{{ repository }}:{{ version }}" \
+      --tag "{{ repository }}:${version}" \
       --provenance=mode=max \
       --sbom=true \
       --output "type=oci,dest={{ archive }}" \
       "{{ workspace }}"
 
-# Build and push one multi-platform version tag, then inspect its manifest.
-publish version: buildx-builder
+# Build and push the workspace version tag, then inspect its manifest.
+publish: buildx-builder
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="$(cargo metadata --manifest-path "{{ workspace }}/Cargo.toml" --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "minemu") | .version')"
     {{ docker }} buildx build \
       --builder "{{ buildx_builder }}" \
       --platform "{{ platforms }}" \
       --file "{{ dockerfile }}" \
       --target student \
-      --tag "{{ repository }}:{{ version }}" \
+      --tag "{{ repository }}:${version}" \
       --provenance=mode=max \
       --sbom=true \
       --push \
       "{{ workspace }}"
-    {{ docker }} buildx imagetools inspect "{{ repository }}:{{ version }}"
+    {{ docker }} buildx imagetools inspect "{{ repository }}:${version}"
 
 # Check the installed student tools.
 smoke: build

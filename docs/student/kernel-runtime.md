@@ -25,14 +25,20 @@ not values written by the machine.
 
 ## Trap Frame
 
-The supplied stubs save a runtime-defined frame containing general registers,
-the exception LR, and SPSR, then call C hooks. Its byte layout and hook names
-are private to the template and may change without a platform ABI revision.
-Student kernels may replace the frame and dispatch code entirely.
+The supplied synchronous exception stubs save a template-defined frame
+containing general registers, the exception LR, and SPSR, then call C hooks. The
+frame remains template policy rather than platform ABI, but the released
+`minemu/trap.h` layout and `minemu/irq.h` dispatcher boundary are frozen for
+Assignment 1. Later starter releases may revise them between assignments.
 
 ## IRQ Flow
 
-The supplied IRQ handler follows this policy:
+The supplied vector table branches to `minemu_irq_trampoline`, and the bootstrap
+initializes an IRQ-mode stack. The base runtime supplies weak fail-stop IRQ hooks
+so the unchanged starter links. Students replace those hooks by adapting the
+IRQ context-switch example.
+
+A completed IRQ handler follows this policy:
 
 1. Read the interrupt controller `CLAIM` register.
 2. Dispatch the returned source ID to the corresponding driver.
@@ -40,6 +46,6 @@ The supplied IRQ handler follows this policy:
 4. Write the same source ID to controller `EOI`.
 5. Restore the saved context and return using the architectural IRQ LR offset.
 
-The required claim/EOI and peripheral-level semantics are normative; this
-handler sequencing and C dispatch organization are reference implementation
-choices.
+The required claim/EOI and peripheral-level semantics are normative. The
+supplied example demonstrates frame construction, restoration, and return, but
+its generic dispatch policy is not a complete Assignment 1 UART driver.

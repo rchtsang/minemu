@@ -46,18 +46,18 @@ the explicit emulator-source allowlist.
 Maintainers manually publish `linux/amd64` and `linux/arm64` images to:
 
 ```text
-ghcr.io/rchtsang/minemu-dev
+rtsang1/cs492-stevens.edu
 ```
 
 After an image has been published, replace `VERSION` with that version:
 
 ```sh
-docker pull ghcr.io/rchtsang/minemu-dev:VERSION
+docker pull rtsang1/cs492-stevens.edu:VERSION
 docker run --rm -it \
   --add-host host.docker.internal:host-gateway \
   --volume "$PWD:/workspace:Z" \
   --workdir /workspace \
-  ghcr.io/rchtsang/minemu-dev:VERSION
+  rtsang1/cs492-stevens.edu:VERSION
 ```
 
 The published image uses UID and GID 1000. On a Linux host with different IDs,
@@ -65,14 +65,42 @@ use the Dev Container workflow, which updates the remote user, or build the
 image locally with the supplied Just recipe before mounting a writable
 workspace. The `:Z` mount option permits access on SELinux-enforcing hosts.
 
-The first GHCR package version is private by default. A package owner must make
-`minemu-dev` public in the GitHub package settings before announcing it to
-students, then verify that the pull command works without authentication.
+Configure `rtsang1/cs492-stevens.edu` as a public Docker Hub repository before
+announcing it to students, then verify that the pull command works without
+authentication.
 
 Course documentation should pin the published digest reported by Buildx, for
-example `ghcr.io/rchtsang/minemu-dev@sha256:...`. Version tags and base-image
+example `rtsang1/cs492-stevens.edu@sha256:...`. Version tags and base-image
 tags can move; a digest is the immutable image identity. Do not make a graded
 environment depend only on `latest`.
+
+## Multi-Platform Build
+
+The container Justfile manages a reusable Buildx builder named
+`minemu-multiarch`. Docker Desktop includes the required architecture emulation.
+On a native Linux Docker Engine host, install QEMU/binfmt support first by
+following Docker's
+[multi-platform build documentation](https://docs.docker.com/build/building/multi-platform/).
+
+Build `linux/amd64` and `linux/arm64` without publishing them:
+
+```sh
+just --justfile container/justfile multiarch VERSION
+```
+
+This exports a multi-platform OCI archive to
+`container/build/cs492-stevens.edu.oci.tar`. Override the destination or
+platform list when needed:
+
+```sh
+ARCHIVE=/tmp/cs492-stevens.edu.oci.tar \
+PLATFORMS=linux/amd64,linux/arm64 \
+just --justfile container/justfile multiarch VERSION
+```
+
+Docker's classic local image store cannot load a multi-platform image as one
+tag, which is why this recipe uses an OCI archive. The existing `build` and
+`smoke` recipes remain the fast native-platform workflow.
 
 ### Manual Publication
 
@@ -83,25 +111,25 @@ just ci
 just --justfile container/justfile smoke
 ```
 
-Authenticate to GHCR with a narrowly scoped token supplied through the shell,
+Authenticate to Docker Hub as `rtsang1` with a narrowly scoped access token,
 then build and push both supported architectures:
 
 ```sh
-docker login ghcr.io --username USERNAME
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  --file container/Dockerfile \
-  --target student \
-  --tag ghcr.io/rchtsang/minemu-dev:VERSION \
-  --provenance=mode=max \
-  --sbom=true \
-  --push \
-  .
-docker buildx imagetools inspect ghcr.io/rchtsang/minemu-dev:VERSION
+docker login --username rtsang1
+just --justfile container/justfile publish VERSION
 ```
 
-Record the multi-architecture digest from the inspection output. Do not put the
-GHCR token in the command line, Dockerfile, repository, or image.
+The recipe pushes one manifest-list tag containing `linux/amd64` and
+`linux/arm64`, then runs `docker buildx imagetools inspect` for that tag. Record
+the multi-architecture digest from the inspection output. Do not put the Docker
+Hub access token in the command line, Dockerfile, repository, or image.
+
+Override the destination repository for a fork or another registry:
+
+```sh
+REPOSITORY=OWNER/REPOSITORY \
+just --justfile container/justfile publish VERSION
+```
 
 ## Dev Container
 
@@ -127,17 +155,18 @@ layers.
 
 ## Student Repository Check
 
-Inside the container, a `minimum` checkout uses its normal Make workflow:
+Inside the container, a `minimum` checkout uses its normal build and test
+workflow:
 
 ```sh
 make clean
 make
 make image
-make test
+just test-all hw1
 ```
 
-The Assignment 1 `make test` target is tracked separately in the Assignment 1
-release plan and must exist before that assignment goes live.
+The HW1 Just workflow is tracked separately in the HW1 release plan and must
+exist before that homework goes live.
 
 ## Credentials And Host Access
 

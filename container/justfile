@@ -1,9 +1,14 @@
 set shell := ["zsh", "-eu", "-o", "pipefail", "-c"]
 
 workspace := parent_directory(justfile_directory())
+container := justfile_directory()
 dockerfile := justfile_directory() / "Dockerfile"
 docker := env_var_or_default("DOCKER", "docker")
 image := env_var_or_default("IMAGE", "minemu-dev:local")
+repository := env_var_or_default("REPOSITORY", "rtsang1/cs492-stevens.edu")
+platforms := env_var_or_default("PLATFORMS", "linux/amd64,linux/arm64")
+buildx_builder := env_var_or_default("BUILDX_BUILDER", "minemu-multiarch")
+archive := env_var_or_default("ARCHIVE", container / "build/cs492-stevens.edu.oci.tar")
 dev_uid := `uid="$(id -u)"; if [ "$uid" -eq 0 ]; then printf 1000; else printf %s "$uid"; fi`
 
 # Build the lightweight student image.
@@ -25,6 +30,46 @@ rebuild:
       --tag "{{ image }}" \
       "{{ workspace }}"
 
+# Create or select the reusable multi-platform Buildx builder.
+buildx-builder:
+    @if {{ docker }} buildx inspect "{{ buildx_builder }}" >/dev/null 2>&1; then \
+      {{ docker }} buildx use "{{ buildx_builder }}"; \
+    else \
+      {{ docker }} buildx create \
+        --name "{{ buildx_builder }}" \
+        --driver docker-container \
+        --use; \
+    fi
+    {{ docker }} buildx inspect "{{ buildx_builder }}" --bootstrap
+
+# Build both supported architectures into a local OCI archive.
+multiarch version: buildx-builder
+    mkdir -p "{{ container }}/build"
+    {{ docker }} buildx build \
+      --builder "{{ buildx_builder }}" \
+      --platform "{{ platforms }}" \
+      --file "{{ dockerfile }}" \
+      --target student \
+      --tag "{{ repository }}:{{ version }}" \
+      --provenance=mode=max \
+      --sbom=true \
+      --output "type=oci,dest={{ archive }}" \
+      "{{ workspace }}"
+
+# Build and push one multi-platform version tag, then inspect its manifest.
+publish version: buildx-builder
+    {{ docker }} buildx build \
+      --builder "{{ buildx_builder }}" \
+      --platform "{{ platforms }}" \
+      --file "{{ dockerfile }}" \
+      --target student \
+      --tag "{{ repository }}:{{ version }}" \
+      --provenance=mode=max \
+      --sbom=true \
+      --push \
+      "{{ workspace }}"
+    {{ docker }} buildx imagetools inspect "{{ repository }}:{{ version }}"
+
 # Check the installed student tools.
 smoke: build
     {{ docker }} run --rm "{{ image }}" /opt/minemu/container/smoke.sh
@@ -37,6 +82,7 @@ shell: build
       --workdir /workspace \
       "{{ image }}"
 
-# Remove locally built images.
+# Remove locally built images and multi-platform archives.
 clean:
     -{{ docker }} image rm "{{ image }}"
+    rm -rf "{{ container }}/build"

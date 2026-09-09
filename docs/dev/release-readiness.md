@@ -19,7 +19,8 @@ gates remain before publishing and recommending a supported image:
   then run the container smoke check manually.
 - Manually publish a versioned `linux/amd64` and `linux/arm64` image with Docker
   Buildx.
-- Make the GHCR package public and verify an unauthenticated pull.
+- Make the `rtsang1/cs492-stevens.edu` Docker Hub repository public and verify
+  an unauthenticated pull.
 - Record and publish the tested multi-architecture image digest; do not describe
   a mutable version tag as an immutable image identity.
 - Pin the published image digest in the active student documentation and test

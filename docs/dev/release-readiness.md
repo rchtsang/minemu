@@ -4,27 +4,13 @@
 > work. It is not part of the guest-visible platform contract.
 
 The emulator, template, and conformance repositories are usable directly from
-source. The multi-stage Dockerfile, student-tool smoke check, local workflows,
-optional Dev Container configuration, and manual publication instructions now
-exist under `container/`. This project does not use GitHub Actions. The
-following gates remain before publishing and recommending a supported image:
+source. The Assignment 1 student image has also been validated and published as
+the public `linux/amd64` and `linux/arm64` OCI index
+`rtsang1/cs492-stevens:0.1.0`. Its immutable digest is
+`sha256:9b9c8be5ccdadc046ad4577107e087aee2dad21b8fb6e081238833a70a2ef7a7`.
+This project uses manual native-platform publication rather than GitHub Actions.
+
+The following release-engineering gate remains:
 
 - Maintain a representative throughput floor of 100,000 strict instructions
   per second.
-- Verify the student image on a clean Docker host.
-- Verify that the image's GNU Arm compiler reproduces the checked-in canonical
-  Boot ROM exactly.
-- Confirm the release binary's runtime shared-library dependencies.
-- Run the complete workspace, template, and conformance checks with `just ci`,
-  then run the container smoke check manually.
-- Manually publish a versioned `linux/amd64` and `linux/arm64` image with Docker
-  Buildx.
-- Make the `rtsang1/cs492-stevens.edu` Docker Hub repository public and verify
-  an unauthenticated pull.
-- Record and publish the tested multi-architecture image digest; do not describe
-  a mutable version tag as an immutable image identity.
-- Pin the published image digest in the active student documentation and test
-  it from a student account without repository or package-owner privileges.
-
-Until those gates are complete, active documentation must not claim that a
-student or release container image is available.

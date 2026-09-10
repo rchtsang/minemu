@@ -41,23 +41,23 @@ The build uses the repository root as its context. Docker automatically applies
 nested course repositories, common credential-file patterns, and files outside
 the explicit emulator-source allowlist.
 
-## Planned Published Image
+## Published Image
 
-Maintainers manually publish `linux/amd64` and `linux/arm64` images to:
+The Assignment 1 image is published for `linux/amd64` and `linux/arm64` as:
 
 ```text
-rtsang1/cs492-stevens.edu
+rtsang1/cs492-stevens:0.1.0
 ```
 
-After an image has been published, replace `VERSION` with that version:
+Pull and run the immutable multi-platform image:
 
 ```sh
-docker pull rtsang1/cs492-stevens.edu:VERSION
+docker pull rtsang1/cs492-stevens@sha256:9b9c8be5ccdadc046ad4577107e087aee2dad21b8fb6e081238833a70a2ef7a7
 docker run --rm -it \
   --add-host host.docker.internal:host-gateway \
   --volume "$PWD:/workspace:Z" \
   --workdir /workspace \
-  rtsang1/cs492-stevens.edu:VERSION
+  rtsang1/cs492-stevens@sha256:9b9c8be5ccdadc046ad4577107e087aee2dad21b8fb6e081238833a70a2ef7a7
 ```
 
 The published image uses UID and GID 1000. On a Linux host with different IDs,
@@ -66,14 +66,9 @@ workspace. The optional Dev Container workflow can instead update the remote
 user automatically. The `:Z` mount option permits access on SELinux-enforcing
 hosts.
 
-Configure `rtsang1/cs492-stevens.edu` as a public Docker Hub repository before
-announcing it to students, then verify that the pull command works without
-authentication.
-
-Course documentation should pin the published digest reported by Buildx, for
-example `rtsang1/cs492-stevens.edu@sha256:...`. Version tags and base-image
-tags can move; a digest is the immutable image identity. Do not make a graded
-environment depend only on `latest`.
+The Docker Hub repository is public and supports unauthenticated pulls. Course
+documentation pins the digest above because version and base-image tags can
+move. Do not make a graded environment depend only on `latest`.
 
 ## Multi-Platform Publication
 

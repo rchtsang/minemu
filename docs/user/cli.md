@@ -1,7 +1,7 @@
 # Command-Line Interface
 
 > **Status: Informative.** The versioned
-> [platform specifications](../platform/abi-v1.md) define guest-visible
+> [platform specifications](../platform/abi-v2.md) define guest-visible
 > behavior. This guide defines command-line use.
 
 `minemu` packages A32 ELF files, boots system images in an interactive terminal

@@ -8,7 +8,7 @@ the [project overview](../README.md) for the relationship among the repositories
 
 | Audience | Start here | Continue with |
 |---|---|---|
-| Students | [`minimum-template` quickstart](../minimum-template/README.md) | [TUI guide](dev/tui.md), [platform ABI v1](platform/abi-v1.md) |
+| Students | [`minimum-template` quickstart](../minimum-template/README.md) | [TUI guide](dev/tui.md), [platform ABI v2](platform/abi-v2.md) |
 | Emulator users | [Command-line interface](user/cli.md) | [TUI guide](dev/tui.md) |
 | Conformance authors | [`minimum-tests` overview](../minimum-tests/README.md) | [Conformance authoring](../minimum-tests/docs/conformance-authoring.md), [ABI matrix](dev/abi-conformance.md), [versioned specifications](#normative-platform-specifications) |
 | Emulator contributors | [Architecture](dev/architecture.md) | [Development workflows](dev/workflows.md), [TUI architecture](dev/tui-architecture.md), [ABI conformance matrix](dev/abi-conformance.md) |
@@ -26,11 +26,13 @@ contract. Every other guide is informative and defers to those specifications.
 
 | Document | Status | Audience and scope |
 |---|---|---|
-| [Platform ABI v1](platform/abi-v1.md) | **Normative** | CPU, reset, physical map, terminology, and virtual time |
+| [Platform ABI v2](platform/abi-v2.md) | **Current normative** | ABI v1 plus the two-unit block controller |
+| [Device ABI v2](platform/devices-v2.md) | **Current normative** | Device ABI v1 plus the two-unit block-controller revision |
+| [Platform ABI v1](platform/abi-v1.md) | **Historical normative** | Published Assignment 1 CPU, reset, physical map, terminology, and virtual time |
 | [Boot ABI v1](platform/boot-v1.md) | **Normative** | Reset firmware, kernel loading, handoff, and boot info |
 | [System-image format v1](platform/system-image-v1.md) | **Normative** | Exact serialized records and image validity |
 | [Exceptions and MMU ABI v1](platform/exceptions-and-mmu-v1.md) | **Normative** | Machine exception entry, CP15, translation, and faults |
-| [Device ABI v1](platform/devices-v1.md) | **Normative** | MMIO registers, reset values, transitions, and interrupts |
+| [Device ABI v1](platform/devices-v1.md) | **Historical normative** | Published Assignment 1 MMIO and peripheral contract |
 
 ## Informative Guides
 
@@ -44,6 +46,6 @@ contract. Every other guide is informative and defers to those specifications.
 | [TUI](dev/tui.md) | **Informative** | Terminal UI views, controls, commands, and inspection behavior |
 | [Architecture](dev/architecture.md) | **Informative** | Implemented crate boundaries, ownership, execution, runtime, inspection, and persistence |
 | [Development workflows](dev/workflows.md) | **Informative** | Exact Rust, template, conformance, CI, and clean commands |
-| [Release readiness](dev/release-readiness.md) | **Informative** | Outstanding performance, development-container, and release-image gates |
+| [Release readiness](dev/release-readiness.md) | **Informative** | Published Assignment 1 image plus current image-publication and performance gates |
 | [TUI architecture](dev/tui-architecture.md) | **Informative** | Controller, widget, event, and inspection implementation |
 | [ABI conformance matrix](dev/abi-conformance.md) | **Informative** | Mapping from platform requirements to test evidence |

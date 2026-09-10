@@ -1,7 +1,7 @@
 # Platform ABI Version 1
 
-> **Status: Normative.** This document and the linked version-1 component
-> specifications define the guest-visible `minemu` platform contract.
+> **Status: Historical normative.** This frozen document records the published
+> Assignment 1 contract. New work targets [Platform ABI v2](abi-v2.md).
 
 ## Scope
 

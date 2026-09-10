@@ -1,7 +1,7 @@
 # Architecture
 
 > **Status: Informative.** This document describes the implemented host
-> architecture. The versioned [platform specifications](../platform/abi-v1.md)
+> architecture. The versioned [platform specifications](../platform/abi-v2.md)
 > define guest-visible behavior.
 
 ## Design Boundaries

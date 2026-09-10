@@ -3,7 +3,7 @@
 > **Status: Informative.** This describes the supplied `minimum-template`, not a
 > platform requirement. Alternative kernels may choose different page-table,
 > stack, and temporary-mapping locations while satisfying the normative
-> [platform specifications](../platform/abi-v1.md).
+> [platform specifications](../platform/abi-v2.md).
 
 ## Bootstrap Tables
 

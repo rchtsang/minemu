@@ -13,6 +13,8 @@ All notable changes to `minemu` are documented in this file.
 ### Changed
 
 - Extended the guest block ABI with the `UNIT` register and Invalid Unit error.
+- Published the two-unit device contract as Platform ABI v2 while retaining the
+  Boot ABI and system-image wire format at version 1.
 - Added a supplied synchronous guest block interface for filesystem and swap use.
 
 ## 0.1.1 - 2026-09-09

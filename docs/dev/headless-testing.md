@@ -2,7 +2,7 @@
 
 > **Status: Informative.** This is the canonical schema and execution reference
 > for `minemu test`. Guest-visible behavior is defined by the versioned
-> [platform specifications](../platform/abi-v1.md).
+> [platform specifications](../platform/abi-v2.md).
 
 `minemu test MANIFEST` loads a prebuilt system image, executes it to an exact
 virtual-time boundary, captures execution state, requests shutdown, and checks

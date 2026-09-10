@@ -41,9 +41,10 @@ The build uses the repository root as its context. Docker automatically applies
 nested course repositories, common credential-file patterns, and files outside
 the explicit emulator-source allowlist.
 
-## Published Image
+## Historical Assignment 1 Image
 
-The Assignment 1 image is published for `linux/amd64` and `linux/arm64` as:
+The Assignment 1 image contains `minemu` 0.1.0 and Platform ABI v1. It remains
+published for `linux/amd64` and `linux/arm64` as:
 
 ```text
 rtsang1/cs492-stevens:0.1.0
@@ -105,9 +106,9 @@ On the x86-64 host, build and push the AMD64 image:
 just --justfile container/justfile publish-platform amd64
 ```
 
-These commands derive the version from the `minemu` package using
-`cargo metadata` and push architecture-specific tags such as `:0.1.1-arm64`
-and `:0.1.1-amd64`. The existing `build` and `smoke` recipes remain the fast
+These commands derive the current version from the `minemu` package using
+`cargo metadata` and push architecture-specific tags such as `:0.2.0-arm64`
+and `:0.2.0-amd64`. The existing `build` and `smoke` recipes remain the fast
 native-platform workflow.
 
 ### Manifest Publication

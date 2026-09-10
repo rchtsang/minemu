@@ -23,7 +23,7 @@ git submodule update --init --recursive
 
 | Audience | Documentation |
 |---|---|
-| Students using the starter | [Template quickstart](minimum-template/README.md), [TUI guide](docs/dev/tui.md), and [platform ABI v1](docs/platform/abi-v1.md) |
+| Students using the starter | [Template quickstart](minimum-template/README.md), [TUI guide](docs/dev/tui.md), and [platform ABI v2](docs/platform/abi-v2.md) |
 | Emulator users | [Command-line interface](docs/user/cli.md) and [TUI guide](docs/dev/tui.md) |
 | Conformance authors | [Conformance matrix](docs/dev/abi-conformance.md) and [minimum-tests](minimum-tests/README.md) |
 | Emulator contributors | [Architecture](docs/dev/architecture.md), [development workflows](docs/dev/workflows.md), and [documentation index](docs/README.md) |
@@ -49,10 +49,11 @@ just ci
 tests; builds the student template; packages its image; and runs the
 conformance suite.
 
-## Student Development Image
+## Student Development Images
 
-The multi-stage [`container/Dockerfile`](container/Dockerfile) builds a
+The multi-stage [`container/Dockerfile`](container/Dockerfile) builds a current
 lightweight student environment containing an installed `minemu`, the GNU Arm
 Embedded toolchain, common development tools, and optional OpenCode support.
-Local build, optional Dev Container, smoke-test, and release-image instructions are in
-[`container/README.md`](container/README.md).
+The previously published Assignment 1 image remains pinned to `minemu` 0.1.0
+and Platform ABI v1. Local builds, the optional Dev Container, smoke tests, and
+current publication instructions are in [`container/README.md`](container/README.md).

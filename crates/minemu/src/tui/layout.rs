@@ -92,6 +92,37 @@ impl SplitLayout {
         result.insert(WidgetId::Dialog, right[1]);
         result
     }
+
+    pub fn focus_at(
+        &self,
+        area: Rect,
+        view: View,
+        focused: WidgetId,
+        column: u16,
+        row: u16,
+    ) -> Option<WidgetId> {
+        let areas = self.areas(area, view, focused);
+        [
+            WidgetId::Console,
+            WidgetId::Events,
+            WidgetId::Primary,
+            WidgetId::Secondary,
+            WidgetId::Dialog,
+        ]
+        .into_iter()
+        .find(|target| {
+            areas
+                .get(target)
+                .is_some_and(|area| contains(*area, column, row))
+        })
+    }
+}
+
+const fn contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height)
 }
 
 fn centered(area: Rect, width_percent: u16, maximum_height: u16) -> Rect {
@@ -125,5 +156,41 @@ mod tests {
         assert_eq!(layout.percent(View::Runtime), 80);
         let areas = layout.areas(Rect::new(0, 0, 100, 30), View::Runtime, WidgetId::Console);
         assert!(areas[&WidgetId::Console].width > areas[&WidgetId::Events].width);
+    }
+
+    #[test]
+    fn clicks_focus_visible_runtime_and_inspect_panes() {
+        let layout = SplitLayout::default();
+        let area = Rect::new(0, 0, 100, 30);
+        assert_eq!(
+            layout.focus_at(area, View::Runtime, WidgetId::Console, 5, 5),
+            Some(WidgetId::Console)
+        );
+        assert_eq!(
+            layout.focus_at(area, View::Runtime, WidgetId::Console, 80, 5),
+            Some(WidgetId::Events)
+        );
+        assert_eq!(
+            layout.focus_at(area, View::Inspect, WidgetId::Primary, 5, 5),
+            Some(WidgetId::Primary)
+        );
+        assert_eq!(
+            layout.focus_at(area, View::Inspect, WidgetId::Primary, 80, 5),
+            Some(WidgetId::Secondary)
+        );
+    }
+
+    #[test]
+    fn compact_layout_only_focuses_the_visible_pane() {
+        let layout = SplitLayout::default();
+        let area = Rect::new(0, 0, 60, 10);
+        assert_eq!(
+            layout.focus_at(area, View::Runtime, WidgetId::Events, 5, 3),
+            Some(WidgetId::Events)
+        );
+        assert_eq!(
+            layout.focus_at(area, View::Runtime, WidgetId::Events, 5, 0),
+            None
+        );
     }
 }

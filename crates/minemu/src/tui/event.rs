@@ -11,6 +11,7 @@ pub enum AppEvent {
     Inspection(RuntimeInspection),
     InspectionFailed(RuntimeInspectionRequest, String),
     ViewChanged(View),
+    Reset,
     Pulse,
     Refresh,
     Navigate(Motion),

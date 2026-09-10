@@ -17,9 +17,10 @@ The **runtime** view contains console, events, and dialog panes. The TUI opens
 with emulation paused; use `:start`, `:s`, or Space+s to begin execution. Use
 `:start COUNT` or `:s COUNT` to execute exactly that many instructions and
 automatically pause again. The
-console is focused initially in normal mode. Press `i` to enter insert mode and forward
-ordinary keys, Enter, Backspace, and pasted text to the selected UART. `Esc`
-returns to normal mode.
+console is focused initially in normal mode. Press `i` to enter insert mode and
+forward ordinary keys, Enter, Backspace, and pasted text to the selected UART.
+Input is echoed immediately in the console and remains interleaved with later
+guest output. `Esc` returns to normal mode.
 
 The **inspect** view contains one selected primary subview, one selected
 secondary subview, and the dialog. Entering inspect pauses emulation before
@@ -83,6 +84,7 @@ in hexadecimal.
 | Ctrl+C / Ctrl+E / Ctrl+D | Focus console, events, or dialog. |
 | Ctrl+P / Ctrl+S | Focus inspect primary or secondary. |
 | Space+r / Space+i | Select runtime or inspect. |
+| Left click | Select a view tab or focus a visible pane. |
 | Space+s | Toggle emulation start/stop. |
 | `[#]h/j/k/l`, `w`, `e`, `gg`, `G` | Count-aware pane-local navigation. |
 | `Tab` | Switch the focused inspect pane's subview. |

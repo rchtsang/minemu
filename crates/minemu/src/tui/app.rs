@@ -237,6 +237,7 @@ impl App {
                 if let Err(error) = self.runtime.reset() {
                     self.runtime_error("reset", error.to_string());
                 } else {
+                    self.broadcast(AppEvent::Reset);
                     self.show_message(DialogMessage::info("emulator reset requested"));
                     self.actions.push_back(Action::Refresh(WidgetId::Primary));
                     self.actions.push_back(Action::Refresh(WidgetId::Secondary));
@@ -412,6 +413,21 @@ impl App {
                 let column = self.layout.split_column(self.terminal_area, self.view);
                 if mouse.column.abs_diff(column) <= 2 {
                     self.dragging = Some(split);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(view) =
+                    HeaderWidget::view_at(self.terminal_area, mouse.column, mouse.row)
+                {
+                    self.actions.push_back(Action::SelectView(view));
+                } else if let Some(target) = self.layout.focus_at(
+                    self.terminal_area,
+                    self.view,
+                    self.focused,
+                    mouse.column,
+                    mouse.row,
+                ) {
+                    self.actions.push_back(Action::Focus(target));
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) if self.dragging.is_some() => {

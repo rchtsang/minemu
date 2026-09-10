@@ -87,3 +87,36 @@ impl TuiWidget for HeaderWidget {
         Vec::new()
     }
 }
+
+impl HeaderWidget {
+    pub fn view_at(area: Rect, column: u16, row: u16) -> Option<View> {
+        let inner = Block::default().borders(Borders::TOP).inner(area);
+        if row < inner.y || row >= inner.y.saturating_add(inner.height) {
+            return None;
+        }
+        let offset = column.checked_sub(inner.x)?;
+        match offset {
+            0..=10 => Some(View::Runtime),
+            12..=22 => Some(View::Inspect),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::layout::Rect;
+
+    use super::HeaderWidget;
+    use crate::tui::types::View;
+
+    #[test]
+    fn view_tabs_have_clickable_hit_areas() {
+        let area = Rect::new(4, 2, 80, 2);
+        assert_eq!(HeaderWidget::view_at(area, 4, 3), Some(View::Runtime));
+        assert_eq!(HeaderWidget::view_at(area, 16, 3), Some(View::Inspect));
+        assert_eq!(HeaderWidget::view_at(area, 15, 3), None);
+        assert_eq!(HeaderWidget::view_at(area, 4, 2), None);
+        assert_eq!(HeaderWidget::view_at(area, 30, 3), None);
+    }
+}

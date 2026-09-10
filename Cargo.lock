@@ -483,7 +483,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "minemu"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "capstone",
  "clap",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "minemu-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "minemu-platform",
  "thiserror",
@@ -511,7 +511,7 @@ dependencies = [
 
 [[package]]
 name = "minemu-image"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "minemu-platform",
  "object",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "minemu-platform"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bitflags",
  "thiserror",
@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "minemu-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "minemu-core",
  "minemu-platform",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "minemu-unicorn"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "minemu-core",
  "minemu-platform",

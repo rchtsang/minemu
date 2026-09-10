@@ -17,8 +17,9 @@ documents its user-facing controls.
 
 Widgets own the snapshots and local navigation state they render. The
 registry contains header, console, events, dialog, primary inspector, secondary
-inspector, input bar, and hints widgets. The console owns selected UART and
-scroll state; the primary inspector owns independent physical-memory,
+inspector, input bar, and hints widgets. The console owns selected UART,
+bounded per-UART transcripts, local input echo, and scroll state; the primary
+inspector owns independent physical-memory,
 virtual-memory, and disassembly state; the secondary inspector owns independent
 registers/system/peripherals/pending scroll state; the dialog owns bounded UI
 messages.
@@ -85,9 +86,10 @@ Unhandled normal-mode keys are forwarded to the focused widget.
 ## Layout
 
 `SplitLayout` owns runtime console width and inspect primary/secondary width.
-It computes all rectangles centrally. Ctrl+left-drag creates a resize action;
-widgets only render into their assigned rectangle. This keeps mouse geometry
-pure and unit-testable.
+It computes all rectangles centrally. A left click selects a header view tab or
+focuses the visible pane under the pointer. Ctrl+left-drag creates a resize
+action; widgets only render into their assigned rectangle. This keeps mouse
+geometry pure and unit-testable.
 
 The runtime layout uses console, events, and dialog panes. The inspect layout
 uses one selected primary subview (physical memory, virtual memory, or

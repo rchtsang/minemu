@@ -111,8 +111,8 @@ just --justfile container/justfile publish-platform amd64
 ```
 
 These commands derive the version from the `minemu` package using
-`cargo metadata` and push architecture-specific tags such as `:0.1.0-arm64`
-and `:0.1.0-amd64`. The existing `build` and `smoke` recipes remain the fast
+`cargo metadata` and push architecture-specific tags such as `:0.1.1-arm64`
+and `:0.1.1-amd64`. The existing `build` and `smoke` recipes remain the fast
 native-platform workflow.
 
 ### Manifest Publication

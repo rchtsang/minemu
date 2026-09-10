@@ -17,12 +17,11 @@ single controller.
 The change must preserve all existing register offsets, command behavior, IRQ
 behavior, CLI usage, headless manifests, and guest names for unit 0.
 
-Before the assignment documents become authoritative, this work also reconciles
-the supplied template's documented bootstrap layout, corrects the module-flag
-guide, and adds the instructor-owned virtual-memory and block-I/O foundations
-required by the course progression. `minimum-template` is the canonical source
-for those supplied guest components; synchronize them into `minimum-tests` and
-the `minimum-rtsang` course repository after validation.
+Before the later assignment documents become authoritative, this work also adds
+the instructor-owned virtual-memory and block-I/O foundations required by the
+course progression. `minimum-template` is the canonical source for those
+supplied guest components; synchronize them into `minimum-tests` and the
+`minimum-rtsang` course repository after validation.
 
 This plan assumes ABI v1 has not been released as an immutable external
 contract. The implementation therefore amends the current v1 documents while
@@ -146,61 +145,29 @@ Headless manifests preserve `block_media` as a unit-0 alias and add
 `block0_media` and `block1_media`. Existing block-media assertions default to
 unit 0; add a unit selector for assertions against unit 1.
 
-## Phase 0: Pre-Writing Course Corrections
+## Phase 0: Remaining Course Foundations
 
-Complete each correction before the first assignment that depends on it becomes
-authoritative. Assignment 1 may release before the eager address-space and
-multi-unit block foundations because it uses neither facility.
-
-### Assignment 1 Release Gate
-
-Before Assignment 1 goes live, the student-facing bootstrap layout must match
-the supplied starter, and the Assignment 1 handout, kernel-runtime guide,
-starter IRQ ownership, frozen platform/trap/IRQ headers, sparse public tests,
-and development image must agree. Later user-mode, page-allocation, and storage
-foundations do not block this release.
-
-The bootstrap and module-format documentation corrections below are complete.
-Replacing bootstrap literals with allocator-facing linker symbols and adding
-the eager address-space implementation remain Assignment 2 prerequisites. The
-multi-unit block foundation and all subsequent block-device phases remain
-deferred for Assignments 6 and 7.
+Complete each foundation before the first assignment that depends on it becomes
+authoritative. The bootstrap linker-symbol and eager address-space work are
+Assignment 2 prerequisites. The multi-unit block foundation and subsequent
+block-device phases are required for Assignments 6 and 7.
 
 ### Bootstrap Workspace
-
-The three current guest repositories agree on this implemented bootstrap
-workspace:
-
-| Half-open PA range | Purpose |
-|---|---|
-| `[0x4001_0000, 0x4001_1000)` | Initial page directory |
-| `[0x4001_1000, 0x4001_2000)` | Low-RAM identity-map table |
-| `[0x4001_2000, 0x4002_2000)` | Sixteen RAM direct-map tables |
-| `[0x4002_2000, 0x4002_3000)` | Supervisor MMIO table |
-
-`docs/student/template-memory-layout.md` now records the implemented layout and
-the full sixteen-table direct-map range.
 
 Before Assignment 2, replace duplicated bootstrap workspace literals in
 `minimum-template` with named linker symbols or shared assembly constants where
 practical. Export the complete reserved range to the supplied memory-management
 foundation so a student allocator cannot hand page-table frames to user
 processes. Apply those bootstrap artifact changes to `minimum-tests` and
-`minimum-rtsang`. This implementation work does not block Assignment 1.
+`minimum-rtsang`.
 
 Primary files:
 
-- `docs/student/template-memory-layout.md`
 - `minimum-template/kernel/src/startup/boot.S`
 - `minimum-template/kernel/linker/kernel.ld`
 - Mirrored startup and linker files in `minimum-tests` and `minimum-rtsang`
 
 ### Module Flags
-
-`docs/student/module-format-and-loading.md` now states that serialized
-module-segment flags are Readable, Writable, and Executable. There is no
-serialized User flag. The kernel applies `MINEMU_PTE_USER` as address-space
-policy when mapping a user module.
 
 Before Assignment 2, ensure the supplied loader interfaces consume the shared
 segment flag constants from `minemu/boot.h`, derive PTE permissions explicitly,
@@ -209,7 +176,6 @@ raw PTE bits.
 
 Primary files:
 
-- `docs/student/module-format-and-loading.md`
 - `minimum-template/kernel/include/minemu/boot.h`
 - New supplied loader/address-space implementation in `minimum-template`
 
@@ -465,10 +431,9 @@ persistence leakage.
 - The controller permits only one active request across both units.
 - No MMIO address, existing register offset, or interrupt definition moves.
 - Both media are flushed at every documented lifecycle boundary.
-- `docs/student/template-memory-layout.md` matches the actual supplied
-  bootstrap workspace and reserves all page-table frames.
-- Module documentation and supplied loader code use Readable, Writable, and
-  Executable segment flags; user access remains kernel mapping policy.
+- The supplied loader derives page permissions from the shared Readable,
+  Writable, and Executable segment flags; user access remains kernel mapping
+  policy.
 - `minimum-template` supplies the eager address-space helpers required by
   Assignments 2 and 3 without implementing student-owned process policy.
 - `minimum-template` supplies one serialized synchronous block interface for

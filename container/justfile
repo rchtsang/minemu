@@ -5,7 +5,7 @@ container := justfile_directory()
 dockerfile := justfile_directory() / "Dockerfile"
 docker := env_var_or_default("DOCKER", "docker")
 image := env_var_or_default("IMAGE", "minemu-dev:local")
-repository := env_var_or_default("REPOSITORY", "rtsang1/cs492-stevens.edu")
+repository := env_var_or_default("REPOSITORY", "rtsang1/cs492-stevens")
 buildx_builder := env_var_or_default("BUILDX_BUILDER", "minemu-multiarch")
 dev_uid := `uid="$(id -u)"; if [ "$uid" -eq 0 ]; then printf 1000; else printf %s "$uid"; fi`
 

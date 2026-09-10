@@ -966,11 +966,11 @@ mod hooks {
 
 #[cfg(test)]
 mod tests {
-    use minemu_core::{InterruptUpdate, Machine, PhysicalMemoryAccess, UartUpdate};
+    use minemu_core::{BlockUpdate, InterruptUpdate, Machine, PhysicalMemoryAccess, UartUpdate};
     use minemu_platform::{
         FaultCause, MemRegion, PTE_DIRTY, PTE_EXECUTABLE, PTE_READABLE, PTE_VALID, PTE_WRITABLE,
         Peripheral, PhysicalAddress, PhysicalRange, VirtualAddress,
-        peripherals::{interrupt, uart},
+        peripherals::{block, interrupt, uart},
     };
     use unicorn_engine::RegisterARM;
 
@@ -1374,6 +1374,96 @@ mod tests {
         );
         assert_eq!(backend.register(RegisterARM::R0).unwrap(), 0x791c_7b62);
         assert_eq!(backend.machine().ticks(), 2);
+    }
+
+    #[test]
+    fn guest_block_unit_write_and_read_route_through_the_typed_bus() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        let mut code = vec![
+            0x08, 0x10, 0x9f, 0xe5, // ldr r1, [pc, #8]
+            0x01, 0x00, 0xa0, 0xe3, // mov r0, #1
+            0x20, 0x00, 0x81, 0xe5, // str r0, [r1, #0x20]
+            0x20, 0x20, 0x91, 0xe5, // ldr r2, [r1, #0x20]
+        ];
+        code.extend_from_slice(&MemRegion::Dma.base().get().to_le_bytes());
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &code)
+            .unwrap();
+        let mut backend = UnicornBackend::new(machine).unwrap();
+
+        assert_eq!(
+            backend.run(start, start + 16, 4),
+            BackendStop::InstructionBudget
+        );
+        assert_eq!(backend.register(RegisterARM::R2).unwrap(), block::UNIT_SWAP);
+        assert_eq!(backend.machine().bus.block.unit(), block::UNIT_SWAP);
+    }
+
+    #[test]
+    fn guest_block_command_snapshots_unit_before_later_mmio_write() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        let dma = start + 0x1000;
+        let mut code = vec![
+            0x20, 0x00, 0x81, 0xe5, // str r0, [r1, #0x20]
+            0x04, 0x20, 0x81, 0xe5, // str r2, [r1, #4]
+            0x08, 0x30, 0x81, 0xe5, // str r3, [r1, #8]
+            0x0c, 0x40, 0x81, 0xe5, // str r4, [r1, #0xc]
+            0x00, 0x30, 0x81, 0xe5, // str r3, [r1]
+            0x20, 0x30, 0x81, 0xe5, // str r3, [r1, #0x20]
+        ];
+        code.extend(std::iter::repeat_n([0x00, 0xf0, 0x20, 0xe3], 32).flatten());
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &code)
+            .unwrap();
+        machine
+            .bus
+            .block
+            .update(BlockUpdate::Attach {
+                unit: block::UNIT_FILESYSTEM,
+                media: vec![0x11; 512],
+            })
+            .unwrap();
+        machine
+            .bus
+            .block
+            .update(BlockUpdate::Attach {
+                unit: block::UNIT_SWAP,
+                media: vec![0x22; 512],
+            })
+            .unwrap();
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::R0, 0).unwrap();
+        backend
+            .set_register(RegisterARM::R1, MemRegion::Dma.base().get())
+            .unwrap();
+        backend.set_register(RegisterARM::R2, 0).unwrap();
+        backend.set_register(RegisterARM::R3, 1).unwrap();
+        backend.set_register(RegisterARM::R4, dma).unwrap();
+
+        assert_eq!(
+            backend.run(start, start + 24, 6),
+            BackendStop::InstructionBudget
+        );
+        let inspection = backend.machine().bus.block.inspect();
+        assert_eq!(inspection.unit, block::UNIT_SWAP);
+        assert_eq!(inspection.active_unit, Some(block::UNIT_FILESYSTEM));
+
+        assert_eq!(
+            backend.run(start + 24, start + 152, 32),
+            BackendStop::InstructionBudget
+        );
+        assert_eq!(
+            backend
+                .machine()
+                .memory
+                .read_u32(PhysicalAddress::new(dma))
+                .unwrap(),
+            0x1111_1111
+        );
     }
 
     #[test]

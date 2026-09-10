@@ -46,6 +46,13 @@ pub struct InterruptInspection {
     pub priorities: [u8; 4],
 }
 
+/// Snapshot of one block media unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BlockUnitInspection {
+    pub dirty_sector_count: usize,
+    pub media_attached: bool,
+}
+
 /// Snapshot of block-device command and media state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlockInspection {
@@ -55,8 +62,9 @@ pub struct BlockInspection {
     pub control: u32,
     pub status: u32,
     pub error: u32,
-    pub dirty_sector_count: usize,
-    pub media_attached: bool,
+    pub unit: u32,
+    pub active_unit: Option<u32>,
+    pub units: [BlockUnitInspection; 2],
 }
 
 /// Snapshot of RNG state.
@@ -96,6 +104,7 @@ pub struct PeripheralsInspection {
 /// Memory responses borrow the machine for their lifetime. This permits
 /// zero-copy synchronous inspection while preventing concurrent mutation.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum InspectionResponse<'a> {
     Memory(&'a [u8]),
     Mmu(MmuInspection),

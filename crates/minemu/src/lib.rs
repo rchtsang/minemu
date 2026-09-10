@@ -54,6 +54,8 @@ pub enum CliError {
     Image(#[from] minemu_image::ImageError),
     #[error("runtime setup failed")]
     RuntimeSetup,
+    #[error("runtime setup failed: {0}")]
+    Runtime(String),
     #[error("headless assertion failed: {0}")]
     Assertion(String),
 }

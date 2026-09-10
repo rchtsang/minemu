@@ -25,8 +25,8 @@ effect. Invalid accesses produce the fault specified by
 | Interrupt `PENDING`, `ENABLE`, active claim | `0`, `0`, none |
 | Interrupt priorities | SysTick `0`, UART0 `64`, UART1 `64`, block `128` |
 | SysTick `PERIOD`, `CONTROL`, `STATUS`, deadline | `0`, `0`, `0`, none |
-| Block `LBA`, `SECTOR_COUNT`, `PADDR`, `CONTROL` | All `0` |
-| Block `STATUS`, `ERROR`, active request, dirty set | `0`, `0`, none, empty |
+| Block `LBA`, `SECTOR_COUNT`, `PADDR`, `CONTROL`, `UNIT` | All `0` |
+| Block `STATUS`, `ERROR`, active request, per-unit dirty sets | `0`, `0`, none, empty |
 | RNG configured seed and state | `0x4d45_4d55` |
 | UART0/1 RX and TX queues, `CONTROL` | Empty, empty, `0` |
 | Trace event history | Empty |
@@ -34,10 +34,11 @@ effect. Invalid accesses produce the fault specified by
 **MINEMU-DEV1-RESET-001:** Platform reset MUST establish every value in the
 reset-state table and cancel asynchronous deadlines.
 
-**MINEMU-DEV1-RESET-002:** Attached block-media bytes MUST remain attached and
-unchanged across a successful reset. Before rebuilding device state, the host
-MUST attempt to flush dirty media. If that flush fails, reset MUST fail rather
-than discard dirty data or begin guest execution.
+**MINEMU-DEV1-RESET-002:** Attached block-media bytes for both units MUST remain
+attached and unchanged across a successful reset. Before rebuilding device
+state, the host MUST attempt to flush both dirty media, even if one flush fails.
+If either flush fails, reset MUST fail rather than discard dirty data or begin
+guest execution.
 
 ## Interrupt Controller
 
@@ -120,6 +121,11 @@ Base PA: `0x1000_2000`; interrupt source ID `3`; sector size 512 bytes.
 | `0x14` | `ERROR` | R | Error code below |
 | `0x18` | `ACK` | W | Exact value `1` clears complete and error |
 | `0x1c` | `CONTROL` | R/W | Bit 0 completion IRQ enable |
+| `0x20` | `UNIT` | R/W | Medium selected for the next command |
+
+Units `0` and `1` are supported and have identical raw-sector behavior. The
+course environment uses unit `0` for filesystem/general storage and unit `1`
+for swap. This convention is not a hardware restriction.
 
 | Error | Name | Meaning |
 |---:|---|---|
@@ -130,11 +136,13 @@ Base PA: `0x1000_2000`; interrupt source ID `3`; sector size 512 bytes.
 | `4` | Invalid DMA | Misaligned, overflowing, or non-RAM DMA range |
 | `5` | Invalid LBA | Media byte range outside attached media or size overflow |
 | `6` | Deferred persistence | Host write-back flush failed |
+| `7` | Invalid unit | Snapshotted unit is not `0` or `1` |
 
 **MINEMU-DEV1-BLOCK-001:** A command write while idle MUST snapshot `COMMAND`,
-`LBA`, `SECTOR_COUNT`, and `PADDR`, clear prior Complete/Error state, set Busy,
-and schedule completion at `T + 32` ticks. Command validity and transfer errors
-MUST be reported at that deadline, not synchronously.
+`LBA`, `SECTOR_COUNT`, `PADDR`, and `UNIT`, clear prior Complete/Error state, set
+Busy, and schedule completion at `T + 32` ticks. Later staging-register writes
+MUST NOT change the active request. Command validity and transfer errors MUST be
+reported at that deadline, not synchronously.
 
 **MINEMU-DEV1-BLOCK-002:** At the deadline, the device MUST clear Busy, attempt
 the complete transfer, set Complete, and set Error plus its code on failure.
@@ -146,15 +154,17 @@ arithmetic overflow. `SECTOR_COUNT` MUST be nonzero; zero reports Invalid DMA.
 The media range beginning at LBA with the same byte length MUST fit the attached
 medium.
 
-**MINEMU-DEV1-BLOCK-004:** Command `1` MUST copy media bytes into RAM. Command
-`2` MUST copy RAM bytes into the device's write-back media and mark every
-written sector dirty. Later guest reads MUST observe the updated write-back
-bytes without waiting for host persistence.
+**MINEMU-DEV1-BLOCK-004:** Command `1` MUST copy bytes from the selected unit
+into RAM. Command `2` MUST copy RAM bytes into the selected unit's write-back
+media and mark every written sector dirty for that unit. Media bytes and dirty
+sets MUST remain independent between units. Later guest reads MUST observe the
+updated write-back bytes without waiting for host persistence.
 
-**MINEMU-DEV1-BLOCK-005:** A command write while Busy MUST leave the active
-request and its deadline unchanged, immediately set Complete and Error with
-code Busy, and recompute the interrupt level. The active request may later
-replace that completion result at its normal deadline.
+**MINEMU-DEV1-BLOCK-005:** The controller permits one active request across both
+units. A command write while Busy MUST leave the active request and its deadline
+unchanged, immediately set Complete and Error with code Busy, and recompute the
+interrupt level. The active request may later replace that completion result at
+its normal deadline.
 
 **MINEMU-DEV1-BLOCK-006:** The block interrupt level is
 `STATUS.complete AND CONTROL.irq_enable`. An exact `ACK = 1` clears Complete and
@@ -166,6 +176,15 @@ set Complete and Error with code Deferred persistence, and recompute the
 interrupt level. Host-file layout is a contiguous sector image where LBA `n`
 corresponds to host-file byte offset `512 * n`; a host path and flush schedule
 are host configuration, not guest addresses.
+
+**MINEMU-DEV1-BLOCK-008:** A request that snapshots a unit other than `0` or `1`
+MUST complete at its normal deadline with Invalid Unit. A supported unit without
+attached media MUST instead complete with No Media.
+
+**MINEMU-DEV1-BLOCK-009:** Both units share `STATUS`, `ERROR`, `ACK`, `CONTROL`,
+and interrupt source `3`. The host MUST track and flush each unit independently,
+attempt both flushes when both are dirty, preserve dirty state for each failed
+flush, and reject configuration of the same canonical host path for both units.
 
 ## Deterministic RNG
 

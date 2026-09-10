@@ -136,11 +136,12 @@ impl SecondaryWidget {
                         )
                     },
                 );
+                let block = format_block(&p.block);
                 format!(
                     "UART0:\n  status:  0x{:08x}\n  control: 0x{:08x}\n  rx:      {}\n  rx irq:  {}\n  tx:      {} bytes\n\
 UART1:\n  status:  0x{:08x}\n  control: 0x{:08x}\n  rx:      {}\n  rx irq:  {}\n  tx:      {} bytes\n\
 SysTick:\n  period:  {}\n  control: 0x{:08x}\n  status:  0x{:08x}\n\
-Block:\n  lba:     {}\n  sectors: {}\n  dma:     0x{:08x}\n  control: 0x{:08x}\n  status:  0x{:08x}\n  error:   0x{:08x}\n  dirty:   {}\n  media:   {}\n\
+{}\n\
 RNG:\n  state:   0x{:08x}\n\
 Trace:\n  events:  {}\n{}",
                     p.uart0.status,
@@ -156,14 +157,7 @@ Trace:\n  events:  {}\n{}",
                     p.systick.period,
                     p.systick.control,
                     p.systick.status,
-                    p.block.lba,
-                    p.block.sector_count,
-                    p.block.dma_address,
-                    p.block.control,
-                    p.block.status,
-                    p.block.error,
-                    p.block.dirty_sector_count,
-                    if p.block.media_attached { "attached" } else { "none" },
+                    block,
                     p.rng.state,
                     p.trace.len(),
                     latest_trace
@@ -242,6 +236,34 @@ Trace:\n  events:  {}\n{}",
         self.rows[SecondarySubview::Registers.index()] = row;
         Vec::new()
     }
+}
+
+fn format_block(block: &minemu_platform::BlockInspection) -> String {
+    format!(
+        "Block:\n  lba:         {}\n  sectors:     {}\n  dma:         0x{:08x}\n  control:     0x{:08x}\n  status:      0x{:08x}\n  error:       0x{:08x}\n  staged unit: {}\n  active unit: {}\n  unit 0:\n    media: {}\n    dirty: {}\n  unit 1:\n    media: {}\n    dirty: {}",
+        block.lba,
+        block.sector_count,
+        block.dma_address,
+        block.control,
+        block.status,
+        block.error,
+        block.unit,
+        block
+            .active_unit
+            .map_or_else(|| "none".into(), |unit| unit.to_string()),
+        if block.units[0].media_attached {
+            "attached"
+        } else {
+            "none"
+        },
+        block.units[0].dirty_sector_count,
+        if block.units[1].media_attached {
+            "attached"
+        } else {
+            "none"
+        },
+        block.units[1].dirty_sector_count,
+    )
 }
 
 impl TuiWidget for SecondaryWidget {
@@ -399,10 +421,10 @@ fn fault_cause(cause: Option<FaultCause>) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use minemu_platform::VirtualAddress;
+    use minemu_platform::{BlockInspection, BlockUnitInspection, VirtualAddress};
     use minemu_runtime::ExecutionInspection;
 
-    use super::SecondaryWidget;
+    use super::{SecondaryWidget, format_block};
     use crate::tui::{event::AppEvent, input::Motion, types::SecondarySubview, widget::TuiWidget};
 
     #[test]
@@ -445,5 +467,34 @@ mod tests {
         };
         widget.update(&AppEvent::Navigate(Motion::Up(1)));
         assert_eq!(widget.rows, [1, 1, 3, 4]);
+    }
+
+    #[test]
+    fn block_format_keeps_shared_and_per_unit_state_distinct() {
+        let text = format_block(&BlockInspection {
+            lba: 7,
+            sector_count: 2,
+            dma_address: 0x4000_0200,
+            control: 1,
+            status: 1,
+            error: 0,
+            unit: 1,
+            active_unit: Some(0),
+            units: [
+                BlockUnitInspection {
+                    dirty_sector_count: 3,
+                    media_attached: true,
+                },
+                BlockUnitInspection {
+                    dirty_sector_count: 0,
+                    media_attached: false,
+                },
+            ],
+        });
+        assert!(text.contains("staged unit: 1"));
+        assert!(text.contains("active unit: 0"));
+        assert!(text.contains("unit 0:\n    media: attached\n    dirty: 3"));
+        assert!(text.contains("unit 1:\n    media: none\n    dirty: 0"));
+        assert_eq!(text.matches("status:").count(), 1);
     }
 }

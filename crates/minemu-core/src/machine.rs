@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use minemu_platform::{
     ExceptionKind, InspectionRequest, InspectionResponse, MemRegion, ObservableEvent, Peripheral,
     TraceInspectionEvent, VirtualAddress,
+    peripherals::block::{UNIT_FILESYSTEM, UNIT_SWAP},
 };
 
 use crate::{ExceptionPlan, MmioBus, Mmu, MmuFault, PhysicalMemory, PhysicalMemoryAccess, Result};
@@ -69,11 +70,13 @@ impl Machine {
             PhysicalMemory::with_roms(&boot_rom, &system_rom)?,
             self.event_capacity,
         );
-        if let Some(media) = self.bus.block.media_clone() {
-            machine
-                .bus
-                .block
-                .update(crate::BlockUpdate::Attach(media))?;
+        for unit in [UNIT_FILESYSTEM, UNIT_SWAP] {
+            if let Some(media) = self.bus.block.media_clone(unit)? {
+                machine
+                    .bus
+                    .block
+                    .update(crate::BlockUpdate::Attach { unit, media })?;
+            }
         }
         Ok(machine)
     }
@@ -168,10 +171,11 @@ impl Default for Machine {
 mod tests {
     use minemu_platform::{
         ExceptionKind, InspectionRequest, InspectionResponse, MemRegion, MmioTransaction,
-        MmioWidth, ObservableEvent, PhysicalAddress, TraceInspectionEvent, VirtualAddress,
+        MmioWidth, ObservableEvent, Peripheral, PhysicalAddress, TraceInspectionEvent,
+        VirtualAddress,
     };
 
-    use crate::{InstructionOutcome, Machine, PhysicalMemory, PhysicalMemoryAccess};
+    use crate::{BlockUpdate, InstructionOutcome, Machine, PhysicalMemory, PhysicalMemoryAccess};
 
     #[test]
     fn virtual_time_distinguishes_traps_and_faults() {
@@ -297,6 +301,22 @@ mod tests {
             .memory
             .write_u8(PhysicalAddress::new(MemRegion::Ram.base().get()), 7)
             .unwrap();
+        machine
+            .bus
+            .block
+            .update(BlockUpdate::Attach {
+                unit: 0,
+                media: vec![3; 512],
+            })
+            .unwrap();
+        machine
+            .bus
+            .block
+            .update(BlockUpdate::Attach {
+                unit: 1,
+                media: vec![4; 512],
+            })
+            .unwrap();
         let reset = machine.reset_clone().unwrap();
         assert_eq!(reset.memory.read_u8(MemRegion::BootRom.base()).unwrap(), 1);
         assert_eq!(
@@ -310,5 +330,9 @@ mod tests {
                 .unwrap(),
             0
         );
+        assert_eq!(reset.bus.block.media_clone(0).unwrap().unwrap()[0], 3);
+        assert_eq!(reset.bus.block.media_clone(1).unwrap().unwrap()[0], 4);
+        assert_eq!(reset.bus.block.unit(), 0);
+        assert_eq!(reset.bus.block.status(), 0);
     }
 }

@@ -13,7 +13,8 @@ the manifest's assertions. It does not package an image or compile guest code.
 ```toml
 image = "build/minimum.img"
 boot_rom = "../bootloader/bootloader.bin"
-block_media = "build/disk.img"
+block0_media = "build/filesystem.img"
+block1_media = "build/swap.img"
 instruction_batch = 1
 max_ticks = 100
 
@@ -37,6 +38,7 @@ fault_status = 0x00000101
 trace_values = [1, 2, 3]
 
 [[assert.block_media]]
+unit = 1
 offset = 512
 bytes = [0xde, 0xad, 0xbe, 0xef]
 ```
@@ -53,16 +55,19 @@ wrong types, out-of-range integers, unknown lifecycle names, and
 | `image` | string path | Required | Valid prebuilt system image |
 | `boot_rom` | string path | Required | Exactly 65,536 bytes of raw Boot ROM |
 | `block_media` | string path | Optional | Existing nonempty raw media whose size is a multiple of 512 bytes |
+| `block0_media` | string path | Optional | Explicit unit-0 media; conflicts with `block_media` |
+| `block1_media` | string path | Optional | Unit-1 media |
 | `instruction_batch` | positive integer | Default `1024` | Maximum instructions requested per backend batch |
 | `max_ticks` | `u64` | Default `100000` | Absolute virtual-time deadline; zero is valid |
 | `inputs` | array of tables | Default empty | Scheduled UART byte strings |
 | `ram_prefill` | array of tables | Default empty | RAM initialization performed by the harness |
 | `assert` | table | Required | Execution/shutdown expectations |
 
-`image`, `boot_rom`, and `block_media` paths are absolute or relative to the
+Image, Boot ROM, and all block-media paths are absolute or relative to the
 test manifest's directory. They are joined lexically; `minemu` does not expand
-`~` or environment variables. The media file is mutated in place, so tests
-should use an ignored disposable copy.
+`~` or environment variables. `block_media` remains a unit-0 compatibility
+alias. The same canonical file cannot be attached to both units. Media files are
+mutated in place, so tests should use ignored disposable copies.
 
 The `[assert]` table must contain at least one recognized assertion field or a
 nonempty `[[assert.block_media]]` array. Presence is the validation criterion;
@@ -127,9 +132,9 @@ Peripheral, MMU, and event inspection requires a paused execution snapshot. A
 runtime failure automatically fails the test before ordinary execution
 assertions, even if the manifest does not include a lifecycle assertion.
 
-Block-media assertions are checked from the persisted host file after shutdown,
-not from in-memory device state. They are currently evaluated before other
-assertions, so a media mismatch may be the first reported failure.
+Block-media assertions are checked from persisted host files after shutdown,
+not from in-memory device state. Runtime and execution assertions are evaluated
+first so a lifecycle failure is not hidden by a resulting media mismatch.
 
 ## Assertions
 
@@ -163,11 +168,13 @@ Each `[[assert.block_media]]` table requires:
 
 | Field | Type | Meaning |
 |---|---|---|
+| `unit` | `u8` | Unit `0` or `1`; defaults to `0` |
 | `offset` | `u64` | Zero-based host-file byte offset |
 | `bytes` | array of `u8` | Exact expected byte sequence |
 
-The test must also set top-level `block_media`. After shutdown flushes dirty
-write-back media, the runner rereads the file and compares
+The test must attach the selected unit with `block_media`, `block0_media`, or
+`block1_media` as appropriate. After shutdown flushes dirty write-back media,
+the runner rereads that unit's file and compares
 `[offset, offset + bytes.len())` exactly. Assertions need not be sector-aligned,
 may overlap, and run in manifest order. Out-of-range regions and byte mismatches
 fail. An empty byte array is accepted and passes when its offset is no greater
@@ -175,10 +182,10 @@ than the media length.
 
 ## Result And Exit Behavior
 
-Assertions stop at the first failure. Apart from the earlier block-media pass,
-execution assertions are evaluated in this order: runtime failure, UART0,
+Assertions stop at the first failure. Execution assertions are evaluated in
+this order: runtime failure, UART0,
 UART1, ticks, execution lifecycle, shutdown lifecycle, MMU state, fault status,
-then trace values.
+then trace values. Block-media assertions follow in manifest order.
 
 Success prints nothing and returns status 0. Captured UART output is not printed.
 Manifest, setup, runtime, persistence, and assertion errors are written to

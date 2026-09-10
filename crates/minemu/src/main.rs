@@ -43,9 +43,15 @@ enum Command {
         /// Raw 64-KiB platform firmware mapped at the reset vector.
         #[arg(long, value_name = "BOOT_ROM")]
         boot_rom: PathBuf,
-        /// Optional host raw-disk file attached as write-back block media.
-        #[arg(short = 'm', long)]
+        /// Legacy unit-0 host raw-disk attachment.
+        #[arg(short = 'm', long, conflicts_with = "block0_media")]
         block_media: Option<PathBuf>,
+        /// Optional host raw-disk file explicitly attached as block unit 0.
+        #[arg(long)]
+        block0_media: Option<PathBuf>,
+        /// Optional host raw-disk file attached as block unit 1.
+        #[arg(long)]
+        block1_media: Option<PathBuf>,
         /// Headless virtual-time deadline (default: 100000).
         #[arg(short = 't', long, requires = "headless")]
         ticks: Option<u64>,
@@ -106,16 +112,20 @@ fn execute(command: Command) -> minemu::Result<()> {
             image,
             boot_rom,
             block_media,
+            block0_media,
+            block1_media,
             ticks,
             headless,
         } => {
+            let block0_media = block0_media.or(block_media);
             if !headless {
-                return run_tui(image, boot_rom, block_media);
+                return run_tui(image, boot_rom, block0_media, block1_media);
             }
             let result = run_image(RunOptions {
                 image,
                 boot_rom,
-                block_media_path: block_media,
+                block_media_path: block0_media,
+                block1_media_path: block1_media,
                 instruction_batch: None,
                 max_ticks: ticks.unwrap_or(100_000),
                 inputs: Vec::new(),
@@ -142,7 +152,7 @@ fn execute(command: Command) -> minemu::Result<()> {
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::Cli;
+    use super::{Cli, Command};
 
     #[test]
     fn generated_help_describes_tui_first_run_mode() {
@@ -185,6 +195,49 @@ mod tests {
                 "1",
             ])
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn block_media_flags_preserve_unit_zero_alias_and_allow_unit_one() {
+        let cli = Cli::try_parse_from([
+            "minemu",
+            "run",
+            "image.bin",
+            "--boot-rom",
+            "boot.bin",
+            "--block-media",
+            "disk.img",
+            "--block1-media",
+            "swap.img",
+        ])
+        .unwrap();
+        let Command::Run {
+            block_media,
+            block0_media,
+            block1_media,
+            ..
+        } = cli.command
+        else {
+            panic!("expected run command");
+        };
+        assert_eq!(block_media.unwrap(), std::path::PathBuf::from("disk.img"));
+        assert!(block0_media.is_none());
+        assert_eq!(block1_media.unwrap(), std::path::PathBuf::from("swap.img"));
+
+        assert!(
+            Cli::try_parse_from([
+                "minemu",
+                "run",
+                "image.bin",
+                "--boot-rom",
+                "boot.bin",
+                "--block-media",
+                "disk.img",
+                "--block0-media",
+                "other.img",
+            ])
+            .is_err()
         );
     }
 }

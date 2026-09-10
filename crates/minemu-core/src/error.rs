@@ -14,12 +14,18 @@ pub enum CoreError {
     PhysicalAccessOutOfBounds { address: u32, needed: usize },
     #[error("interrupt controller EOI {actual} does not match claimed source {expected}")]
     InvalidEoi { expected: u32, actual: u32 },
-    #[error("block media must contain a nonzero whole number of sectors")]
-    InvalidBlockMedia,
+    #[error("block unit {0} is not supported")]
+    InvalidBlockUnit(u32),
+    #[error("block unit {unit} media must contain a nonzero whole number of sectors")]
+    InvalidBlockMedia { unit: u32 },
     #[error("block command is already active")]
     BlockBusy,
-    #[error("block media flush failed")]
-    BlockFlush(#[source] std::io::Error),
+    #[error("block unit {unit} media flush failed")]
+    BlockFlush {
+        unit: u32,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Result type used by `minemu-core`.

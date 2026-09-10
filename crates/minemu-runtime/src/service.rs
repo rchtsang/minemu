@@ -11,7 +11,10 @@ use std::{
 };
 
 use minemu_core::{BlockUpdate, MachineStatus, PhysicalMemoryAccess, UartUpdate};
-use minemu_platform::{InspectionRequest, InspectionResponse, Peripheral};
+use minemu_platform::{
+    InspectionRequest, InspectionResponse, Peripheral,
+    peripherals::block::{UNIT_FILESYSTEM, UNIT_SWAP},
+};
 use minemu_unicorn::{BackendStop, UnicornBackend};
 use tracing::{debug, error, info, trace, warn};
 
@@ -40,6 +43,7 @@ pub struct RuntimeHandle {
 impl RuntimeHandle {
     /// Starts a concrete machine on its dedicated emulator thread.
     pub fn spawn(mut config: RuntimeConfig) -> Result<Self> {
+        canonicalize_block_media_paths(&mut config)?;
         let machine_status = config.machine.status();
         let status = Arc::new(Mutex::new(RuntimeStatus {
             lifecycle: LifecycleState::Starting,
@@ -196,7 +200,7 @@ struct Emulator {
     entry: u32,
     end: u32,
     instruction_batch: usize,
-    block_media_path: Option<std::path::PathBuf>,
+    block_media_paths: [Option<std::path::PathBuf>; 2],
     initial_ram_writes: Vec<(minemu_platform::PhysicalAddress, Vec<u8>)>,
 }
 
@@ -210,7 +214,10 @@ impl Emulator {
             entry: config.entry,
             end: config.end,
             instruction_batch: config.instruction_batch,
-            block_media_path: config.block_media_path.clone(),
+            block_media_paths: [
+                config.block_media_path.clone(),
+                config.block1_media_path.clone(),
+            ],
             initial_ram_writes: config.initial_ram_writes.clone(),
         })
     }
@@ -240,7 +247,8 @@ impl Emulator {
             status_period: Duration::ZERO,
             command_capacity: 1,
             uart_capacity: 0,
-            block_media_path: self.block_media_path.clone(),
+            block_media_path: self.block_media_paths[0].clone(),
+            block1_media_path: self.block_media_paths[1].clone(),
             initial_ram_writes: self.initial_ram_writes.clone(),
             start_paused: false,
             execution_deadline: None,
@@ -253,15 +261,27 @@ impl Emulator {
     }
 
     fn flush(&mut self) -> Result<()> {
-        let Some(path) = &self.block_media_path else {
-            return Ok(());
-        };
-        self.backend
-            .machine_mut()
-            .bus
-            .block
-            .flush(|media| fs::write(path, media))?;
-        Ok(())
+        let mut first_error = None;
+        for (unit, path) in [UNIT_FILESYSTEM, UNIT_SWAP]
+            .into_iter()
+            .zip(self.block_media_paths.iter())
+        {
+            let Some(path) = path else { continue };
+            if let Err(error) = self
+                .backend
+                .machine_mut()
+                .bus
+                .block
+                .flush(unit, |media| fs::write(path, media))
+            {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                } else {
+                    error!(unit, path = %path.display(), error = %error, "additional block flush failed");
+                }
+            }
+        }
+        first_error.map_or(Ok(()), Err).map_err(Into::into)
     }
 
     fn drain_uart(&mut self, inbox: &Arc<Mutex<UartInbox>>) {
@@ -332,16 +352,44 @@ fn configured_machine(
     source: &minemu_core::Machine,
 ) -> Result<minemu_core::Machine> {
     let mut machine = source.reset_clone()?;
-    if let Some(path) = &config.block_media_path {
-        machine
-            .bus
-            .block
-            .update(BlockUpdate::Attach(fs::read(path)?))?;
+    for (unit, path) in [UNIT_FILESYSTEM, UNIT_SWAP]
+        .into_iter()
+        .zip([&config.block_media_path, &config.block1_media_path])
+    {
+        if let Some(path) = path {
+            machine.bus.block.update(BlockUpdate::Attach {
+                unit,
+                media: fs::read(path)?,
+            })?;
+        }
     }
     for (address, bytes) in &config.initial_ram_writes {
         machine.memory.write_range(*address, bytes)?;
     }
     Ok(machine)
+}
+
+fn canonicalize_block_media_paths(config: &mut RuntimeConfig) -> Result<()> {
+    for (unit, path) in [UNIT_FILESYSTEM, UNIT_SWAP]
+        .into_iter()
+        .zip([&mut config.block_media_path, &mut config.block1_media_path])
+    {
+        if let Some(original) = path {
+            let canonical =
+                fs::canonicalize(&*original).map_err(|source| RuntimeError::BlockMediaPath {
+                    unit,
+                    path: original.clone(),
+                    source,
+                })?;
+            *original = canonical;
+        }
+    }
+    if let (Some(unit0), Some(unit1)) = (&config.block_media_path, &config.block1_media_path)
+        && unit0 == unit1
+    {
+        return Err(RuntimeError::DuplicateBlockMediaPath(unit0.clone()));
+    }
+    Ok(())
 }
 
 struct Service {
@@ -703,25 +751,23 @@ mod emulator_tests {
 
     static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
-    #[test]
-    fn reset_flushes_dirty_block_media_before_rebuilding() {
-        let path = std::env::temp_dir().join(format!(
-            "minemu-reset-flush-{}-{}.img",
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "minemu-{label}-{}-{}.img",
             std::process::id(),
             NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::write(&path, vec![0; 512]).unwrap();
+        ))
+    }
 
-        let mut config = RuntimeConfig::new(Machine::default(), 0);
-        config.block_media_path = Some(path.clone());
-        let mut emulator = Emulator::new(&config).unwrap();
+    fn dirty_unit(emulator: &mut Emulator, unit: u32, value: u8) {
         let dma = MemRegion::Ram.base();
         let machine = emulator.backend.machine_mut();
-        machine.memory.write_u8(dma, 0xa5).unwrap();
+        machine.memory.write_u8(dma, value).unwrap();
         for (register, value) in [
             (Register::Lba, 0),
             (Register::SectorCount, 1),
             (Register::PhysicalAddress, dma.get()),
+            (Register::Unit, unit),
             (Register::Command, 2),
         ] {
             machine
@@ -737,20 +783,69 @@ mod emulator_tests {
         for _ in 0..32 {
             machine.finish_instruction(minemu_core::InstructionOutcome::Completed);
         }
-        assert_eq!(machine.bus.block.dirty_sector_count(), 1);
+    }
+
+    #[test]
+    fn reset_flushes_dirty_block_media_before_rebuilding() {
+        let path0 = temp_path("reset-flush-0");
+        let path1 = temp_path("reset-flush-1");
+        fs::write(&path0, vec![0; 512]).unwrap();
+        fs::write(&path1, vec![0; 512]).unwrap();
+
+        let mut config = RuntimeConfig::new(Machine::default(), 0);
+        config.block_media_path = Some(path0.clone());
+        config.block1_media_path = Some(path1.clone());
+        let mut emulator = Emulator::new(&config).unwrap();
+        dirty_unit(&mut emulator, 0, 0xa5);
+        dirty_unit(&mut emulator, 1, 0x5a);
 
         emulator.reset().unwrap();
 
-        assert_eq!(fs::read(&path).unwrap()[0], 0xa5);
-        assert_eq!(
-            emulator
-                .backend
-                .machine_mut()
-                .bus
-                .block
-                .dirty_sector_count(),
-            0
-        );
+        assert_eq!(fs::read(&path0).unwrap()[0], 0xa5);
+        assert_eq!(fs::read(&path1).unwrap()[0], 0x5a);
+        let block = &emulator.backend.machine().bus.block;
+        assert_eq!(block.dirty_sector_count(0).unwrap(), 0);
+        assert_eq!(block.dirty_sector_count(1).unwrap(), 0);
+        fs::remove_file(path0).unwrap();
+        fs::remove_file(path1).unwrap();
+    }
+
+    #[test]
+    fn flush_attempts_unit_one_after_unit_zero_fails() {
+        let path0 = temp_path("failed-flush-0");
+        let path1 = temp_path("successful-flush-1");
+        fs::write(&path0, vec![0; 512]).unwrap();
+        fs::write(&path1, vec![0; 512]).unwrap();
+        let mut config = RuntimeConfig::new(Machine::default(), 0);
+        config.block_media_path = Some(path0.clone());
+        config.block1_media_path = Some(path1.clone());
+        let mut emulator = Emulator::new(&config).unwrap();
+        dirty_unit(&mut emulator, 0, 0xa5);
+        dirty_unit(&mut emulator, 1, 0x5a);
+
+        fs::remove_file(&path0).unwrap();
+        fs::create_dir(&path0).unwrap();
+        assert!(emulator.flush().is_err());
+        assert_eq!(fs::read(&path1).unwrap()[0], 0x5a);
+        let block = &emulator.backend.machine().bus.block;
+        assert_eq!(block.dirty_sector_count(0).unwrap(), 1);
+        assert_eq!(block.dirty_sector_count(1).unwrap(), 0);
+
+        fs::remove_dir(path0).unwrap();
+        fs::remove_file(path1).unwrap();
+    }
+
+    #[test]
+    fn duplicate_block_media_paths_are_rejected() {
+        let path = temp_path("duplicate");
+        fs::write(&path, vec![0; 512]).unwrap();
+        let mut config = RuntimeConfig::new(Machine::default(), 0);
+        config.block_media_path = Some(path.clone());
+        config.block1_media_path = Some(path.clone());
+        assert!(matches!(
+            super::RuntimeHandle::spawn(config),
+            Err(super::RuntimeError::DuplicateBlockMediaPath(_))
+        ));
         fs::remove_file(path).unwrap();
     }
 }

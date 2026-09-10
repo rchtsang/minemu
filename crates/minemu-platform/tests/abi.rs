@@ -97,7 +97,35 @@ fn peripheral_constants_are_stable() {
     assert_eq!(interrupt::Source::Block.bit(), 8);
     assert_eq!(block::STATUS_BUSY, 1);
     assert_eq!(block::Error::DeferredPersistence as u32, 6);
+    assert_eq!(block::Error::InvalidUnit as u32, 7);
+    assert_eq!(block::UNIT_FILESYSTEM, 0);
+    assert_eq!(block::UNIT_SWAP, 1);
     assert_eq!(rng::DEFAULT_SEED, 0x4d45_4d55);
+}
+
+#[test]
+fn block_unit_extends_the_existing_controller_page() {
+    let unit_address = PhysicalAddress::new(MemRegion::Dma.base().get() + 0x20);
+    assert_eq!(
+        decode_mmio(MmioTransaction::write(
+            unit_address,
+            MmioWidth::U32,
+            u32::MAX,
+        )),
+        Ok(MmioRegister::Dma(block::Register::Unit))
+    );
+    assert_eq!(
+        decode_mmio(MmioTransaction::read(unit_address, MmioWidth::U32)),
+        Ok(MmioRegister::Dma(block::Register::Unit))
+    );
+    assert!(matches!(
+        decode_mmio(MmioTransaction::read(
+            PhysicalAddress::new(MemRegion::Dma.base().get() + 0x24),
+            MmioWidth::U32,
+        )),
+        Err(PlatformError::InvalidMmioAddress(_))
+    ));
+    assert_eq!(MemRegion::Dma.range().length(), PAGE_SIZE);
 }
 
 #[test]

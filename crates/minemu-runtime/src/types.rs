@@ -100,6 +100,7 @@ pub struct RuntimeConfig {
     pub command_capacity: usize,
     pub uart_capacity: usize,
     pub block_media_path: Option<PathBuf>,
+    pub block1_media_path: Option<PathBuf>,
     pub initial_ram_writes: Vec<(PhysicalAddress, Vec<u8>)>,
     pub start_paused: bool,
     pub execution_deadline: Option<u64>,
@@ -117,6 +118,7 @@ impl RuntimeConfig {
             command_capacity: 32,
             uart_capacity: 4096,
             block_media_path: None,
+            block1_media_path: None,
             initial_ram_writes: Vec::new(),
             start_paused: false,
             execution_deadline: None,
@@ -144,6 +146,15 @@ pub enum RuntimeError {
     Backend(#[from] BackendError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("failed to resolve block unit {unit} media path {path}: {source}")]
+    BlockMediaPath {
+        unit: u32,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("block units 0 and 1 resolve to the same media path {0}")]
+    DuplicateBlockMediaPath(PathBuf),
 }
 
 pub(crate) type Result<T> = std::result::Result<T, RuntimeError>;

@@ -11,7 +11,15 @@ pub enum Register {
     Error,
     Ack,
     Control,
+    Unit,
 }
+
+/// General-purpose/filesystem media unit.
+pub const UNIT_FILESYSTEM: u32 = 0;
+/// Swap media unit.
+pub const UNIT_SWAP: u32 = 1;
+/// Number of supported media units.
+pub const UNIT_COUNT: usize = 2;
 
 /// Block STATUS busy bit.
 pub const STATUS_BUSY: u32 = 1 << 0;
@@ -31,6 +39,7 @@ pub enum Error {
     InvalidDma = 4,
     InvalidLba = 5,
     DeferredPersistence = 6,
+    InvalidUnit = 7,
 }
 
 impl Register {
@@ -44,6 +53,7 @@ impl Register {
             0x14 => Self::Error,
             0x18 => Self::Ack,
             0x1c => Self::Control,
+            0x20 => Self::Unit,
             _ => return None,
         })
     }

@@ -5,9 +5,9 @@ use std::{
 };
 
 use minemu_platform::{
-    BlockInspection, MemRegion, Peripheral, PhysicalAddress, PhysicalRange,
+    BlockInspection, BlockUnitInspection, MemRegion, Peripheral, PhysicalAddress, PhysicalRange,
     peripherals::{
-        block::{Error, STATUS_BUSY, STATUS_COMPLETE, STATUS_ERROR},
+        block::{Error, STATUS_BUSY, STATUS_COMPLETE, STATUS_ERROR, UNIT_COUNT},
         interrupt::Source,
     },
 };
@@ -19,14 +19,21 @@ const COMPLETION_DELAY: u64 = 32;
 
 /// One state-changing block-device input.
 pub enum BlockUpdate {
-    Attach(Vec<u8>),
-    Detach,
+    Attach {
+        unit: u32,
+        media: Vec<u8>,
+    },
+    Detach {
+        unit: u32,
+    },
     Write {
         register: minemu_platform::peripherals::block::Register,
         value: u32,
         now: u64,
     },
-    FlushFailed,
+    FlushFailed {
+        unit: u32,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -35,7 +42,14 @@ struct Request {
     lba: u32,
     sector_count: u32,
     dma_address: PhysicalAddress,
+    unit: u32,
     deadline: u64,
+}
+
+#[derive(Default)]
+struct MediaUnit {
+    media: Option<Vec<u8>>,
+    dirty_sectors: BTreeSet<u64>,
 }
 
 /// Write-back block media and its guest-visible command state.
@@ -43,12 +57,12 @@ pub struct BlockDevice {
     lba: u32,
     sector_count: u32,
     dma_address: PhysicalAddress,
+    unit: u32,
     completion_irq_enabled: bool,
     complete: bool,
     error: Error,
     active: Option<Request>,
-    media: Option<Vec<u8>>,
-    dirty_sectors: BTreeSet<u64>,
+    units: [MediaUnit; UNIT_COUNT],
     interrupt_sender: Sender<InterruptSignal>,
 }
 
@@ -58,28 +72,38 @@ impl BlockDevice {
             lba: 0,
             sector_count: 0,
             dma_address: PhysicalAddress::new(0),
+            unit: 0,
             completion_irq_enabled: false,
             complete: false,
             error: Error::None,
             active: None,
-            media: None,
-            dirty_sectors: BTreeSet::new(),
+            units: std::array::from_fn(|_| MediaUnit::default()),
             interrupt_sender,
         }
     }
 
-    fn attach(&mut self, media: Vec<u8>) -> Result<()> {
+    fn unit_index(unit: u32) -> Result<usize> {
+        usize::try_from(unit)
+            .ok()
+            .filter(|index| *index < UNIT_COUNT)
+            .ok_or(CoreError::InvalidBlockUnit(unit))
+    }
+
+    fn attach(&mut self, unit: u32, media: Vec<u8>) -> Result<()> {
         if media.is_empty() || !media.len().is_multiple_of(SECTOR_SIZE) {
-            return Err(CoreError::InvalidBlockMedia);
+            return Err(CoreError::InvalidBlockMedia { unit });
         }
-        self.media = Some(media);
-        self.dirty_sectors.clear();
+        let state = &mut self.units[Self::unit_index(unit)?];
+        state.media = Some(media);
+        state.dirty_sectors.clear();
         Ok(())
     }
 
-    fn detach(&mut self) {
-        self.media = None;
-        self.dirty_sectors.clear();
+    fn detach(&mut self, unit: u32) -> Result<()> {
+        let state = &mut self.units[Self::unit_index(unit)?];
+        state.media = None;
+        state.dirty_sectors.clear();
+        Ok(())
     }
 
     pub const fn status(&self) -> u32 {
@@ -111,6 +135,10 @@ impl BlockDevice {
         self.dma_address
     }
 
+    pub const fn unit(&self) -> u32 {
+        self.unit
+    }
+
     pub const fn irq_pending(&self) -> bool {
         self.completion_irq_enabled && self.complete
     }
@@ -131,6 +159,10 @@ impl BlockDevice {
         self.dma_address = dma_address;
     }
 
+    fn set_unit(&mut self, unit: u32) {
+        self.unit = unit;
+    }
+
     fn set_control(&mut self, control: u32) {
         self.completion_irq_enabled = control & 1 != 0;
     }
@@ -149,6 +181,7 @@ impl BlockDevice {
             lba: self.lba,
             sector_count: self.sector_count,
             dma_address: self.dma_address,
+            unit: self.unit,
             deadline: now + COMPLETION_DELAY,
         });
     }
@@ -173,16 +206,27 @@ impl BlockDevice {
         self.irq_pending()
     }
 
-    pub fn flush(&mut self, mut write_media: impl FnMut(&[u8]) -> io::Result<()>) -> Result<()> {
-        if self.dirty_sectors.is_empty() {
+    pub fn flush(
+        &mut self,
+        unit: u32,
+        mut write_media: impl FnMut(&[u8]) -> io::Result<()>,
+    ) -> Result<()> {
+        let state = &mut self.units[Self::unit_index(unit)?];
+        if state.dirty_sectors.is_empty() {
             return Ok(());
         }
-        let media = self.media.as_deref().ok_or(CoreError::InvalidBlockMedia)?;
+        let media = state
+            .media
+            .as_deref()
+            .ok_or(CoreError::InvalidBlockMedia { unit })?;
         if let Err(error) = write_media(media) {
             self.mark_flush_failed();
-            return Err(CoreError::BlockFlush(error));
+            return Err(CoreError::BlockFlush {
+                unit,
+                source: error,
+            });
         }
-        self.dirty_sectors.clear();
+        self.units[Self::unit_index(unit)?].dirty_sectors.clear();
         Ok(())
     }
 
@@ -192,13 +236,13 @@ impl BlockDevice {
         self.signal_interrupt();
     }
 
-    pub fn dirty_sector_count(&self) -> usize {
-        self.dirty_sectors.len()
+    pub fn dirty_sector_count(&self, unit: u32) -> Result<usize> {
+        Ok(self.units[Self::unit_index(unit)?].dirty_sectors.len())
     }
 
     /// Clones attached write-back media for a machine reset.
-    pub fn media_clone(&self) -> Option<Vec<u8>> {
-        self.media.clone()
+    pub fn media_clone(&self, unit: u32) -> Result<Option<Vec<u8>>> {
+        Ok(self.units[Self::unit_index(unit)?].media.clone())
     }
 
     pub fn inspect(&self) -> BlockInspection {
@@ -209,8 +253,12 @@ impl BlockDevice {
             control: self.control(),
             status: self.status(),
             error: self.error as u32,
-            dirty_sector_count: self.dirty_sector_count(),
-            media_attached: self.media.is_some(),
+            unit: self.unit,
+            active_unit: self.active.map(|request| request.unit),
+            units: self.units.each_ref().map(|state| BlockUnitInspection {
+                dirty_sector_count: state.dirty_sectors.len(),
+                media_attached: state.media.is_some(),
+            }),
         }
     }
 
@@ -219,6 +267,10 @@ impl BlockDevice {
         request: Request,
         memory: &mut dyn PhysicalMemoryAccess,
     ) -> std::result::Result<Error, Error> {
+        let unit = usize::try_from(request.unit)
+            .ok()
+            .filter(|index| *index < UNIT_COUNT)
+            .ok_or(Error::InvalidUnit)?;
         if !matches!(request.command, 1 | 2) {
             return Err(Error::InvalidCommand);
         }
@@ -234,7 +286,8 @@ impl BlockDevice {
         {
             return Err(Error::InvalidDma);
         }
-        let media = self.media.as_mut().ok_or(Error::NoMedia)?;
+        let state = &mut self.units[unit];
+        let media = state.media.as_mut().ok_or(Error::NoMedia)?;
         let start = usize::try_from(request.lba)
             .ok()
             .and_then(|lba| lba.checked_mul(SECTOR_SIZE))
@@ -250,7 +303,7 @@ impl BlockDevice {
                     .read_range(dma_range, sectors)
                     .map_err(|_| Error::InvalidDma)?;
                 for sector in request.lba..request.lba + request.sector_count {
-                    self.dirty_sectors.insert(u64::from(sector));
+                    state.dirty_sectors.insert(u64::from(sector));
                 }
             }
             _ => unreachable!("command was validated above"),
@@ -289,6 +342,7 @@ impl Peripheral for BlockDevice {
             Register::Status => self.status(),
             Register::Error => self.error() as u32,
             Register::Control => self.control(),
+            Register::Unit => self.unit(),
             Register::Command | Register::Ack => 0,
         })
     }
@@ -297,9 +351,12 @@ impl Peripheral for BlockDevice {
         use minemu_platform::peripherals::block::Register;
 
         match update {
-            BlockUpdate::Attach(media) => self.attach(media)?,
-            BlockUpdate::Detach => self.detach(),
-            BlockUpdate::FlushFailed => self.mark_flush_failed(),
+            BlockUpdate::Attach { unit, media } => self.attach(unit, media)?,
+            BlockUpdate::Detach { unit } => self.detach(unit)?,
+            BlockUpdate::FlushFailed { unit } => {
+                Self::unit_index(unit)?;
+                self.mark_flush_failed();
+            }
             BlockUpdate::Write {
                 register: Register::Command,
                 value,
@@ -329,6 +386,11 @@ impl Peripheral for BlockDevice {
                 value,
                 ..
             } => self.set_control(value),
+            BlockUpdate::Write {
+                register: Register::Unit,
+                value,
+                ..
+            } => self.set_unit(value),
             BlockUpdate::Write { .. } => {}
         }
         self.signal_interrupt();
@@ -342,7 +404,10 @@ impl Peripheral for BlockDevice {
 
 #[cfg(test)]
 mod tests {
-    use minemu_platform::{MemRegion, Peripheral, PhysicalAddress, peripherals::block::Register};
+    use minemu_platform::{
+        MemRegion, Peripheral, PhysicalAddress,
+        peripherals::block::{Error, Register, STATUS_BUSY, STATUS_COMPLETE, STATUS_ERROR},
+    };
 
     use crate::{PhysicalMemory, PhysicalMemoryAccess};
 
@@ -351,22 +416,25 @@ mod tests {
     #[test]
     fn write_completes_deterministically_and_marks_media_dirty() {
         let mut block = BlockDevice::default();
-        block.attach(vec![0; SECTOR_SIZE]).unwrap();
+        block.attach(1, vec![0; SECTOR_SIZE]).unwrap();
         let mut memory = PhysicalMemory::default();
         let dma = PhysicalAddress::new(MemRegion::Ram.base().get() + 0x200);
         memory.write_u8(dma, 0x5a).unwrap();
         block.set_sector_count(1);
         block.set_dma_address(dma);
+        block.set_unit(1);
         block.command(2, 10);
         assert!(!block.advance_to(41, &mut memory));
         block.advance_to(42, &mut memory);
-        assert_eq!(block.dirty_sector_count(), 1);
+        assert_eq!(block.dirty_sector_count(0).unwrap(), 0);
+        assert_eq!(block.dirty_sector_count(1).unwrap(), 1);
+        assert_eq!(block.media_clone(1).unwrap().unwrap()[0], 0x5a);
     }
 
     #[test]
     fn failed_flush_keeps_dirty_sectors_for_retry() {
         let mut block = BlockDevice::default();
-        block.attach(vec![0; SECTOR_SIZE]).unwrap();
+        block.attach(0, vec![0; SECTOR_SIZE]).unwrap();
         let mut memory = PhysicalMemory::default();
         let dma = PhysicalAddress::new(MemRegion::Ram.base().get() + 0x200);
         block.set_sector_count(1);
@@ -375,12 +443,12 @@ mod tests {
         block.advance_to(32, &mut memory);
         assert!(
             block
-                .flush(|_| Err(std::io::Error::other("disk unavailable")))
+                .flush(0, |_| Err(std::io::Error::other("disk unavailable")))
                 .is_err()
         );
-        assert_eq!(block.dirty_sector_count(), 1);
-        assert!(block.flush(|_| Ok(())).is_ok());
-        assert_eq!(block.dirty_sector_count(), 0);
+        assert_eq!(block.dirty_sector_count(0).unwrap(), 1);
+        assert!(block.flush(0, |_| Ok(())).is_ok());
+        assert_eq!(block.dirty_sector_count(0).unwrap(), 0);
     }
 
     #[test]
@@ -388,5 +456,71 @@ mod tests {
         let mut block = BlockDevice::default();
         block.set_control(1);
         assert_eq!(block.read(Register::Control).unwrap(), 1);
+    }
+
+    #[test]
+    fn command_snapshots_unit_and_keeps_one_controller_busy() {
+        let mut block = BlockDevice::default();
+        block.attach(0, vec![0x11; SECTOR_SIZE]).unwrap();
+        block.attach(1, vec![0x22; SECTOR_SIZE]).unwrap();
+        let mut memory = PhysicalMemory::default();
+        let dma = PhysicalAddress::new(MemRegion::Ram.base().get() + 0x200);
+        block.set_sector_count(1);
+        block.set_dma_address(dma);
+        block.command(1, 0);
+        block.set_unit(1);
+        assert_eq!(block.inspect().active_unit, Some(0));
+        block.command(1, 1);
+        assert_eq!(block.status() & STATUS_BUSY, STATUS_BUSY);
+        assert_eq!(block.error(), Error::Busy);
+        block.advance_to(32, &mut memory);
+        assert_eq!(memory.read_u8(dma).unwrap(), 0x11);
+        assert_eq!(block.unit(), 1);
+        assert_eq!(block.inspect().active_unit, None);
+    }
+
+    #[test]
+    fn invalid_and_unattached_units_fail_at_the_normal_deadline() {
+        let mut block = BlockDevice::default();
+        let mut memory = PhysicalMemory::default();
+        let dma = PhysicalAddress::new(MemRegion::Ram.base().get() + 0x200);
+        block.set_sector_count(1);
+        block.set_dma_address(dma);
+        block.set_unit(2);
+        block.command(1, 5);
+        assert!(!block.advance_to(36, &mut memory));
+        assert_eq!(block.status(), STATUS_BUSY);
+        block.advance_to(37, &mut memory);
+        assert_eq!(block.error(), Error::InvalidUnit);
+        assert_eq!(block.status(), STATUS_COMPLETE | STATUS_ERROR);
+
+        block.ack();
+        block.set_unit(1);
+        block.command(1, 37);
+        block.advance_to(69, &mut memory);
+        assert_eq!(block.error(), Error::NoMedia);
+    }
+
+    #[test]
+    fn media_and_dirty_state_are_independent_per_unit() {
+        let mut block = BlockDevice::default();
+        block.attach(0, vec![0; SECTOR_SIZE]).unwrap();
+        block.attach(1, vec![0; SECTOR_SIZE]).unwrap();
+        let mut memory = PhysicalMemory::default();
+        let dma = PhysicalAddress::new(MemRegion::Ram.base().get() + 0x200);
+        memory.write_u8(dma, 0x5a).unwrap();
+        block.set_sector_count(1);
+        block.set_dma_address(dma);
+        block.set_unit(1);
+        block.command(2, 0);
+        block.advance_to(32, &mut memory);
+
+        assert_eq!(block.media_clone(0).unwrap().unwrap()[0], 0);
+        assert_eq!(block.media_clone(1).unwrap().unwrap()[0], 0x5a);
+        assert_eq!(block.dirty_sector_count(0).unwrap(), 0);
+        assert_eq!(block.dirty_sector_count(1).unwrap(), 1);
+        let inspection = block.inspect();
+        assert_eq!(inspection.units[0].dirty_sector_count, 0);
+        assert_eq!(inspection.units[1].dirty_sector_count, 1);
     }
 }

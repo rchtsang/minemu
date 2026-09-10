@@ -46,8 +46,13 @@ pub struct App {
 }
 
 impl App {
-    pub fn start(image: PathBuf, boot_rom: PathBuf, block_media: Option<PathBuf>) -> Result<Self> {
-        let handle = start_runtime(&image, &boot_rom, block_media, None)?;
+    pub fn start(
+        image: PathBuf,
+        boot_rom: PathBuf,
+        block0_media: Option<PathBuf>,
+        block1_media: Option<PathBuf>,
+    ) -> Result<Self> {
+        let handle = start_runtime(&image, &boot_rom, block0_media, block1_media, None)?;
         let mut runtime = RuntimeController::new(handle);
         for _ in 0..500 {
             runtime.refresh_status();

@@ -38,8 +38,8 @@ pub use mmu::{
     is_mmu_target_page, validate_page_table_page,
 };
 pub use observability::{
-    BlockInspection, InspectionRequest, InspectionResponse, InterruptInspection, MmuInspection,
-    ObservableEvent, PeripheralsInspection, RngInspection, SysTickInspection, TraceInspectionEvent,
-    UartInspection,
+    BlockInspection, BlockUnitInspection, InspectionRequest, InspectionResponse,
+    InterruptInspection, MmuInspection, ObservableEvent, PeripheralsInspection, RngInspection,
+    SysTickInspection, TraceInspectionEvent, UartInspection,
 };
 pub use peripheral::Peripheral;

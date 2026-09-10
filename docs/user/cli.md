@@ -65,17 +65,22 @@ name exactly 64 KiB of raw reset firmware. The TUI begins paused at reset with
 tick 0 and `PC = 0`; starting execution runs the Boot ROM. See the
 [TUI guide](../dev/tui.md) for controls and inspection.
 
-Attach an existing raw block-media file with `--block-media` or `-m`:
+Attach existing raw media for unit 0 and unit 1 with `--block0-media` and
+`--block1-media`:
 
 ```sh
 minemu run minimum-template/image/build/minimum.img \
   --boot-rom minimum-template/bootloader/bootloader.bin \
-  --block-media minimum-template/image/build/disk.img
+  --block0-media filesystem.img \
+  --block1-media swap.img
 ```
 
-Media must be nonempty and a whole number of 512-byte sectors. It is copied into
-write-back device state and may be modified in place. Dirty bytes are flushed
-when execution pauses, resets, shuts down, or terminates with a backend failure.
+`--block-media` and `-m` remain aliases for unit 0 and cannot be combined with
+`--block0-media`. Unit 0 is conventionally filesystem/general storage and unit
+1 is swap. Media must be nonempty and a whole number of 512-byte sectors. Each
+file is copied into independent write-back state and may be modified in place.
+The same canonical file cannot back both units. Dirty bytes are flushed when
+execution pauses, resets, shuts down, or terminates with a backend failure.
 
 `--ticks` is headless-only and is rejected in interactive mode.
 

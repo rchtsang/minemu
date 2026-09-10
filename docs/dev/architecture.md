@@ -154,14 +154,16 @@ inbox and is delivered by the emulator thread at exact virtual-time boundaries.
 Each UART retains the newest 8,192 transmitted bytes for inspection and
 headless output.
 
-Block media is copied from an optional host file into write-back device state.
-Guest writes update that state and mark sectors dirty. A flush writes the whole
-media image, then clears dirty tracking. Flush boundaries include pause,
+Each of the two optional block media is copied from its host file into an
+independent write-back unit. The shared controller serializes requests and
+snapshots its staged unit selector when a command starts. Guest writes mark
+sectors dirty only on the selected unit. A flush writes that unit's whole media
+image, then clears its dirty tracking. Both units are attempted independently at flush boundaries including pause,
 bounded-resume completion, execution deadline, reset, terminal backend failure,
 and shutdown. Failed writes retain dirty state for retry and update the
 guest-visible block error/interrupt state.
 
-Reset first flushes media, reconstructs core state from retained ROM and media,
+Reset first flushes both media, reconstructs core state from retained ROM and media,
 reapplies configured test RAM writes, rebuilds Unicorn, and restores the reset
 entry PC.
 

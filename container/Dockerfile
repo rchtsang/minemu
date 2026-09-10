@@ -22,6 +22,7 @@ RUN printf '%s\n' \
       cmake \
       libclang-dev \
       libglib2.0-dev \
+      ninja-build \
       pkg-config \
     && rm -rf /var/lib/apt/lists/*
 

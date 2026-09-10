@@ -75,36 +75,12 @@ example `rtsang1/cs492-stevens.edu@sha256:...`. Version tags and base-image
 tags can move; a digest is the immutable image identity. Do not make a graded
 environment depend only on `latest`.
 
-## Multi-Platform Build
+## Multi-Platform Publication
 
 The container Justfile manages a reusable Buildx builder named
-`minemu-multiarch`. Docker Desktop includes the required architecture emulation.
-On a native Linux Docker Engine host, install QEMU/binfmt support first by
-following Docker's
-[multi-platform build documentation](https://docs.docker.com/build/building/multi-platform/).
-
-Build `linux/amd64` and `linux/arm64` without publishing them:
-
-```sh
-just --justfile container/justfile multiarch
-```
-
-This exports a multi-platform OCI archive to
-`container/build/cs492-stevens.edu.oci.tar`. Override the destination or
-platform list when needed. The image tag is derived from the `minemu` package
-version reported by `cargo metadata`.
-
-```sh
-ARCHIVE=/tmp/cs492-stevens.edu.oci.tar \
-PLATFORMS=linux/amd64,linux/arm64 \
-just --justfile container/justfile multiarch
-```
-
-Docker's classic local image store cannot load a multi-platform image as one
-tag, which is why this recipe uses an OCI archive. The existing `build` and
-`smoke` recipes remain the fast native-platform workflow.
-
-### Manual Publication
+`minemu-multiarch`. Release images are built separately on native hosts rather
+than compiling Rust and Unicorn through QEMU. Build ARM64 on Apple Silicon and
+AMD64 on an x86-64 Windows or Linux host.
 
 Run the local smoke and repository checks before publishing:
 
@@ -113,23 +89,53 @@ just ci
 just --justfile container/justfile smoke
 ```
 
-Authenticate to Docker Hub as `rtsang1` with a narrowly scoped access token,
-then build and push both supported architectures:
+### Architecture Images
+
+Authenticate to Docker Hub as `rtsang1` with a narrowly scoped access token on
+each build host:
 
 ```sh
 docker login --username rtsang1
+```
+
+On the Apple Silicon host, build and push the ARM64 image:
+
+```sh
+just --justfile container/justfile publish-platform arm64
+```
+
+On the x86-64 host, build and push the AMD64 image:
+
+```sh
+just --justfile container/justfile publish-platform amd64
+```
+
+These commands derive the version from the `minemu` package using
+`cargo metadata` and push architecture-specific tags such as `:0.1.0-arm64`
+and `:0.1.0-amd64`. The existing `build` and `smoke` recipes remain the fast
+native-platform workflow.
+
+### Manifest Publication
+
+After both architecture-specific tags have been pushed, run this command from
+either host to create the multi-platform version tag:
+
+```sh
 just --justfile container/justfile publish
 ```
 
-The recipe pushes one manifest-list tag containing `linux/amd64` and
-`linux/arm64`, tagged with the `minemu` package version from `cargo metadata`,
-then runs `docker buildx imagetools inspect` for that tag. Record the
+The recipe verifies both source tags, creates one manifest-list tag containing
+`linux/amd64` and `linux/arm64`, then inspects the result. Record the
 multi-architecture digest from the inspection output. Do not put the Docker Hub
 access token in the command line, Dockerfile, repository, or image.
 
 Override the destination repository for a fork or another registry:
 
 ```sh
+REPOSITORY=OWNER/REPOSITORY \
+just --justfile container/justfile publish-platform arm64
+REPOSITORY=OWNER/REPOSITORY \
+just --justfile container/justfile publish-platform amd64
 REPOSITORY=OWNER/REPOSITORY \
 just --justfile container/justfile publish
 ```

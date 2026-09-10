@@ -6,9 +6,7 @@ dockerfile := justfile_directory() / "Dockerfile"
 docker := env_var_or_default("DOCKER", "docker")
 image := env_var_or_default("IMAGE", "minemu-dev:local")
 repository := env_var_or_default("REPOSITORY", "rtsang1/cs492-stevens.edu")
-platforms := env_var_or_default("PLATFORMS", "linux/amd64,linux/arm64")
 buildx_builder := env_var_or_default("BUILDX_BUILDER", "minemu-multiarch")
-archive := env_var_or_default("ARCHIVE", container / "build/cs492-stevens.edu.oci.tar")
 dev_uid := `uid="$(id -u)"; if [ "$uid" -eq 0 ]; then printf 1000; else printf %s "$uid"; fi`
 
 # Build the lightweight student image.
@@ -42,38 +40,39 @@ buildx-builder:
     fi
     {{ docker }} buildx inspect "{{ buildx_builder }}" --bootstrap
 
-# Build both supported architectures into a local OCI archive.
-multiarch: buildx-builder
+# Build and push one architecture-specific version tag on its native host.
+publish-platform platform: buildx-builder
     #!/usr/bin/env bash
     set -euo pipefail
+    case "{{ platform }}" in
+      amd64|arm64) ;;
+      *) printf 'unsupported platform: %s (expected amd64 or arm64)\n' "{{ platform }}" >&2; exit 2 ;;
+    esac
     version="$(cargo metadata --manifest-path "{{ workspace }}/Cargo.toml" --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "minemu") | .version')"
-    mkdir -p "{{ container }}/build"
+    tag="{{ repository }}:${version}-{{ platform }}"
     {{ docker }} buildx build \
       --builder "{{ buildx_builder }}" \
-      --platform "{{ platforms }}" \
+      --platform "linux/{{ platform }}" \
       --file "{{ dockerfile }}" \
       --target student \
-      --tag "{{ repository }}:${version}" \
-      --provenance=mode=max \
-      --sbom=true \
-      --output "type=oci,dest={{ archive }}" \
-      "{{ workspace }}"
-
-# Build and push the workspace version tag, then inspect its manifest.
-publish: buildx-builder
-    #!/usr/bin/env bash
-    set -euo pipefail
-    version="$(cargo metadata --manifest-path "{{ workspace }}/Cargo.toml" --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "minemu") | .version')"
-    {{ docker }} buildx build \
-      --builder "{{ buildx_builder }}" \
-      --platform "{{ platforms }}" \
-      --file "{{ dockerfile }}" \
-      --target student \
-      --tag "{{ repository }}:${version}" \
+      --tag "${tag}" \
       --provenance=mode=max \
       --sbom=true \
       --push \
       "{{ workspace }}"
+    {{ docker }} buildx imagetools inspect "${tag}"
+
+# Combine the pushed architecture tags into the workspace version tag.
+publish:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="$(cargo metadata --manifest-path "{{ workspace }}/Cargo.toml" --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "minemu") | .version')"
+    {{ docker }} buildx imagetools inspect "{{ repository }}:${version}-amd64"
+    {{ docker }} buildx imagetools inspect "{{ repository }}:${version}-arm64"
+    {{ docker }} buildx imagetools create \
+      --tag "{{ repository }}:${version}" \
+      "{{ repository }}:${version}-amd64" \
+      "{{ repository }}:${version}-arm64"
     {{ docker }} buildx imagetools inspect "{{ repository }}:${version}"
 
 # Check the installed student tools.
@@ -88,7 +87,7 @@ shell: build
       --workdir /workspace \
       "{{ image }}"
 
-# Remove locally built images and multi-platform archives.
+# Remove locally built images and container build artifacts.
 clean:
     -{{ docker }} image rm "{{ image }}"
     rm -rf "{{ container }}/build"

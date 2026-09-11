@@ -62,7 +62,7 @@ publish-platform platform: buildx-builder
       "{{ workspace }}"
     {{ docker }} buildx imagetools inspect "${tag}"
 
-# Combine the pushed architecture tags into the workspace version tag.
+# Combine the pushed architecture tags into the workspace version and latest tags.
 publish:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -71,9 +71,11 @@ publish:
     {{ docker }} buildx imagetools inspect "{{ repository }}:${version}-arm64"
     {{ docker }} buildx imagetools create \
       --tag "{{ repository }}:${version}" \
+      --tag "{{ repository }}:latest" \
       "{{ repository }}:${version}-amd64" \
       "{{ repository }}:${version}-arm64"
     {{ docker }} buildx imagetools inspect "{{ repository }}:${version}"
+    {{ docker }} buildx imagetools inspect "{{ repository }}:latest"
 
 # Check the installed student tools.
 smoke: build

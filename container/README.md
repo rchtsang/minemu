@@ -114,16 +114,17 @@ native-platform workflow.
 ### Manifest Publication
 
 After both architecture-specific tags have been pushed, run this command from
-either host to create the multi-platform version tag:
+either host to create the multi-platform version tag and update `latest`:
 
 ```sh
 just --justfile container/justfile publish
 ```
 
-The recipe verifies both source tags, creates one manifest-list tag containing
-`linux/amd64` and `linux/arm64`, then inspects the result. Record the
-multi-architecture digest from the inspection output. Do not put the Docker Hub
-access token in the command line, Dockerfile, repository, or image.
+The recipe verifies both source tags, creates one manifest list containing
+`linux/amd64` and `linux/arm64`, applies both the workspace version and `latest`
+tags, then inspects both references. Record the multi-architecture digest from
+the inspection output. Do not put the Docker Hub access token in the command
+line, Dockerfile, repository, or image.
 
 Override the destination repository for a fork or another registry:
 

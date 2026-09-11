@@ -292,13 +292,13 @@ mod tests {
     #[test]
     fn merges_local_input_with_incremental_guest_output() {
         let mut stream = ConsoleStream::default();
-        stream.observe(&inspection(b"minimum> "));
+        stream.observe(&inspection(b"msh> "));
         stream.echo_input(b"echo hi\n");
-        stream.observe(&inspection(b"minimum> hi\nminimum> "));
-        assert_eq!(stream.output(), "minimum> echo hi\nhi\nminimum> ");
+        stream.observe(&inspection(b"msh> hi\nmsh> "));
+        assert_eq!(stream.output(), "msh> echo hi\nhi\nmsh> ");
 
-        stream.observe(&inspection(b"minimum> hi\nminimum> "));
-        assert_eq!(stream.output(), "minimum> echo hi\nhi\nminimum> ");
+        stream.observe(&inspection(b"msh> hi\nmsh> "));
+        assert_eq!(stream.output(), "msh> echo hi\nhi\nmsh> ");
     }
 
     #[test]

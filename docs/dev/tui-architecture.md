@@ -81,7 +81,8 @@ In insert mode, input is routed to the focused widget. The initial console
 widget forwards it to its selected UART, while future editable widgets may use
 the same mode. A centralized router handles Ctrl focus bindings, Space leader
 sequences, command/search/goto text input, and count-aware motion decoding.
-Unhandled normal-mode keys are forwarded to the focused widget.
+Arrow keys alias `h`, `j`, `k`, and `l` in normal-mode motion decoding. Unhandled
+normal-mode keys are forwarded to the focused widget.
 
 ## Layout
 
@@ -89,7 +90,9 @@ Unhandled normal-mode keys are forwarded to the focused widget.
 It computes all rectangles centrally. A left click selects a header view tab or
 focuses the visible pane under the pointer. Ctrl+left-drag creates a resize
 action; widgets only render into their assigned rectangle. This keeps mouse
-geometry pure and unit-testable.
+geometry pure and unit-testable. Ordinary tab and pane clicks are ignored during
+insert mode so the focused input target cannot change; split resizing remains
+available.
 
 The runtime layout uses console, events, and dialog panes. The inspect layout
 uses one selected primary subview (physical memory, virtual memory, or

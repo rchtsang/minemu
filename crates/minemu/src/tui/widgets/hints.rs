@@ -34,10 +34,10 @@ impl TuiWidget for HintsWidget {
             InputMode::SearchAscii | InputMode::SearchBytes => "Search: <enter>  Cancel: <esc>",
             InputMode::Goto => "Goto: <enter>  Cancel: <esc>",
             InputMode::Normal => match context.focused {
-                WidgetId::Console => "Insert: i  Scroll: [#]jk  Leader: <space>  Help: ?",
-                WidgetId::Primary => "Move: [#]hjkl  Subview: <tab>  Search: / \\  Goto: >",
-                WidgetId::Secondary => "Move: [#]hjkl  Subview: <tab>  Goto: >",
-                _ => "Scroll: [#]jk  Current: G  Leader: <space>  Help: ?",
+                WidgetId::Console => "Insert: i  Scroll: [#]jk/arrows  Leader: <space>  Help: ?",
+                WidgetId::Primary => "Move: [#]hjkl/arrows  Subview: <tab>  Search: / \\  Goto: >",
+                WidgetId::Secondary => "Move: [#]hjkl/arrows  Subview: <tab>  Goto: >",
+                _ => "Scroll: [#]jk/arrows  Current: G  Leader: <space>  Help: ?",
             },
         };
         let style = Style::default().fg(Color::DarkGray);

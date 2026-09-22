@@ -53,6 +53,10 @@ impl MotionDecoder {
                 self.reset();
                 DecodeResult::Motion(Motion::Bottom)
             }
+            KeyCode::Left => DecodeResult::Motion(Motion::Left(self.take_count())),
+            KeyCode::Down => DecodeResult::Motion(Motion::Down(self.take_count())),
+            KeyCode::Up => DecodeResult::Motion(Motion::Up(self.take_count())),
+            KeyCode::Right => DecodeResult::Motion(Motion::Right(self.take_count())),
             KeyCode::Char(key) => {
                 let count = self.take_count();
                 let motion = match key {
@@ -104,6 +108,33 @@ mod tests {
         assert_eq!(
             decoder.push(KeyCode::Char('g')),
             DecodeResult::Motion(Motion::Top)
+        );
+    }
+
+    #[test]
+    fn arrow_keys_are_count_aware_motion_aliases() {
+        let mut decoder = MotionDecoder::default();
+        assert_eq!(
+            decoder.push(KeyCode::Left),
+            DecodeResult::Motion(Motion::Left(1))
+        );
+        assert_eq!(
+            decoder.push(KeyCode::Down),
+            DecodeResult::Motion(Motion::Down(1))
+        );
+        assert_eq!(
+            decoder.push(KeyCode::Up),
+            DecodeResult::Motion(Motion::Up(1))
+        );
+        assert_eq!(
+            decoder.push(KeyCode::Right),
+            DecodeResult::Motion(Motion::Right(1))
+        );
+        assert_eq!(decoder.push(KeyCode::Char('1')), DecodeResult::Pending);
+        assert_eq!(decoder.push(KeyCode::Char('2')), DecodeResult::Pending);
+        assert_eq!(
+            decoder.push(KeyCode::Down),
+            DecodeResult::Motion(Motion::Down(12))
         );
     }
 }

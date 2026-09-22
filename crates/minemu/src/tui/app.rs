@@ -421,18 +421,16 @@ impl App {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(view) =
-                    HeaderWidget::view_at(self.terminal_area, mouse.column, mouse.row)
-                {
-                    self.actions.push_back(Action::SelectView(view));
-                } else if let Some(target) = self.layout.focus_at(
+                if let Some(action) = plain_click_action(
+                    &self.layout,
                     self.terminal_area,
                     self.view,
                     self.focused,
+                    self.input.mode(),
                     mouse.column,
                     mouse.row,
                 ) {
-                    self.actions.push_back(Action::Focus(target));
+                    self.actions.push_back(action);
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) if self.dragging.is_some() => {
@@ -449,6 +447,105 @@ impl App {
             }
             MouseEventKind::Up(MouseButton::Left) => self.dragging = None,
             _ => {}
+        }
+    }
+}
+
+fn plain_click_action(
+    layout: &SplitLayout,
+    terminal_area: Rect,
+    view: View,
+    focused: WidgetId,
+    mode: InputMode,
+    column: u16,
+    row: u16,
+) -> Option<Action> {
+    if mode == InputMode::Insert {
+        return None;
+    }
+    let areas = layout.areas(terminal_area, view, focused);
+    if let Some(header) = areas.get(&WidgetId::Header)
+        && let Some(view) = HeaderWidget::view_at(*header, column, row)
+    {
+        return Some(Action::SelectView(view));
+    }
+    layout
+        .focus_at(terminal_area, view, focused, column, row)
+        .map(Action::Focus)
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::layout::Rect;
+
+    use super::plain_click_action;
+    use crate::tui::{
+        action::Action,
+        layout::SplitLayout,
+        types::{InputMode, View, WidgetId},
+    };
+
+    #[test]
+    fn plain_clicks_use_exact_tab_and_pane_geometry() {
+        let layout = SplitLayout::default();
+        let area = Rect::new(4, 2, 100, 30);
+
+        assert!(matches!(
+            plain_click_action(
+                &layout,
+                area,
+                View::Runtime,
+                WidgetId::Console,
+                InputMode::Normal,
+                16,
+                3,
+            ),
+            Some(Action::SelectView(View::Inspect))
+        ));
+        assert!(matches!(
+            plain_click_action(
+                &layout,
+                area,
+                View::Runtime,
+                WidgetId::Console,
+                InputMode::Normal,
+                16,
+                5,
+            ),
+            Some(Action::Focus(WidgetId::Console))
+        ));
+        assert!(
+            plain_click_action(
+                &layout,
+                area,
+                View::Runtime,
+                WidgetId::Console,
+                InputMode::Normal,
+                16,
+                2,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn insert_mode_blocks_tab_and_pane_clicks() {
+        let layout = SplitLayout::default();
+        let area = Rect::new(4, 2, 100, 30);
+
+        for (column, row) in [(16, 3), (80, 5)] {
+            assert!(
+                plain_click_action(
+                    &layout,
+                    area,
+                    View::Runtime,
+                    WidgetId::Console,
+                    InputMode::Insert,
+                    column,
+                    row,
+                )
+                .is_none()
+            );
         }
     }
 }

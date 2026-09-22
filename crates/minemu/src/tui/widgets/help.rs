@@ -72,7 +72,11 @@ impl TuiWidget for HelpWidget {
             ),
             command("? / :help", "Open this help window", description_width),
             section("NAVIGATION"),
-            command("[#] h/j/k/l", "Move by pane-local units", description_width),
+            command(
+                "[#] arrows / h/j/k/l",
+                "Move by pane-local units",
+                description_width,
+            ),
             command(
                 "gg / G",
                 "Move to first / current or last item",

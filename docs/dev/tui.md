@@ -84,9 +84,9 @@ in hexadecimal.
 | Ctrl+C / Ctrl+E / Ctrl+D | Focus console, events, or dialog. |
 | Ctrl+P / Ctrl+S | Focus inspect primary or secondary. |
 | Space+r / Space+i | Select runtime or inspect. |
-| Left click | Select a view tab or focus a visible pane. |
+| Left click | In normal mode, select a view tab or focus a visible pane. |
 | Space+s | Toggle emulation start/stop. |
-| `[#]h/j/k/l`, `w`, `e`, `gg`, `G` | Count-aware pane-local navigation. |
+| `[#]h/j/k/l` or `[#]` plus an arrow key, `w`, `e`, `gg`, `G` | Count-aware pane-local navigation. |
 | `Tab` | Switch the focused inspect pane's subview. |
 | `?` | Open the green-bordered help table. |
 | Ctrl+left-drag | Resize the main horizontal split. |

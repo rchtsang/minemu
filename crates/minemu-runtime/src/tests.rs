@@ -33,6 +33,21 @@ fn wait_for(runtime: &RuntimeHandle, state: LifecycleState) {
     panic!("runtime did not reach {state:?}");
 }
 
+fn wait_for_paused_tick(runtime: &RuntimeHandle, tick: u64) {
+    for _ in 0..500 {
+        let status = runtime.status();
+        if status.lifecycle == LifecycleState::Paused && status.machine.ticks == tick {
+            return;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    let status = runtime.status();
+    panic!(
+        "runtime did not pause at tick {tick}; lifecycle {:?}, tick {}",
+        status.lifecycle, status.machine.ticks
+    );
+}
+
 #[test]
 fn lifecycle_commands_run_on_the_emulator_thread() {
     let runtime = running_runtime();
@@ -93,6 +108,128 @@ fn bounded_resume_executes_exact_instruction_count_and_pauses() {
         status.machine.ticks,
         initial_ticks + 7
     );
+}
+
+#[test]
+fn breakpoints_pause_at_the_instruction_and_resume_past_it_once() {
+    let mut machine = Machine::default();
+    let entry = MemRegion::Ram.base().get();
+    let instructions = [
+        0x71, 0x00, 0x20, 0xe1, // bkpt #1
+        0x72, 0x00, 0x20, 0xe1, // bkpt #2
+        0x07, 0x00, 0xa0, 0xe3, // mov r0, #7
+        0xfe, 0xff, 0xff, 0xea, // b .
+    ];
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(entry), &instructions)
+        .unwrap();
+    let runtime = RuntimeHandle::spawn(
+        RuntimeConfig::new(machine, entry)
+            .with_initial_ram_write(PhysicalAddress::new(entry), instructions.to_vec()),
+    )
+    .unwrap();
+
+    wait_for_paused_tick(&runtime, 1);
+    let first_stop = format!("breakpoint #0x0001 at 0x{entry:08x}");
+    assert_eq!(
+        runtime.status().last_stop.as_deref(),
+        Some(first_stop.as_str())
+    );
+    let RuntimeInspection::Execution(first) = runtime
+        .request_inspection(RuntimeInspectionRequest::Execution {
+            address: None,
+            before: 0,
+            after: 4,
+        })
+        .unwrap()
+        .recv()
+        .unwrap()
+        .unwrap()
+    else {
+        panic!("execution inspection has a fixed response type");
+    };
+    assert_eq!(first.registers[15], entry);
+    assert_eq!(first.instruction_bytes, instructions[..4]);
+
+    runtime.resume_for(NonZeroU64::new(1).unwrap()).unwrap();
+    wait_for_paused_tick(&runtime, 2);
+    let second_stop = format!("breakpoint #0x0002 at 0x{:08x}", entry + 4);
+    assert_eq!(
+        runtime.status().last_stop.as_deref(),
+        Some(second_stop.as_str())
+    );
+
+    runtime.resume_for(NonZeroU64::new(1).unwrap()).unwrap();
+    wait_for_paused_tick(&runtime, 3);
+    assert!(
+        runtime
+            .status()
+            .last_stop
+            .as_deref()
+            .is_some_and(|stop| stop.contains("instruction limit reached"))
+    );
+    let RuntimeInspection::Execution(after_resume) = runtime
+        .request_inspection(RuntimeInspectionRequest::Execution {
+            address: None,
+            before: 0,
+            after: 4,
+        })
+        .unwrap()
+        .recv()
+        .unwrap()
+        .unwrap()
+    else {
+        panic!("execution inspection has a fixed response type");
+    };
+    assert_eq!(after_resume.registers[0], 7);
+    assert_eq!(after_resume.registers[15], entry + 12);
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn reset_clears_a_pending_breakpoint_resume() {
+    let mut machine = Machine::default();
+    let entry = MemRegion::Ram.base().get();
+    let instructions = [
+        0x70, 0x00, 0x20, 0xe1, // bkpt #0
+        0xfe, 0xff, 0xff, 0xea, // b .
+    ];
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(entry), &instructions)
+        .unwrap();
+    let runtime = RuntimeHandle::spawn(
+        RuntimeConfig::new(machine, entry)
+            .with_initial_ram_write(PhysicalAddress::new(entry), instructions.to_vec()),
+    )
+    .unwrap();
+
+    wait_for_paused_tick(&runtime, 1);
+    runtime.reset().unwrap();
+    for _ in 0..500 {
+        let status = runtime.status();
+        if status.lifecycle == LifecycleState::Paused
+            && status.machine.ticks == 0
+            && status.last_stop.is_none()
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(runtime.status().machine.ticks, 0);
+    assert!(runtime.status().last_stop.is_none());
+
+    runtime.resume().unwrap();
+    wait_for_paused_tick(&runtime, 1);
+    assert!(
+        runtime
+            .status()
+            .last_stop
+            .as_deref()
+            .is_some_and(|stop| stop.starts_with("breakpoint #0x0000"))
+    );
+    runtime.shutdown().unwrap();
 }
 
 #[test]

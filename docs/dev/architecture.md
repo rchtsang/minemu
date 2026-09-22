@@ -93,6 +93,9 @@ An MMIO read/write follows this path:
 Supported CP15 instructions are decoded and privilege-checked by the adapter,
 then applied to core MMU state. Unsupported or unprivileged operations enter the
 Undefined vector. TLBIALL also flushes Unicorn's cached virtual translations.
+The same instruction-boundary hook recognizes A32 `BKPT` directly so minemu does
+not depend on Unicorn's private exception numbers. A breakpoint returns a typed
+backend stop with PC left on the instruction.
 
 ## Time And Exceptions
 
@@ -125,7 +128,9 @@ While running, the service repeatedly:
 
 Paused mode waits for commands without running guest instructions. TUI runtimes
 are configured to start paused before tick 0; headless runtimes start running
-with an exact deadline.
+with an exact deadline. A guest `BKPT` also pauses either runtime after one tick.
+The next explicit resume advances past that instruction once before execution
+continues.
 
 Commands use nonblocking sends. Queue-full and stopped-service conditions are
 explicit errors rather than unbounded host memory growth.

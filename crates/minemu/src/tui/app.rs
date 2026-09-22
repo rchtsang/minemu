@@ -106,8 +106,15 @@ impl App {
     pub fn tick(&mut self) -> Result<()> {
         if let Some(status) = self.runtime.refresh_status() {
             let paused = status.lifecycle == LifecycleState::Paused;
+            let breakpoint = paused
+                .then(|| status.last_stop.clone())
+                .flatten()
+                .filter(|stop| stop.starts_with("breakpoint "));
             self.broadcast(AppEvent::Status(status));
             if paused {
+                if let Some(stop) = breakpoint {
+                    self.show_message(DialogMessage::info(stop));
+                }
                 self.actions.push_back(Action::Refresh(WidgetId::Primary));
                 self.actions.push_back(Action::Refresh(WidgetId::Secondary));
             }

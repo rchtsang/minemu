@@ -237,6 +237,13 @@ impl Emulator {
         })
     }
 
+    fn resume_from_breakpoint(&mut self, address: u32) -> Result<()> {
+        if self.backend.program_counter()? == address {
+            self.backend.set_program_counter(address.wrapping_add(4))?;
+        }
+        Ok(())
+    }
+
     fn reset(&mut self) -> Result<()> {
         self.flush()?;
         let config = RuntimeConfig {
@@ -398,6 +405,7 @@ struct Service {
     status: Arc<Mutex<RuntimeStatus>>,
     uart: Arc<Mutex<UartInbox>>,
     remaining_instructions: Option<u64>,
+    pending_breakpoint: Option<u32>,
     execution_deadline: Option<u64>,
     scheduled_uart: VecDeque<ScheduledUartInput>,
 }
@@ -418,6 +426,7 @@ impl Service {
             status,
             uart,
             remaining_instructions: None,
+            pending_breakpoint: None,
             execution_deadline,
             scheduled_uart,
         }
@@ -520,6 +529,25 @@ impl Service {
                             Some(&mut emulator),
                         );
                         break;
+                    }
+                    Ok(BackendStop::Breakpoint { address, immediate }) => {
+                        lifecycle = LifecycleState::Paused;
+                        self.remaining_instructions = None;
+                        self.pending_breakpoint = Some(address);
+                        let stop = format!("breakpoint #0x{immediate:04x} at 0x{address:08x}");
+                        info!(
+                            address,
+                            immediate,
+                            tick = emulator.backend.machine().ticks(),
+                            "guest breakpoint paused runtime"
+                        );
+                        self.publish(
+                            lifecycle,
+                            Some(stop),
+                            emulator.flush().err().map(|error| error.to_string()),
+                            Some(&mut emulator),
+                        );
+                        last_publish = Instant::now();
                     }
                     Ok(stop) => {
                         trace!(
@@ -628,6 +656,17 @@ impl Service {
                 );
             }
             Command::Resume(instruction_limit) if *lifecycle == LifecycleState::Paused => {
+                if let Some(address) = self.pending_breakpoint.take()
+                    && let Err(error) = emulator.resume_from_breakpoint(address)
+                {
+                    self.publish(
+                        LifecycleState::Failed,
+                        None,
+                        Some(error.to_string()),
+                        Some(emulator),
+                    );
+                    return false;
+                }
                 info!(
                     from = ?*lifecycle,
                     to = ?LifecycleState::Running,
@@ -636,7 +675,7 @@ impl Service {
                 );
                 self.remaining_instructions = instruction_limit.map(NonZeroU64::get);
                 *lifecycle = LifecycleState::Running;
-                self.publish(*lifecycle, None, None, Some(emulator));
+                self.publish_clearing_stop(*lifecycle, emulator);
             }
             Command::Reset
                 if matches!(*lifecycle, LifecycleState::Running | LifecycleState::Paused) =>
@@ -648,7 +687,10 @@ impl Service {
                     "resetting emulator runtime"
                 );
                 match emulator.reset() {
-                    Ok(()) => self.publish(previous, None, None, Some(emulator)),
+                    Ok(()) => {
+                        self.pending_breakpoint = None;
+                        self.publish_clearing_stop(previous, emulator);
+                    }
                     Err(error) => {
                         error!(error = %error, "emulator reset failed");
                         self.publish(previous, None, Some(error.to_string()), Some(emulator))
@@ -734,6 +776,13 @@ impl Service {
         if let Some(emulator) = emulator {
             status.machine = emulator.status();
         }
+    }
+
+    fn publish_clearing_stop(&self, lifecycle: LifecycleState, emulator: &mut Emulator) {
+        let mut status = self.status.lock().expect("runtime status mutex poisoned");
+        status.lifecycle = lifecycle;
+        status.last_stop = None;
+        status.machine = emulator.status();
     }
 }
 

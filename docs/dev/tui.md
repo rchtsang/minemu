@@ -120,6 +120,15 @@ executing a non-lifecycle command resumes it. Stop, reset, and selecting inspect
 leave it paused. Parse and runtime-operation failures are retained as bounded
 red messages in dialog rather than closing the terminal UI.
 
+## Software Breakpoints
+
+An A32 `BKPT #imm16` instruction is a minemu debugging pause point. When the
+guest reaches it, execution pauses after one virtual tick, the dialog reports
+the breakpoint address and immediate, and inspection keeps PC on the `BKPT`
+instruction. Use the normal start control to resume; minemu advances past that
+instruction once and continues at the following instruction. This host debugging
+behavior does not enter a guest exception vector.
+
 Dialog messages wrap to the pane width and begin with `>` so message boundaries
 remain visible while scrolling. Help descriptions wrap within their table cells,
 and the close hint is rendered separately on the popup's bottom border.

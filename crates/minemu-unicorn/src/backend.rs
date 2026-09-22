@@ -20,6 +20,10 @@ const MEMORY_SEARCH_CHUNK_SIZE: usize = 1024 * 1024;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BackendStop {
     InstructionBudget,
+    Breakpoint {
+        address: u32,
+        immediate: u16,
+    },
     MmioFault {
         address: u32,
         access: Access,
@@ -771,7 +775,7 @@ mod hooks {
     use super::*;
 
     /// Registers virtual translation, instruction accounting, synchronous A32
-    /// trap interception, and invalid-instruction callbacks.
+    /// trap and breakpoint interception, and invalid-instruction callbacks.
     pub(super) fn register(engine: &mut Unicorn<'static, BackendData>) -> Result<()> {
         engine
             .ctl_set_tlb_type(TlbType::VIRTUAL)
@@ -853,6 +857,19 @@ mod hooks {
             return;
         }
         let instruction = u32::from_le_bytes(bytes);
+        if let Some(breakpoint) = arm::decode_breakpoint(instruction)
+            && arm::condition_holds(
+                breakpoint.condition,
+                engine.reg_read(RegisterARM::CPSR).unwrap_or(0) as u32,
+            )
+        {
+            engine.get_data_mut().callback_stop = Some(BackendStop::Breakpoint {
+                address: address as u32,
+                immediate: breakpoint.immediate,
+            });
+            let _ = engine.emu_stop();
+            return;
+        }
         if instruction & 0x0f00_0000 == 0x0f00_0000
             && arm::condition_holds(
                 instruction >> 28,
@@ -1042,6 +1059,46 @@ mod tests {
             BackendStop::InstructionBudget
         );
         assert_eq!(backend.register(RegisterARM::R0).unwrap(), 1);
+        assert_eq!(backend.machine().ticks(), 1);
+    }
+
+    #[test]
+    fn guest_breakpoint_stops_at_its_address_after_one_tick() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &[0x74, 0x23, 0x21, 0xe1])
+            .unwrap(); // bkpt #0x1234
+        let mut backend = UnicornBackend::new(machine).unwrap();
+
+        assert_eq!(
+            backend.run(start, start + 4, 1),
+            BackendStop::Breakpoint {
+                address: start,
+                immediate: 0x1234,
+            }
+        );
+        assert_eq!(backend.program_counter().unwrap(), start);
+        assert_eq!(backend.machine().ticks(), 1);
+    }
+
+    #[test]
+    fn conditionally_skipped_breakpoint_does_not_stop() {
+        let mut machine = Machine::default();
+        let start = MemRegion::Ram.base().get();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &[0x70, 0x00, 0x20, 0x01])
+            .unwrap(); // bkpteq #0
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend.set_register(RegisterARM::CPSR, 0x13).unwrap(); // Z clear
+
+        assert_eq!(
+            backend.run(start, start + 4, 1),
+            BackendStop::InstructionBudget
+        );
+        assert_eq!(backend.program_counter().unwrap(), start + 4);
         assert_eq!(backend.machine().ticks(), 1);
     }
 

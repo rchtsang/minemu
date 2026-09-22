@@ -21,6 +21,26 @@ pub(crate) struct DecodedCp15 {
     opc2: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DecodedBreakpoint {
+    pub condition: u32,
+    pub immediate: u16,
+}
+
+pub(crate) fn decode_breakpoint(instruction: u32) -> Option<DecodedBreakpoint> {
+    if instruction & 0x0ff0_00f0 != 0x0120_0070 {
+        return None;
+    }
+    let condition = instruction >> 28;
+    if condition == 0x0f {
+        return None;
+    }
+    Some(DecodedBreakpoint {
+        condition,
+        immediate: (((instruction >> 4) & 0xfff0) | (instruction & 0x0f)) as u16,
+    })
+}
+
 pub(crate) fn decode_cp15(instruction: u32) -> Option<DecodedCp15> {
     if instruction & 0x0f00_0010 != 0x0e00_0010 || (instruction >> 8) & 0x0f != 15 {
         return None;
@@ -133,4 +153,29 @@ fn arm_register(index: u32) -> Option<RegisterARM> {
         15 => RegisterARM::PC,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DecodedBreakpoint, decode_breakpoint};
+
+    #[test]
+    fn decodes_only_valid_a32_breakpoints() {
+        assert_eq!(
+            decode_breakpoint(0xe121_2374),
+            Some(DecodedBreakpoint {
+                condition: 0x0e,
+                immediate: 0x1234,
+            })
+        );
+        assert_eq!(
+            decode_breakpoint(0x0120_0070),
+            Some(DecodedBreakpoint {
+                condition: 0,
+                immediate: 0,
+            })
+        );
+        assert_eq!(decode_breakpoint(0xf120_0070), None);
+        assert_eq!(decode_breakpoint(0xe120_0060), None);
+    }
 }

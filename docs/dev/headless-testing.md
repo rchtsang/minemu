@@ -117,9 +117,10 @@ copies initialized data and clears BSS.
 
 ## Execution And Shutdown Snapshots
 
-Normal test execution starts in `running` state and pauses exactly at
-`max_ticks`. Scheduled input and device deadlines are processed by the emulator
-thread rather than by host polling.
+Normal test execution starts in `running` state and pauses at `max_ticks`. An
+A32 `BKPT` may pause it earlier, allowing a manifest to inspect a
+programmer-inserted checkpoint. Scheduled input and device deadlines are
+processed by the emulator thread rather than by host polling.
 
 The runner records two lifecycle snapshots:
 

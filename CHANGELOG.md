@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to `minemu` are documented in this file.
+## 0.2.1 - 2026-09-23
+
+### Added
+
+- Support for software breakpoint instruction `bkpt`
+
+### Fixed
+
+- TUI mouse click behaviors when focusing in console insert mode and the
+  active area for changing views
 
 ## 0.2.0 - 2026-09-10
 

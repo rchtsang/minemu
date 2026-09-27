@@ -12,8 +12,8 @@ use minemu_platform::{
     PhysicalAddress, PhysicalRange,
 };
 use minemu_runtime::{
-    LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeStatus,
-    ScheduledUartInput, UartPort,
+    LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeInspectionRequest,
+    RuntimeStatus, ScheduledUartInput, UartPort,
 };
 use serde::{Deserialize, Deserializer};
 
@@ -86,6 +86,7 @@ pub struct HeadlessAssertion {
     pub execution_lifecycle: Option<ExpectedExecutionLifecycle>,
     pub shutdown_lifecycle: Option<ExpectedShutdownLifecycle>,
     pub mmu_enabled: Option<bool>,
+    pub cpu_mode: Option<ExpectedCpuMode>,
     pub fault_status: Option<u32>,
     pub trace_values: Option<Vec<u32>>,
     #[serde(default)]
@@ -117,6 +118,33 @@ pub enum ExpectedShutdownLifecycle {
     Stopped,
 }
 
+/// A32 processor mode expected in the paused execution snapshot.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExpectedCpuMode {
+    User,
+    Fiq,
+    Irq,
+    Supervisor,
+    Abort,
+    Undefined,
+    System,
+}
+
+impl ExpectedCpuMode {
+    const fn bits(self) -> u32 {
+        match self {
+            Self::User => 0x10,
+            Self::Fiq => 0x11,
+            Self::Irq => 0x12,
+            Self::Supervisor => 0x13,
+            Self::Abort => 0x17,
+            Self::Undefined => 0x1b,
+            Self::System => 0x1f,
+        }
+    }
+}
+
 /// Result of a bounded run suitable for CLI output or test assertions.
 #[derive(Clone, Debug)]
 pub struct RunResult {
@@ -125,6 +153,7 @@ pub struct RunResult {
     pub uart0_output: Vec<u8>,
     pub uart1_output: Vec<u8>,
     pub mmu: Option<MmuInspection>,
+    pub cpu_mode: Option<u32>,
     pub events: Vec<ObservableEvent>,
 }
 
@@ -163,7 +192,7 @@ fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Re
         wait_for(&runtime, LifecycleState::Paused)?;
     }
     let execution_status = runtime.status();
-    let (uart0_output, uart1_output, mmu, events) =
+    let (uart0_output, uart1_output, mmu, cpu_mode, events) =
         if execution_status.lifecycle == LifecycleState::Paused {
             let RuntimeInspection::Peripherals(peripherals) = runtime
                 .inspect(InspectionRequest::Peripherals)
@@ -183,14 +212,28 @@ fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Re
             else {
                 unreachable!("event inspection has a fixed response type")
             };
+            let RuntimeInspection::Execution(execution) = runtime
+                .request_inspection(RuntimeInspectionRequest::Execution {
+                    address: None,
+                    before: 0,
+                    after: 4,
+                })
+                .map_err(|_| CliError::RuntimeSetup)?
+                .recv()
+                .map_err(|_| CliError::RuntimeSetup)?
+                .map_err(|_| CliError::RuntimeSetup)?
+            else {
+                unreachable!("execution inspection has a fixed response type")
+            };
             (
                 peripherals.uart0.tx_history,
                 peripherals.uart1.tx_history,
                 Some(mmu),
+                Some(execution.cpsr & 0x1f),
                 events,
             )
         } else {
-            (Vec::new(), Vec::new(), None, Vec::new())
+            (Vec::new(), Vec::new(), None, None, Vec::new())
         };
     runtime.shutdown().map_err(|_| CliError::RuntimeSetup)?;
     let shutdown_status = runtime.status();
@@ -200,6 +243,7 @@ fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Re
         uart0_output,
         uart1_output,
         mmu,
+        cpu_mode,
         events,
     })
 }
@@ -419,6 +463,14 @@ fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()
     {
         return Err(CliError::Assertion("unexpected MMU enabled state".into()));
     }
+    if let Some(expected) = assertion.cpu_mode
+        && result.cpu_mode != Some(expected.bits())
+    {
+        return Err(CliError::Assertion(format!(
+            "unexpected CPU mode: expected {expected:?}, got {:?}",
+            result.cpu_mode
+        )));
+    }
     if let Some(expected) = assertion.fault_status {
         let actual = result
             .mmu
@@ -456,6 +508,7 @@ impl HeadlessAssertion {
             || self.execution_lifecycle.is_some()
             || self.shutdown_lifecycle.is_some()
             || self.mmu_enabled.is_some()
+            || self.cpu_mode.is_some()
             || self.fault_status.is_some()
             || self.trace_values.is_some()
             || !self.block_media.is_empty()
@@ -612,6 +665,7 @@ mod tests {
             uart0_output: output.to_vec(),
             uart1_output: Vec::new(),
             mmu: None,
+            cpu_mode: Some(0x10),
             events: Vec::new(),
         }
     }
@@ -636,6 +690,19 @@ mod tests {
                 },
             ),
             Err(CliError::Assertion(_))
+        ));
+    }
+
+    #[test]
+    fn assertions_compare_the_paused_a32_cpu_mode() {
+        let assertion: HeadlessAssertion = toml::from_str("cpu_mode = 'user'\n").unwrap();
+        assert_result(&result(b""), &assertion).unwrap();
+
+        let mut supervisor = result(b"");
+        supervisor.cpu_mode = Some(0x13);
+        assert!(matches!(
+            assert_result(&supervisor, &assertion),
+            Err(CliError::Assertion(message)) if message.contains("unexpected CPU mode")
         ));
     }
 

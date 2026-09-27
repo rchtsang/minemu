@@ -129,7 +129,7 @@ The runner records two lifecycle snapshots:
 | Execution | At deadline pause, before requested shutdown | UART, ticks, execution lifecycle, MMU, fault, trace |
 | Shutdown | After shutdown and final media flush | Shutdown lifecycle |
 
-Peripheral, MMU, and event inspection requires a paused execution snapshot. A
+Peripheral, MMU, execution, and event inspection requires a paused execution snapshot. A
 runtime failure automatically fails the test before ordinary execution
 assertions, even if the manifest does not include a lifecycle assertion.
 
@@ -149,6 +149,7 @@ All scalar and sequence fields under `[assert]` are optional.
 | `execution_lifecycle` | `"paused"` or `"stopped"` | Exact pre-shutdown lifecycle |
 | `shutdown_lifecycle` | `"stopped"` | Exact final lifecycle |
 | `mmu_enabled` | Boolean | Exact execution-snapshot MMU-enabled state |
+| `cpu_mode` | `"user"`, `"fiq"`, `"irq"`, `"supervisor"`, `"abort"`, `"undefined"`, or `"system"` | Exact A32 mode in `CPSR[4:0]` at the paused execution snapshot |
 | `fault_status` | `u32` | Exact raw DFSR value of the latest fault; a missing fault fails |
 | `trace_values` | array of `u32` | Exact retained trace-value sequence, including order and length |
 
@@ -157,7 +158,10 @@ lossy UTF-8 conversion. Invalid byte sequences become the replacement
 character. The fields are substring checks, not raw-byte or whole-output
 comparisons; an empty expected string always matches.
 
-`fault_status` does not compare DFAR and there is no assertion for “no fault.”
+`cpu_mode` observes the processor at the test deadline. A guest that repeatedly
+enters SVC or IRQ handling can legitimately be paused in a privileged mode, so
+use this assertion only when the test leaves the guest at a stable execution
+point. `fault_status` does not compare DFAR and there is no assertion for “no fault.”
 `trace_values` ignores trace timestamps and filters exception events, then
 compares values exactly. Its source is the trace subset of the newest 4,096
 global observable events; exceptions consume capacity and may evict older trace

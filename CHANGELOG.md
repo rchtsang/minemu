@@ -1,6 +1,14 @@
 # Changelog
 
 All notable changes to `minemu` are documented in this file.
+
+## 0.2.3 - 2026-09-26
+
+### Added
+
+- Headless `cpu_mode` assertions over the paused A32 execution snapshot.
+- Student HW2 fixtures for user-mode `ioctl`, RNG, TRACE, and `msh` behavior.
+
 ## 0.2.1 - 2026-09-23
 
 ### Added

@@ -1,0 +1,848 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="1600"
+   height="1080"
+   viewBox="0 0 1600 1080"
+   role="img"
+   aria-labelledby="title desc"
+   version="1.1"
+   id="svg96"
+   sodipodi:docname="minemu-image-format.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview96"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.51058903"
+     inkscape:cx="540.55216"
+     inkscape:cy="497.46467"
+     inkscape:window-width="1223"
+     inkscape:window-height="717"
+     inkscape:window-x="0"
+     inkscape:window-y="38"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg96" />
+  <title
+     id="title">Minemu system image format version 1</title>
+  <desc
+     id="desc">A diagram of the linear system ROM image, its header and record layouts, payload offsets, and the bootloader-created boot information record.</desc>
+  <defs
+     id="defs1">
+    <filter
+       id="shadow"
+       x="-0.001"
+       y="-0.0022522523"
+       width="1.002"
+       height="1.0045045">
+      <feDropShadow
+         dx="0"
+         dy="4"
+         stdDeviation="5"
+         flood-color="#0d1b2a"
+         flood-opacity="0.16" />
+    </filter>
+    <marker
+       id="arrow"
+       viewBox="0 0 10 10"
+       refX="0"
+       refY="5"
+       markerWidth="6"
+       markerHeight="6"
+       orient="auto-start-reverse"
+       markerUnits="strokeWidth">
+      <path
+         d="M 0 0 L 10 5 L 0 10 z"
+         fill="#526274"
+         id="path1" />
+    </marker>
+    <style
+       id="style1">
+      .title { font: 700 32px system-ui, sans-serif; fill: #102a43; }
+      .subtitle { font: 16px system-ui, sans-serif; fill: #526274; }
+      .section { font: 700 18px system-ui, sans-serif; fill: #102a43; letter-spacing: 0.4px; }
+      .label { font: 600 15px system-ui, sans-serif; fill: #102a43; }
+      .body { font: 14px system-ui, sans-serif; fill: #334e68; }
+      .small { font: 12px system-ui, sans-serif; fill: #526274; }
+      .mono { font: 13px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #243b53; }
+      .mono-light { font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #486581; }
+      .offset { font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #627d98; text-anchor: end; }
+      .white { fill: #ffffff; }
+      .line { stroke: #526274; stroke-width: 1.8; fill: none; marker-end: url(#arrow); }
+      .guide { stroke: #9fb3c8; stroke-width: 1.2; stroke-dasharray: 5 5; fill: none; }
+    </style>
+  </defs>
+  <rect
+     width="1600"
+     height="1080"
+     fill="#f5f7fa"
+     id="rect1"
+     x="0"
+     y="0" />
+  <text
+     id="heading"
+     class="title"
+     x="64"
+     y="54">Minemu system image format</text>
+  <text
+     class="subtitle"
+     x="64"
+     y="82"
+     id="text1">Version 1 wire layout in System ROM | all integers are little-endian | offsets are relative to byte 0 of the image</text>
+  <!-- Linear image map -->
+  <g
+     filter="url(#shadow)"
+     id="g2"
+     transform="matrix(1.1776848,0,0,0.99984483,-26.569889,0.08487895)">
+    <rect
+       x="74"
+       y="126"
+       width="500"
+       height="842"
+       rx="14"
+       fill="#ffffff"
+       stroke="#bcccdc"
+       id="rect2" />
+  </g>
+  <text
+     class="section"
+     x="76"
+     y="164"
+     id="text2"
+     style="font-style:normal;font-variant:normal;font-weight:700;font-stretch:normal;font-size:18px;line-height:normal;font-family:system-ui, sans-serif">Linear System ROM image</text>
+  <text
+     class="small"
+     x="76"
+     y="187"
+     id="text3"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:12px;line-height:normal;font-family:system-ui, sans-serif">Canonical packer order; K = kernel segments, M = modules, S_i = segments in module i</text>
+  <text
+     class="offset"
+     x="160"
+     y="226"
+     id="text4">0x0000</text>
+  <rect
+     x="178"
+     y="205"
+     width="434.69952"
+     height="76"
+     rx="9.6599894"
+     fill="#d9eaf7"
+     stroke="#3e7ca6"
+     id="rect4"
+     style="stroke-width:1.09886" />
+  <text
+     class="label"
+     x="200"
+     y="235"
+     id="text5">Image header</text>
+  <text
+     class="mono-light"
+     x="200"
+     y="258"
+     id="text6">64 bytes | magic &quot;MEMU&quot; | ABI v1</text>
+  <text
+     class="offset"
+     x="160"
+     y="306"
+     id="text7">0x0040</text>
+  <rect
+     x="178"
+     y="287"
+     width="434.69952"
+     height="72"
+     rx="9.6599894"
+     fill="#d8f3ed"
+     stroke="#258675"
+     id="rect7"
+     style="stroke-width:1.09886" />
+  <text
+     class="label"
+     x="200"
+     y="316"
+     id="text8">Kernel-segment table</text>
+  <text
+     class="mono-light"
+     x="200"
+     y="339"
+     id="text9">K x 32-byte KernelSegment</text>
+  <text
+     class="offset"
+     x="160"
+     y="384"
+     id="text10">header field</text>
+  <rect
+     x="178"
+     y="365"
+     width="434.69952"
+     height="72"
+     rx="9.6599894"
+     fill="#e4f0d0"
+     stroke="#6a994e"
+     id="rect10"
+     style="stroke-width:1.09886" />
+  <text
+     class="label"
+     x="200"
+     y="394"
+     id="text11">Module table</text>
+  <text
+     class="mono-light"
+     x="200"
+     y="417"
+     id="text12">M x 32-byte ModuleRecord</text>
+  <text
+     class="offset"
+     x="160"
+     y="464"
+     id="text13">4-byte align</text>
+  <rect
+     x="178"
+     y="443"
+     width="434.69952"
+     height="116"
+     rx="9.6599894"
+     fill="#fff0cf"
+     stroke="#d68c1f"
+     id="rect13"
+     style="stroke-width:1.09886" />
+  <text
+     class="label"
+     x="200"
+     y="474"
+     id="text14">Per-module segment tables</text>
+  <text
+     class="mono-light"
+     x="200"
+     y="499"
+     id="text15">module 0: S_0 x 32-byte ModuleSegment</text>
+  <text
+     class="mono-light"
+     x="200"
+     y="522"
+     id="text16">module 1: S_1 x 32-byte ModuleSegment</text>
+  <text
+     class="mono-light"
+     x="200"
+     y="545"
+     id="text17">... one aligned table per module</text>
+  <text
+     class="offset"
+     x="160"
+     y="586"
+     id="text18">4-byte align</text>
+  <rect
+     x="178"
+     y="565"
+     width="434.69952"
+     height="72"
+     rx="9.6599894"
+     fill="#f9dfdf"
+     stroke="#bc5b62"
+     id="rect18"
+     style="stroke-width:1.09886" />
+  <text
+     class="label"
+     x="200"
+     y="594"
+     id="text19">Module names</text>
+  <text
+     class="mono-light"
+     x="200"
+     y="617"
+     id="text20">raw UTF-8 bytes | lengths stored separately | no NUL</text>
+  <text
+     class="offset"
+     x="160"
+     y="664"
+     id="text21">4-byte align</text>
+  <rect
+     x="178"
+     y="643"
+     width="434.69952"
+     height="102"
+     rx="9.6599894"
+     fill="#dfe7fd"
+     stroke="#5876b7"
+     id="rect21"
+     style="stroke-width:1.09886" />
+  <text
+     class="label"
+     x="200"
+     y="674"
+     id="text22">Kernel segment payloads</text>
+  <text
+     class="mono-light"
+     x="200"
+     y="698"
+     id="text23">file bytes in kernel-segment order</text>
+  <text
+     class="small"
+     x="200"
+     y="723"
+     id="text24">data_offset in each KernelSegment points here</text>
+  <rect
+     x="178"
+     y="751"
+     width="434.69952"
+     height="124"
+     rx="9.6599894"
+     fill="#eadcf8"
+     stroke="#8057a6"
+     id="rect24"
+     style="stroke-width:1.09886" />
+  <text
+     class="label"
+     x="200"
+     y="782"
+     id="text25">User-module segment payloads</text>
+  <text
+     class="mono-light"
+     x="200"
+     y="806"
+     id="text26">module 0 bytes, then module 1 bytes, ...</text>
+  <text
+     class="small"
+     x="200"
+     y="831"
+     id="text27">data_offset in each ModuleSegment points here</text>
+  <text
+     class="small"
+     x="200"
+     y="853"
+     id="text28">BSS is not stored: memory_size may exceed file_size</text>
+  <text
+     class="offset"
+     x="160"
+     y="905"
+     id="text29">image_size</text>
+  <line
+     x1="178"
+     y1="895"
+     x2="538"
+     y2="895"
+     stroke="#102a43"
+     stroke-width="2"
+     id="line29" />
+  <text
+     class="mono"
+     x="200"
+     y="927"
+     id="text30">maximum: 16 MiB System ROM capacity</text>
+  <!-- Connector arrows -->
+  <path
+     class="line"
+     d="m 614.02974,244.39932 c 22.88154,0 22.88154,-27.14342 44.49187,-27.14342"
+     id="path30"
+     style="stroke-width:2.521;stroke-dasharray:none" />
+  <path
+     class="line"
+     d="m 612.99831,322.58305 c 29.46967,0 29.46967,150.55979 52.89427,150.55979"
+     id="path31"
+     style="stroke-width:1.51317;stroke-dasharray:none" />
+  <path
+     class="line"
+     d="m 612.3886,401.15658 c 77.95761,0 77.95761,71.48637 342.05891,71.48637"
+     id="path32" />
+  <path
+     class="line"
+     d="m 613.58457,501.71887 c 97.91951,0 97.91951,-21.5076 629.48253,-21.5076"
+     id="path33" />
+  <!-- Header details -->
+  <g
+     filter="url(#shadow)"
+     id="g33">
+    <rect
+       x="678"
+       y="126"
+       width="850"
+       height="300"
+       rx="14"
+       fill="#ffffff"
+       stroke="#bcccdc"
+       id="rect33" />
+  </g>
+  <rect
+     x="678"
+     y="126"
+     width="850"
+     height="48"
+     rx="14"
+     fill="#d9eaf7"
+     id="rect34" />
+  <rect
+     x="678"
+     y="158"
+     width="850"
+     height="16"
+     fill="#d9eaf7"
+     id="rect35" />
+  <text
+     class="section"
+     x="704"
+     y="157"
+     id="text35">ImageHeader | 64 bytes</text>
+  <g
+     transform="translate(704 194)"
+     id="g48">
+    <text
+       class="mono"
+       x="0"
+       y="0"
+       id="text36">+0x00  u32  magic = 0x4d454d55 (&quot;MEMU&quot;)</text>
+    <text
+       class="mono"
+       x="0"
+       y="28"
+       id="text37">+0x04  u16  ABI version = 1</text>
+    <text
+       class="mono"
+       x="0"
+       y="56"
+       id="text38">+0x06  u16  header size = 64</text>
+    <text
+       class="mono"
+       x="0"
+       y="84"
+       id="text39">+0x08  u32  image_size</text>
+    <text
+       class="mono"
+       x="0"
+       y="112"
+       id="text40">+0x0c  u32  kernel_segment_table_offset</text>
+    <text
+       class="mono"
+       x="0"
+       y="140"
+       id="text41">+0x10  u32  kernel_segment_count</text>
+    <text
+       class="mono"
+       x="0"
+       y="168"
+       id="text42">+0x14  u32  module_table_offset</text>
+    <text
+       class="mono"
+       x="430"
+       y="0"
+       id="text43">+0x18  u32  module_count</text>
+    <text
+       class="mono"
+       x="430"
+       y="28"
+       id="text44">+0x1c  u32  bootstrap_entry_paddr</text>
+    <text
+       class="mono"
+       x="430"
+       y="56"
+       id="text45">+0x20  u32  kernel_entry_vaddr</text>
+    <text
+       class="mono"
+       x="430"
+       y="84"
+       id="text46">+0x24  u32  boot_info_paddr</text>
+    <text
+       class="mono"
+       x="430"
+       y="112"
+       id="text47">+0x28  u32  reserved = 0</text>
+    <text
+       class="mono"
+       x="430"
+       y="140"
+       id="text48">+0x2c  20 B reserved = 0</text>
+  </g>
+  <!-- Record cards -->
+  <g
+     filter="url(#shadow)"
+     id="g50">
+    <rect
+       x="678"
+       y="454"
+       width="270"
+       height="280"
+       rx="12"
+       fill="#ffffff"
+       stroke="#258675"
+       id="rect48" />
+    <rect
+       x="968"
+       y="454"
+       width="270"
+       height="280"
+       rx="12"
+       fill="#ffffff"
+       stroke="#6a994e"
+       id="rect49" />
+    <rect
+       x="1258"
+       y="454"
+       width="270"
+       height="280"
+       rx="12"
+       fill="#ffffff"
+       stroke="#d68c1f"
+       id="rect50" />
+  </g>
+  <rect
+     x="678"
+     y="454"
+     width="270"
+     height="44"
+     rx="12"
+     fill="#d8f3ed"
+     id="rect51" />
+  <rect
+     x="678"
+     y="486"
+     width="270"
+     height="12"
+     fill="#d8f3ed"
+     id="rect52" />
+  <text
+     class="label"
+     x="698"
+     y="482"
+     id="text52">KernelSegment | 32 B</text>
+  <text
+     class="mono-light"
+     x="698"
+     y="526"
+     id="text53">+00  data_offset</text>
+  <text
+     class="mono-light"
+     x="698"
+     y="551"
+     id="text54">+04  physical_address</text>
+  <text
+     class="mono-light"
+     x="698"
+     y="576"
+     id="text55">+08  virtual_address</text>
+  <text
+     class="mono-light"
+     x="698"
+     y="601"
+     id="text56">+0c  file_size</text>
+  <text
+     class="mono-light"
+     x="698"
+     y="626"
+     id="text57">+10  memory_size</text>
+  <text
+     class="mono-light"
+     x="698"
+     y="651"
+     id="text58">+14  flags (R/W/X)</text>
+  <text
+     class="mono-light"
+     x="698"
+     y="676"
+     id="text59">+18  8 B reserved</text>
+  <text
+     class="small"
+     x="698"
+     y="699"
+     id="text60">Boot ROM chooses no frame:</text>
+  <text
+     class="small"
+     x="698"
+     y="714"
+     id="text61">the physical address is explicit.</text>
+  <rect
+     x="968"
+     y="454"
+     width="270"
+     height="44"
+     rx="12"
+     fill="#e4f0d0"
+     id="rect61" />
+  <rect
+     x="968"
+     y="486"
+     width="270"
+     height="12"
+     fill="#e4f0d0"
+     id="rect62" />
+  <text
+     class="label"
+     x="988"
+     y="482"
+     id="text62">ModuleRecord | 32 B</text>
+  <text
+     class="mono-light"
+     x="988"
+     y="526"
+     id="text63">+00  name_offset</text>
+  <text
+     class="mono-light"
+     x="988"
+     y="551"
+     id="text64">+04  name_length</text>
+  <text
+     class="mono-light"
+     x="988"
+     y="576"
+     id="text65">+08  segment_table_offset</text>
+  <text
+     class="mono-light"
+     x="988"
+     y="601"
+     id="text66">+0c  segment_count</text>
+  <text
+     class="mono-light"
+     x="988"
+     y="626"
+     id="text67">+10  entry_virtual_address</text>
+  <text
+     class="mono-light"
+     x="988"
+     y="651"
+     id="text68">+14  12 B reserved</text>
+  <text
+     class="small"
+     x="988"
+     y="686"
+     id="text69">Offsets connect this record to its</text>
+  <text
+     class="small"
+     x="988"
+     y="704"
+     id="text70">name, segment table, and entry PC.</text>
+  <rect
+     x="1258"
+     y="454"
+     width="270"
+     height="44"
+     rx="12"
+     fill="#fff0cf"
+     id="rect70" />
+  <rect
+     x="1258"
+     y="486"
+     width="270"
+     height="12"
+     fill="#fff0cf"
+     id="rect71" />
+  <text
+     class="label"
+     x="1278"
+     y="482"
+     id="text71">ModuleSegment | 32 B</text>
+  <text
+     class="mono-light"
+     x="1278"
+     y="526"
+     id="text72">+00  data_offset</text>
+  <text
+     class="mono-light"
+     x="1278"
+     y="551"
+     id="text73">+04  virtual_address</text>
+  <text
+     class="mono-light"
+     x="1278"
+     y="576"
+     id="text74">+08  file_size</text>
+  <text
+     class="mono-light"
+     x="1278"
+     y="601"
+     id="text75">+0c  memory_size</text>
+  <text
+     class="mono-light"
+     x="1278"
+     y="626"
+     id="text76">+10  flags (R/W/X)</text>
+  <text
+     class="mono-light"
+     x="1278"
+     y="651"
+     id="text77">+14  12 B reserved</text>
+  <text
+     class="small"
+     x="1278"
+     y="686"
+     id="text78">The kernel chooses physical frames</text>
+  <text
+     class="small"
+     x="1278"
+     y="704"
+     id="text79">when it loads the user module.</text>
+  <!-- Loading flow and boot info -->
+  <g
+     filter="url(#shadow)"
+     id="g79"
+     transform="matrix(0.99996568,0,0,1,0.0232712,0)">
+    <rect
+       x="678"
+       y="746"
+       width="850"
+       height="222"
+       rx="14"
+       fill="#ffffff"
+       stroke="#bcccdc"
+       id="rect79" />
+  </g>
+  <text
+     class="section"
+     x="692"
+     y="782"
+     id="text80"
+     style="font-style:normal;font-variant:normal;font-weight:700;font-stretch:normal;font-size:18px;line-height:normal;font-family:system-ui, sans-serif">Who consumes each part?</text>
+  <rect
+     x="692.02301"
+     y="807.02301"
+     width="253.95398"
+     height="104.95399"
+     rx="10.946293"
+     fill="#e7eef5"
+     stroke="#829ab1"
+     id="rect80"
+     style="stroke-width:1.04602" />
+  <text
+     class="label"
+     x="698"
+     y="832"
+     id="text81"
+     style="font-style:normal;font-variant:normal;font-weight:600;font-stretch:normal;font-size:15px;line-height:normal;font-family:system-ui, sans-serif">1 | Host packer</text>
+  <text
+     class="body"
+     x="698"
+     y="858"
+     id="text82"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, sans-serif">Reads independently linked ELFs,</text>
+  <text
+     class="body"
+     x="698"
+     y="879"
+     id="text83"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, sans-serif">sorts records, assigns offsets,</text>
+  <text
+     class="body"
+     x="698"
+     y="900"
+     id="text84"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, sans-serif">and serializes this image.</text>
+  <path
+     class="line"
+     d="m 946.5,856 h 18.36163"
+     id="path84" />
+  <rect
+     x="968.03809"
+     y="807.03809"
+     width="268.92374"
+     height="104.92375"
+     rx="11.591541"
+     fill="#d9eaf7"
+     stroke="#3e7ca6"
+     id="rect84"
+     style="stroke-width:1.07625" />
+  <text
+     class="label"
+     x="974"
+     y="832"
+     id="text85"
+     style="font-style:normal;font-variant:normal;font-weight:600;font-stretch:normal;font-size:15px;line-height:normal;font-family:system-ui, sans-serif">2 | Boot ROM</text>
+  <text
+     class="body"
+     x="974"
+     y="858"
+     id="text86"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, sans-serif">Validates the header, copies kernel</text>
+  <text
+     class="body"
+     x="974"
+     y="879"
+     id="text87"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, sans-serif">segments to fixed physical RAM,</text>
+  <text
+     class="body"
+     x="974"
+     y="900"
+     id="text88"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, sans-serif">then enters the kernel.</text>
+  <path
+     class="line"
+     d="m 1237.4999,856 h 15.1039"
+     id="path88" />
+  <rect
+     x="1256.0291"
+     y="807.02911"
+     width="259.94177"
+     height="104.94179"
+     rx="11.204388"
+     fill="#eadcf8"
+     stroke="#8057a6"
+     id="rect88"
+     style="stroke-width:1.05821" />
+  <text
+     class="label"
+     x="1262"
+     y="832"
+     id="text89"
+     style="font-style:normal;font-variant:normal;font-weight:600;font-stretch:normal;font-size:15px;line-height:normal;font-family:system-ui, sans-serif">3 | Kernel loader</text>
+  <text
+     class="body"
+     x="1262"
+     y="858"
+     id="text90"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, sans-serif">Finds modules by name, allocates</text>
+  <text
+     class="body"
+     x="1262"
+     y="879"
+     id="text91"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, sans-serif">frames, copies payloads, zeros BSS,</text>
+  <text
+     class="body"
+     x="1262"
+     y="900"
+     id="text92"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, sans-serif">and installs user page mappings.</text>
+  <rect
+     x="692"
+     y="927"
+     width="796"
+     height="25"
+     rx="6"
+     fill="#fff5d6"
+     id="rect92" />
+  <text
+     class="small"
+     x="706"
+     y="945"
+     id="text93"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:12px;line-height:normal;font-family:system-ui, sans-serif">BootInfo is not stored as another image section: the Boot ROM synthesizes its 64-byte record in RAM from the validated header.</text>
+  <!-- Footer notes -->
+  <line
+     class="guide"
+     x1="74"
+     y1="1002"
+     x2="1528"
+     y2="1002"
+     id="line93" />
+  <text
+     class="small"
+     x="74"
+     y="1030"
+     id="text94">Pointer fields use image-relative byte offsets. Tables and referenced ranges must lie entirely within image_size and must not overlap.</text>
+  <text
+     class="small"
+     x="74"
+     y="1052"
+     id="text95">A zero-length segment payload stores no bytes; its data_offset may be 0. Reserved bytes must be zero.</text>
+  <text
+     class="small"
+     x="1528"
+     y="1052"
+     text-anchor="end"
+     id="text96">Source: System-image format v1</text>
+</svg>

@@ -4,7 +4,7 @@
 
 The multi-unit block controller, Platform ABI v2 documentation, host tooling,
 guest headers, supplied synchronous block interface, and conformance fixtures
-are implemented in `minemu` 0.2.0. This plan tracks only unfinished work.
+are implemented in `minemu` 0.2.3. This plan tracks only unfinished work.
 
 `minimum-template` is the canonical source for supplied guest components.
 Validate changes there, synchronize shared artifacts into `minimum-tests` and
@@ -42,11 +42,12 @@ address-space foundation to `minimum-template` that can:
 - Validate user buffer ranges and required access.
 - Activate an address space with TTBR0 followed by TLBIALL.
 - Eagerly clone a single-threaded process address space for Assignment 3
-  `fork`.
+  `fork`. The released `process-basics` example provides this bounded teaching
+  implementation.
 
-Keep process tables, scheduling, syscall policy, `fork` return semantics, and
-page-replacement policy student-owned. Add focused tests or reference examples,
-then synchronize the validated foundation into the course repositories.
+Assignment 3 supplies process tables, eager process calls, queue primitives, and
+syscall examples so students can focus on `sched_yield` and pthread lifecycle
+operations. Keep timer scheduling and page-replacement policy student-owned.
 
 ## Block Persistence Follow-Up
 
@@ -58,7 +59,7 @@ then synchronize the validated foundation into the course repositories.
 ## Release Engineering
 
 - Publish native `linux/amd64` and `linux/arm64` images containing `minemu`
-  0.2.0 and Platform ABI v2.
+  0.2.3 and Platform ABI v2.
 - Assemble the multi-platform version tag and smoke-test its immutable digest.
 - Maintain a representative throughput floor of 100,000 strict instructions
   per second.

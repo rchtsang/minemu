@@ -8,7 +8,10 @@ use minemu_platform::{
     },
 };
 
-use crate::{InterruptSignal, Result};
+use crate::{
+    InterruptSignal, Result,
+    support::{IrqLine, flag},
+};
 
 /// One state-changing SysTick input.
 pub enum SysTickUpdate {
@@ -28,7 +31,7 @@ pub struct SysTick {
     irq_enabled: bool,
     pending: bool,
     next_deadline: Option<u64>,
-    interrupt_sender: Sender<InterruptSignal>,
+    irq: IrqLine,
 }
 
 impl SysTick {
@@ -40,7 +43,7 @@ impl SysTick {
             irq_enabled: false,
             pending: false,
             next_deadline: None,
-            interrupt_sender,
+            irq: IrqLine::new(Source::SysTick, interrupt_sender),
         }
     }
     pub const fn period(&self) -> u32 {
@@ -48,13 +51,13 @@ impl SysTick {
     }
 
     pub const fn control(&self) -> u32 {
-        bit(self.enabled, CONTROL_ENABLE)
-            | bit(self.periodic, CONTROL_PERIODIC)
-            | bit(self.irq_enabled, CONTROL_IRQ_ENABLE)
+        flag(self.enabled, CONTROL_ENABLE)
+            | flag(self.periodic, CONTROL_PERIODIC)
+            | flag(self.irq_enabled, CONTROL_IRQ_ENABLE)
     }
 
     pub const fn status(&self) -> u32 {
-        bit(self.pending, STATUS_PENDING)
+        flag(self.pending, STATUS_PENDING)
     }
 
     pub const fn irq_pending(&self) -> bool {
@@ -115,21 +118,13 @@ impl SysTick {
     }
 
     fn signal_interrupt(&self) {
-        let _ = self.interrupt_sender.send(InterruptSignal {
-            source: Source::SysTick,
-            pending: self.irq_pending(),
-        });
+        self.irq.set(self.irq_pending());
     }
-}
-
-const fn bit(set: bool, mask: u32) -> u32 {
-    if set { mask } else { 0 }
 }
 
 impl Default for SysTick {
     fn default() -> Self {
-        let (sender, _) = mpsc::channel();
-        Self::new(sender)
+        Self::new(mpsc::channel().0)
     }
 }
 

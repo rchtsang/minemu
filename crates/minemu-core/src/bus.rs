@@ -2,12 +2,13 @@ use std::sync::mpsc;
 
 use minemu_platform::{
     Access, MmioRegister, MmioTransaction, Peripheral, PeripheralsInspection, decode_mmio,
-    peripherals::{interrupt, trace},
+    peripherals::interrupt,
 };
 
 use crate::{
-    BlockDevice, InterruptController, InterruptUpdate, PhysicalMemoryAccess, Result, Rng,
-    RngUpdate, SysTick, SysTickUpdate, TraceDevice, TraceEvent, TraceUpdate, Uart, UartUpdate,
+    BlockDevice, BlockUpdate, InterruptController, InterruptUpdate, PhysicalMemoryAccess, Result,
+    Rng, RngUpdate, SysTick, SysTickUpdate, TraceDevice, TraceEvent, TraceUpdate, Uart, UartUpdate,
+    uart::{UART_RX_CAPACITY, UART_TX_CAPACITY},
 };
 
 /// Typed MMIO bus and all backend-independent peripheral state.
@@ -30,12 +31,17 @@ impl MmioBus {
             block: BlockDevice::new(interrupt_sender.clone()),
             rng: Rng::new(),
             uart0: Uart::new(
-                4096,
-                8192,
+                UART_RX_CAPACITY,
+                UART_TX_CAPACITY,
                 interrupt::Source::Uart0,
                 interrupt_sender.clone(),
             ),
-            uart1: Uart::new(4096, 8192, interrupt::Source::Uart1, interrupt_sender),
+            uart1: Uart::new(
+                UART_RX_CAPACITY,
+                UART_TX_CAPACITY,
+                interrupt::Source::Uart1,
+                interrupt_sender,
+            ),
             trace: TraceDevice::default(),
         }
     }
@@ -54,46 +60,35 @@ impl MmioBus {
                 MmioRegister::Trace(_) => unreachable!("platform decoder rejects trace reads"),
             }),
             Access::Write => {
+                let value = transaction.value;
                 match register {
-                    MmioRegister::Interrupt(register) => {
-                        self.interrupts.update(InterruptUpdate::Write {
-                            register,
-                            value: transaction.value,
-                        })?
-                    }
+                    MmioRegister::Interrupt(register) => self
+                        .interrupts
+                        .update(InterruptUpdate::Write { register, value })?,
                     MmioRegister::SysTick(register) => {
                         self.systick.update(SysTickUpdate::Write {
                             register,
-                            value: transaction.value,
+                            value,
                             now,
                         })?
                     }
-                    MmioRegister::Dma(register) => {
-                        self.block.update(crate::BlockUpdate::Write {
-                            register,
-                            value: transaction.value,
-                            now,
-                        })?
+                    MmioRegister::Dma(register) => self.block.update(BlockUpdate::Write {
+                        register,
+                        value,
+                        now,
+                    })?,
+                    MmioRegister::Rng(register) => {
+                        self.rng.update(RngUpdate::Write { register, value })?
                     }
-                    MmioRegister::Rng(register) => self.rng.update(RngUpdate::Write {
-                        register,
-                        value: transaction.value,
-                    })?,
-                    MmioRegister::Uart0(register) => self.uart0.update(UartUpdate::Write {
-                        register,
-                        value: transaction.value,
-                    })?,
-                    MmioRegister::Uart1(register) => self.uart1.update(UartUpdate::Write {
-                        register,
-                        value: transaction.value,
-                    })?,
-                    MmioRegister::Trace(trace::Register::Event) => self
-                        .trace
-                        .update(TraceUpdate::Write {
-                            register: trace::Register::Event,
-                            value: transaction.value,
-                        })
-                        .expect("platform-decoded trace write"),
+                    MmioRegister::Uart0(register) => {
+                        self.uart0.update(UartUpdate::Write { register, value })?
+                    }
+                    MmioRegister::Uart1(register) => {
+                        self.uart1.update(UartUpdate::Write { register, value })?
+                    }
+                    MmioRegister::Trace(register) => {
+                        self.trace.update(TraceUpdate::Write { register, value })?
+                    }
                 }
                 None
             }

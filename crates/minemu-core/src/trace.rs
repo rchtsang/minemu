@@ -1,8 +1,9 @@
-use std::collections::VecDeque;
-
 use minemu_platform::{Peripheral, TraceInspectionEvent, peripherals::trace::Register};
 
-use crate::Result;
+use crate::{Result, support::BoundedQueue};
+
+/// Default number of committed trace events retained for inspection.
+pub const TRACE_CAPACITY: usize = 4096;
 
 /// One state-changing trace-device input.
 pub enum TraceUpdate {
@@ -10,25 +11,19 @@ pub enum TraceUpdate {
 }
 
 /// One committed guest trace event.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TraceEvent {
-    pub tick: u64,
-    pub value: u32,
-}
+pub type TraceEvent = TraceInspectionEvent;
 
 /// Bounded trace state. Writes are staged until the issuing instruction retires.
 pub struct TraceDevice {
     staged: Vec<u32>,
-    events: VecDeque<TraceEvent>,
-    capacity: usize,
+    events: BoundedQueue<TraceEvent>,
 }
 
 impl TraceDevice {
     pub fn new(capacity: usize) -> Self {
         Self {
             staged: Vec::new(),
-            events: VecDeque::with_capacity(capacity),
-            capacity,
+            events: BoundedQueue::new(capacity),
         }
     }
 
@@ -36,19 +31,14 @@ impl TraceDevice {
         self.staged.push(value);
     }
 
+    /// Commits staged writes at `tick` and returns the events that were retained.
     pub(crate) fn retire(&mut self, tick: u64) -> Vec<TraceEvent> {
-        let staged = std::mem::take(&mut self.staged);
-        let mut committed = Vec::with_capacity(staged.len());
-        for value in staged {
-            if self.capacity == 0 {
-                continue;
-            }
-            if self.events.len() == self.capacity {
-                self.events.pop_front();
-            }
+        let mut committed = Vec::new();
+        for value in std::mem::take(&mut self.staged) {
             let event = TraceEvent { tick, value };
-            self.events.push_back(event);
-            committed.push(event);
+            if self.events.push(event) {
+                committed.push(event);
+            }
         }
         committed
     }
@@ -58,18 +48,13 @@ impl TraceDevice {
     }
 
     pub fn inspect(&self) -> Vec<TraceInspectionEvent> {
-        self.events()
-            .map(|event| TraceInspectionEvent {
-                tick: event.tick,
-                value: event.value,
-            })
-            .collect()
+        self.events().collect()
     }
 }
 
 impl Default for TraceDevice {
     fn default() -> Self {
-        Self::new(4096)
+        Self::new(TRACE_CAPACITY)
     }
 }
 

@@ -1,12 +1,16 @@
-use std::collections::VecDeque;
-
 use minemu_platform::{
     ExceptionKind, InspectionRequest, InspectionResponse, MemRegion, ObservableEvent, Peripheral,
-    TraceInspectionEvent, VirtualAddress,
+    VirtualAddress,
     peripherals::block::{UNIT_FILESYSTEM, UNIT_SWAP},
 };
 
-use crate::{ExceptionPlan, MmioBus, Mmu, MmuFault, PhysicalMemory, PhysicalMemoryAccess, Result};
+use crate::{
+    ExceptionPlan, MmioBus, Mmu, MmuFault, PhysicalMemory, PhysicalMemoryAccess, Result,
+    support::BoundedQueue,
+};
+
+/// Default number of observable events a machine retains.
+pub const DEFAULT_EVENT_CAPACITY: usize = 4096;
 
 /// Result of a single backend instruction attempt supplied by the CPU adapter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,8 +38,7 @@ pub struct Machine {
     pub bus: MmioBus,
     pub mmu: Mmu,
     ticks: u64,
-    events: VecDeque<ObservableEvent>,
-    event_capacity: usize,
+    events: BoundedQueue<ObservableEvent>,
 }
 
 impl Machine {
@@ -45,8 +48,7 @@ impl Machine {
             bus: MmioBus::new(),
             mmu: Mmu::new(),
             ticks: 0,
-            events: VecDeque::with_capacity(event_capacity),
-            event_capacity,
+            events: BoundedQueue::new(event_capacity),
         }
     }
 
@@ -68,7 +70,7 @@ impl Machine {
         let system_rom = self.copy_region(MemRegion::SystemRom)?;
         let mut machine = Self::new(
             PhysicalMemory::with_roms(&boot_rom, &system_rom)?,
-            self.event_capacity,
+            self.events.capacity(),
         );
         for unit in [UNIT_FILESYSTEM, UNIT_SWAP] {
             if let Some(media) = self.bus.block.media_clone(unit)? {
@@ -143,27 +145,18 @@ impl Machine {
             self.bus.advance_to(self.ticks, &mut self.memory);
         }
         for trace in self.bus.retire_trace_events(self.ticks) {
-            self.record_event(ObservableEvent::Trace(TraceInspectionEvent {
-                tick: trace.tick,
-                value: trace.value,
-            }));
+            self.record_event(ObservableEvent::Trace(trace));
         }
     }
 
     fn record_event(&mut self, event: ObservableEvent) {
-        if self.event_capacity == 0 {
-            return;
-        }
-        if self.events.len() == self.event_capacity {
-            self.events.pop_front();
-        }
-        self.events.push_back(event);
+        self.events.push(event);
     }
 }
 
 impl Default for Machine {
     fn default() -> Self {
-        Self::new(PhysicalMemory::default(), 4096)
+        Self::new(PhysicalMemory::default(), DEFAULT_EVENT_CAPACITY)
     }
 }
 

@@ -15,7 +15,10 @@ use minemu_platform::{
     },
 };
 
-use crate::{CoreError, InterruptSignal, PhysicalMemoryAccess, Result};
+use crate::{
+    CoreError, InterruptSignal, PhysicalMemoryAccess, Result,
+    support::{IrqLine, flag},
+};
 
 const SECTOR_SIZE: usize = minemu_platform::peripherals::block::SECTOR_SIZE as usize;
 
@@ -65,7 +68,7 @@ pub struct BlockDevice {
     error: Error,
     active: Option<Request>,
     units: [MediaUnit; UNIT_COUNT],
-    interrupt_sender: Sender<InterruptSignal>,
+    irq: IrqLine,
 }
 
 impl BlockDevice {
@@ -80,7 +83,7 @@ impl BlockDevice {
             error: Error::None,
             active: None,
             units: std::array::from_fn(|_| MediaUnit::default()),
-            interrupt_sender,
+            irq: IrqLine::new(Source::Block, interrupt_sender),
         }
     }
 
@@ -109,16 +112,9 @@ impl BlockDevice {
     }
 
     pub const fn status(&self) -> u32 {
-        (if self.active.is_some() {
-            STATUS_BUSY
-        } else {
-            0
-        }) | (if self.complete { STATUS_COMPLETE } else { 0 })
-            | (if matches!(self.error, Error::None) {
-                0
-            } else {
-                STATUS_ERROR
-            })
+        flag(self.active.is_some(), STATUS_BUSY)
+            | flag(self.complete, STATUS_COMPLETE)
+            | flag(!matches!(self.error, Error::None), STATUS_ERROR)
     }
 
     pub const fn error(&self) -> Error {
@@ -146,11 +142,7 @@ impl BlockDevice {
     }
 
     pub const fn control(&self) -> u32 {
-        if self.completion_irq_enabled {
-            CONTROL_IRQ_ENABLE
-        } else {
-            0
-        }
+        flag(self.completion_irq_enabled, CONTROL_IRQ_ENABLE)
     }
 
     fn set_lba(&mut self, lba: u32) {
@@ -273,10 +265,7 @@ impl BlockDevice {
         request: Request,
         memory: &mut dyn PhysicalMemoryAccess,
     ) -> std::result::Result<Error, Error> {
-        let unit = usize::try_from(request.unit)
-            .ok()
-            .filter(|index| *index < UNIT_COUNT)
-            .ok_or(Error::InvalidUnit)?;
+        let unit = Self::unit_index(request.unit).map_err(|_| Error::InvalidUnit)?;
         if !matches!(request.command, COMMAND_READ | COMMAND_WRITE) {
             return Err(Error::InvalidCommand);
         }
@@ -318,17 +307,13 @@ impl BlockDevice {
     }
 
     fn signal_interrupt(&self) {
-        let _ = self.interrupt_sender.send(InterruptSignal {
-            source: Source::Block,
-            pending: self.irq_pending(),
-        });
+        self.irq.set(self.irq_pending());
     }
 }
 
 impl Default for BlockDevice {
     fn default() -> Self {
-        let (sender, _) = mpsc::channel();
-        Self::new(sender)
+        Self::new(mpsc::channel().0)
     }
 }
 

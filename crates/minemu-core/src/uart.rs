@@ -1,7 +1,4 @@
-use std::{
-    collections::VecDeque,
-    sync::mpsc::{self, Sender},
-};
+use std::sync::mpsc::{self, Sender};
 
 use minemu_platform::{
     Peripheral, UartInspection,
@@ -11,7 +8,15 @@ use minemu_platform::{
     },
 };
 
-use crate::{InterruptSignal, Result};
+use crate::{
+    InterruptSignal, Result,
+    support::{BoundedQueue, IrqLine, flag},
+};
+
+/// Default number of received bytes a UART buffers before dropping the oldest.
+pub const UART_RX_CAPACITY: usize = 4096;
+/// Default number of transmitted bytes a UART retains for inspection.
+pub const UART_TX_CAPACITY: usize = 8192;
 
 /// One state-changing UART input.
 pub enum UartUpdate {
@@ -21,13 +26,10 @@ pub enum UartUpdate {
 
 /// Independent UART state with bounded receive and transmit histories.
 pub struct Uart {
-    rx: VecDeque<u8>,
-    tx: VecDeque<u8>,
-    rx_capacity: usize,
-    tx_capacity: usize,
+    rx: BoundedQueue<u8>,
+    tx: BoundedQueue<u8>,
     rx_irq_enabled: bool,
-    interrupt_source: Source,
-    interrupt_sender: Sender<InterruptSignal>,
+    irq: IrqLine,
 }
 
 impl Uart {
@@ -38,25 +40,17 @@ impl Uart {
         interrupt_sender: Sender<InterruptSignal>,
     ) -> Self {
         Self {
-            rx: VecDeque::with_capacity(rx_capacity),
-            tx: VecDeque::with_capacity(tx_capacity),
-            rx_capacity,
-            tx_capacity,
+            rx: BoundedQueue::new(rx_capacity),
+            tx: BoundedQueue::new(tx_capacity),
             rx_irq_enabled: false,
-            interrupt_source,
-            interrupt_sender,
+            irq: IrqLine::new(interrupt_source, interrupt_sender),
         }
     }
 
     fn receive(&mut self, byte: u8) {
-        if self.rx_capacity == 0 {
-            return;
+        if self.rx.push(byte) {
+            self.signal_interrupt();
         }
-        if self.rx.len() == self.rx_capacity {
-            self.rx.pop_front();
-        }
-        self.rx.push_back(byte);
-        self.signal_interrupt();
     }
 
     fn read_rx(&mut self) -> u8 {
@@ -66,30 +60,15 @@ impl Uart {
     }
 
     fn write_tx(&mut self, byte: u8) {
-        if self.tx_capacity == 0 {
-            return;
-        }
-        if self.tx.len() == self.tx_capacity {
-            self.tx.pop_front();
-        }
-        self.tx.push_back(byte);
+        self.tx.push(byte);
     }
 
     pub fn status(&self) -> u32 {
-        let rx_ready = if self.rx.is_empty() {
-            0
-        } else {
-            STATUS_RX_READY
-        };
-        rx_ready | STATUS_TX_READY
+        flag(!self.rx.is_empty(), STATUS_RX_READY) | STATUS_TX_READY
     }
 
     pub const fn control(&self) -> u32 {
-        if self.rx_irq_enabled {
-            CONTROL_RX_IRQ_ENABLE
-        } else {
-            0
-        }
+        flag(self.rx_irq_enabled, CONTROL_RX_IRQ_ENABLE)
     }
 
     fn set_control(&mut self, value: u32) {
@@ -116,17 +95,18 @@ impl Uart {
     }
 
     fn signal_interrupt(&self) {
-        let _ = self.interrupt_sender.send(InterruptSignal {
-            source: self.interrupt_source,
-            pending: self.irq_pending(),
-        });
+        self.irq.set(self.irq_pending());
     }
 }
 
 impl Default for Uart {
     fn default() -> Self {
-        let (sender, _) = mpsc::channel();
-        Self::new(4096, 8192, Source::Uart0, sender)
+        Self::new(
+            UART_RX_CAPACITY,
+            UART_TX_CAPACITY,
+            Source::Uart0,
+            mpsc::channel().0,
+        )
     }
 }
 

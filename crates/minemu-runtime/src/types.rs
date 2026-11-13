@@ -27,6 +27,9 @@ pub enum UartPort {
 }
 
 impl UartPort {
+    /// Every UART port, in index order.
+    pub const ALL: [Self; 2] = [Self::Uart0, Self::Uart1];
+
     pub(crate) const fn index(self) -> usize {
         match self {
             Self::Uart0 => 0,
@@ -82,7 +85,7 @@ pub enum RuntimeInspectionRequest {
     Translate(VirtualAddress),
     /// Captures CPU state and instruction bytes from Unicorn.
     Execution {
-        address: Option<minemu_platform::VirtualAddress>,
+        address: Option<VirtualAddress>,
         before: usize,
         after: usize,
     },

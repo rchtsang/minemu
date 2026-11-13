@@ -6,8 +6,8 @@ mod types;
 pub use minemu_unicorn::ExecutionInspection;
 pub use service::RuntimeHandle;
 pub use types::{
-    LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection, RuntimeInspectionRequest,
-    RuntimeStatus, ScheduledUartInput, UartPort,
+    InspectionResult, LifecycleState, RuntimeConfig, RuntimeError, RuntimeInspection,
+    RuntimeInspectionRequest, RuntimeStatus, ScheduledUartInput, UartPort,
 };
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ use std::{
     collections::VecDeque,
     fs,
     num::NonZeroU64,
+    path::PathBuf,
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
@@ -10,10 +11,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use minemu_core::{BlockUpdate, MachineStatus, PhysicalMemoryAccess, UartUpdate};
+use minemu_core::{BlockUpdate, Machine, MachineStatus, PhysicalMemoryAccess, UartUpdate};
 use minemu_platform::{
-    InspectionRequest, InspectionResponse, Peripheral,
-    peripherals::block::{UNIT_FILESYSTEM, UNIT_SWAP},
+    InspectionRequest, InspectionResponse, Peripheral, PhysicalAddress,
+    peripherals::block::{UNIT_COUNT, UNIT_FILESYSTEM, UNIT_SWAP},
 };
 use minemu_unicorn::{BackendStop, UnicornBackend};
 use tracing::{debug, error, info, trace, warn};
@@ -63,9 +64,7 @@ impl RuntimeHandle {
         );
         let thread = thread::Builder::new()
             .name("minemu-emulator".into())
-            .spawn(move || {
-                Service::new(config, command_receiver, service_status, service_uart).run()
-            })
+            .spawn(move || Service::start(config, command_receiver, service_status, service_uart))
             .map_err(RuntimeError::Io)?;
         Ok(Self {
             commands: command_sender,
@@ -177,6 +176,7 @@ impl UartInbox {
         }
     }
 
+    /// Appends bytes for one port, discarding the oldest when full.
     fn push(&mut self, port: UartPort, bytes: &[u8]) {
         if self.capacity == 0 {
             return;
@@ -195,48 +195,65 @@ impl UartInbox {
     }
 }
 
+/// Attached block media files, indexed by unit.
+type BlockMediaPaths = [Option<PathBuf>; UNIT_COUNT];
+
+/// Yields `(unit, path)` for each unit that has a media file.
+fn block_media(paths: &BlockMediaPaths) -> impl Iterator<Item = (u32, &PathBuf)> {
+    [UNIT_FILESYSTEM, UNIT_SWAP]
+        .into_iter()
+        .zip(paths)
+        .filter_map(|(unit, path)| Some((unit, path.as_ref()?)))
+}
+
+/// The backend plus everything needed to rebuild it on reset.
 struct Emulator {
     backend: UnicornBackend,
     entry: u32,
     end: u32,
     instruction_batch: usize,
-    block_media_paths: [Option<std::path::PathBuf>; 2],
-    initial_ram_writes: Vec<(minemu_platform::PhysicalAddress, Vec<u8>)>,
+    block_media_paths: BlockMediaPaths,
+    initial_ram_writes: Vec<(PhysicalAddress, Vec<u8>)>,
 }
 
 impl Emulator {
     fn new(config: &RuntimeConfig) -> Result<Self> {
-        let machine = configured_machine(config, &config.machine)?;
-        let mut backend = UnicornBackend::new(machine)?;
-        backend.set_program_counter(config.entry)?;
+        let block_media_paths = [
+            config.block_media_path.clone(),
+            config.block1_media_path.clone(),
+        ];
+        let backend = build_backend(
+            &config.machine,
+            config.entry,
+            &block_media_paths,
+            &config.initial_ram_writes,
+        )?;
         Ok(Self {
             backend,
             entry: config.entry,
             end: config.end,
             instruction_batch: config.instruction_batch,
-            block_media_paths: [
-                config.block_media_path.clone(),
-                config.block1_media_path.clone(),
-            ],
+            block_media_paths,
             initial_ram_writes: config.initial_ram_writes.clone(),
         })
     }
 
-    fn run_batch(
-        &mut self,
-        instruction_budget: usize,
-        tick_deadline: Option<u64>,
-    ) -> Result<BackendStop> {
+    fn ticks(&self) -> u64 {
+        self.backend.machine().ticks()
+    }
+
+    fn run_batch(&mut self, instruction_budget: usize, tick_deadline: Option<u64>) -> BackendStop {
         let start = self.backend.program_counter().unwrap_or(self.entry);
-        Ok(match tick_deadline {
+        match tick_deadline {
             Some(deadline) => {
                 self.backend
                     .run_until_tick(start, self.end, instruction_budget, deadline)
             }
             None => self.backend.run(start, self.end, instruction_budget),
-        })
+        }
     }
 
+    /// Steps over a breakpoint the guest is still stopped on.
     fn resume_from_breakpoint(&mut self, address: u32) -> Result<()> {
         if self.backend.program_counter()? == address {
             self.backend.set_program_counter(address.wrapping_add(4))?;
@@ -244,43 +261,30 @@ impl Emulator {
         Ok(())
     }
 
+    /// Persists media, then rebuilds the machine from reset state and the media files.
     fn reset(&mut self) -> Result<()> {
         self.flush()?;
-        let config = RuntimeConfig {
-            machine: self.backend.machine().reset_clone()?,
-            entry: self.entry,
-            end: self.end,
-            instruction_batch: self.instruction_batch,
-            status_period: Duration::ZERO,
-            command_capacity: 1,
-            uart_capacity: 0,
-            block_media_path: self.block_media_paths[0].clone(),
-            block1_media_path: self.block_media_paths[1].clone(),
-            initial_ram_writes: self.initial_ram_writes.clone(),
-            start_paused: false,
-            execution_deadline: None,
-            scheduled_uart: Vec::new(),
-        };
-        let machine = configured_machine(&config, &config.machine)?;
-        self.backend = UnicornBackend::new(machine)?;
-        self.backend.set_program_counter(self.entry)?;
+        self.backend = build_backend(
+            self.backend.machine(),
+            self.entry,
+            &self.block_media_paths,
+            &self.initial_ram_writes,
+        )?;
         Ok(())
     }
 
+    /// Writes dirty media for every unit, attempting all units before reporting
+    /// the first failure.
     fn flush(&mut self) -> Result<()> {
         let mut first_error = None;
-        for (unit, path) in [UNIT_FILESYSTEM, UNIT_SWAP]
-            .into_iter()
-            .zip(self.block_media_paths.iter())
-        {
-            let Some(path) = path else { continue };
-            if let Err(error) = self
+        for (unit, path) in block_media(&self.block_media_paths) {
+            let result = self
                 .backend
                 .machine_mut()
                 .bus
                 .block
-                .flush(unit, |media| fs::write(path, media))
-            {
+                .flush(unit, |media| fs::write(path, media));
+            if let Err(error) = result {
                 if first_error.is_none() {
                     first_error = Some(error);
                 } else {
@@ -288,22 +292,24 @@ impl Emulator {
                 }
             }
         }
-        first_error.map_or(Ok(()), Err).map_err(Into::into)
+        first_error.map_or(Ok(()), |error| Err(error.into()))
     }
 
-    fn drain_uart(&mut self, inbox: &Arc<Mutex<UartInbox>>) {
-        let mut inbox = inbox.lock().expect("UART ingress mutex poisoned");
-        let uart0 = inbox.drain(UartPort::Uart0);
-        let uart1 = inbox.drain(UartPort::Uart1);
-        drop(inbox);
-        self.deliver_uart(UartPort::Uart0, &uart0);
-        self.deliver_uart(UartPort::Uart1, &uart1);
+    fn drain_uart(&mut self, inbox: &Mutex<UartInbox>) {
+        let pending = {
+            let mut inbox = inbox.lock().expect("UART ingress mutex poisoned");
+            UartPort::ALL.map(|port| inbox.drain(port))
+        };
+        for (port, bytes) in UartPort::ALL.into_iter().zip(pending) {
+            self.deliver_uart(port, &bytes);
+        }
     }
 
     fn deliver_uart(&mut self, port: UartPort, bytes: &[u8]) {
+        let bus = &mut self.backend.machine_mut().bus;
         let uart = match port {
-            UartPort::Uart0 => &mut self.backend.machine_mut().bus.uart0,
-            UartPort::Uart1 => &mut self.backend.machine_mut().bus.uart1,
+            UartPort::Uart0 => &mut bus.uart0,
+            UartPort::Uart1 => &mut bus.uart1,
         };
         for byte in bytes {
             let _ = uart.update(UartUpdate::Receive(*byte));
@@ -315,65 +321,66 @@ impl Emulator {
     }
 
     fn inspect(&mut self, request: &RuntimeInspectionRequest) -> Result<RuntimeInspection> {
-        match request {
+        let backend = &mut self.backend;
+        Ok(match request {
             RuntimeInspectionRequest::Machine(request) => {
-                Ok(match self.backend.machine_mut().inspect(*request)? {
+                match backend.machine_mut().inspect(*request)? {
                     InspectionResponse::Memory(bytes) => RuntimeInspection::Memory(bytes.to_vec()),
                     InspectionResponse::Mmu(mmu) => RuntimeInspection::Mmu(mmu),
                     InspectionResponse::Peripherals(peripherals) => {
                         RuntimeInspection::Peripherals(peripherals)
                     }
                     InspectionResponse::Events(events) => RuntimeInspection::Events(events),
-                })
+                }
             }
-            RuntimeInspectionRequest::LiveMemory(range) => Ok(RuntimeInspection::LiveMemory(
-                *range,
-                self.backend.inspect_live_memory(*range)?,
-            )),
+            RuntimeInspectionRequest::LiveMemory(range) => {
+                RuntimeInspection::LiveMemory(*range, backend.inspect_live_memory(*range)?)
+            }
             RuntimeInspectionRequest::VirtualMemory { address, length } => {
-                Ok(RuntimeInspection::VirtualMemory(
+                RuntimeInspection::VirtualMemory(
                     *address,
-                    self.backend.inspect_virtual_memory(*address, *length)?,
-                ))
+                    backend.inspect_virtual_memory(*address, *length)?,
+                )
             }
-            RuntimeInspectionRequest::Translate(address) => Ok(RuntimeInspection::Translation(
+            RuntimeInspectionRequest::Translate(address) => RuntimeInspection::Translation(
                 *address,
-                self.backend.translate_virtual_address(*address)?,
-            )),
+                backend.translate_virtual_address(*address)?,
+            ),
             RuntimeInspectionRequest::Execution {
                 address,
                 before,
                 after,
-            } => Ok(RuntimeInspection::Execution(
-                self.backend.inspect_execution(*address, *before, *after)?,
-            )),
-            RuntimeInspectionRequest::SearchMemory { pattern } => Ok(
-                RuntimeInspection::SearchMemory(self.backend.search_memory(pattern)?),
-            ),
-        }
+            } => {
+                RuntimeInspection::Execution(backend.inspect_execution(*address, *before, *after)?)
+            }
+            RuntimeInspectionRequest::SearchMemory { pattern } => {
+                RuntimeInspection::SearchMemory(backend.search_memory(pattern)?)
+            }
+        })
     }
 }
 
-fn configured_machine(
-    config: &RuntimeConfig,
-    source: &minemu_core::Machine,
-) -> Result<minemu_core::Machine> {
+/// Builds a backend at `entry` from a reset copy of `source`, with block media
+/// reloaded from disk and the configured RAM prefill applied.
+fn build_backend(
+    source: &Machine,
+    entry: u32,
+    block_media_paths: &BlockMediaPaths,
+    initial_ram_writes: &[(PhysicalAddress, Vec<u8>)],
+) -> Result<UnicornBackend> {
     let mut machine = source.reset_clone()?;
-    for (unit, path) in [UNIT_FILESYSTEM, UNIT_SWAP]
-        .into_iter()
-        .zip([&config.block_media_path, &config.block1_media_path])
-    {
-        if let Some(path) = path {
-            machine.bus.block.update(BlockUpdate::Attach {
-                unit,
-                media: fs::read(path)?,
-            })?;
-        }
+    for (unit, path) in block_media(block_media_paths) {
+        machine.bus.block.update(BlockUpdate::Attach {
+            unit,
+            media: fs::read(path)?,
+        })?;
     }
-    for (address, bytes) in &config.initial_ram_writes {
+    for (address, bytes) in initial_ram_writes {
         machine.memory.write_range(*address, bytes)?;
     }
-    Ok(machine)
+    let mut backend = UnicornBackend::new(machine)?;
+    backend.set_program_counter(entry)?;
+    Ok(backend)
 }
 
 fn canonicalize_block_media_paths(config: &mut RuntimeConfig) -> Result<()> {
@@ -399,11 +406,18 @@ fn canonicalize_block_media_paths(config: &mut RuntimeConfig) -> Result<()> {
     Ok(())
 }
 
+/// Whether the service loop should keep running.
+type Continue = bool;
+
+/// The emulator-thread command loop.
 struct Service {
-    config: RuntimeConfig,
+    emulator: Emulator,
+    lifecycle: LifecycleState,
     commands: Receiver<Command>,
     status: Arc<Mutex<RuntimeStatus>>,
     uart: Arc<Mutex<UartInbox>>,
+    status_period: Duration,
+    last_publish: Instant,
     remaining_instructions: Option<u64>,
     pending_breakpoint: Option<u32>,
     execution_deadline: Option<u64>,
@@ -411,378 +425,347 @@ struct Service {
 }
 
 impl Service {
-    fn new(
+    /// Builds the emulator from `config` and runs until shutdown or failure.
+    fn start(
         mut config: RuntimeConfig,
         commands: Receiver<Command>,
         status: Arc<Mutex<RuntimeStatus>>,
         uart: Arc<Mutex<UartInbox>>,
-    ) -> Self {
-        config.scheduled_uart.sort_by_key(|input| input.at_tick);
-        let execution_deadline = config.execution_deadline;
-        let scheduled_uart = std::mem::take(&mut config.scheduled_uart).into();
-        Self {
-            config,
-            commands,
-            status,
-            uart,
-            remaining_instructions: None,
-            pending_breakpoint: None,
-            execution_deadline,
-            scheduled_uart,
-        }
-    }
-
-    fn run(mut self) {
-        let mut emulator = match Emulator::new(&self.config) {
+    ) {
+        let emulator = match Emulator::new(&config) {
             Ok(emulator) => emulator,
             Err(error) => {
                 error!(error = %error, "failed to initialize emulator runtime");
-                self.publish(LifecycleState::Failed, None, Some(error.to_string()), None);
+                let mut status = status.lock().expect("runtime status mutex poisoned");
+                status.lifecycle = LifecycleState::Failed;
+                status.last_error = Some(error.to_string());
                 return;
             }
         };
-        let mut lifecycle = if self.config.start_paused {
-            LifecycleState::Paused
-        } else {
-            LifecycleState::Running
+        config.scheduled_uart.sort_by_key(|input| input.at_tick);
+        let service = Self {
+            emulator,
+            lifecycle: if config.start_paused {
+                LifecycleState::Paused
+            } else {
+                LifecycleState::Running
+            },
+            commands,
+            status,
+            uart,
+            status_period: config.status_period,
+            last_publish: Instant::now(),
+            remaining_instructions: None,
+            pending_breakpoint: None,
+            execution_deadline: config.execution_deadline,
+            scheduled_uart: config.scheduled_uart.into(),
         };
-        let mut last_publish = Instant::now();
+        // The emulator holds its own reset copy; release the configured machine's RAM.
+        drop(config.machine);
+        service.run();
+    }
+
+    fn run(mut self) {
         info!(
-            lifecycle = ?lifecycle,
-            tick = emulator.backend.machine().ticks(),
+            lifecycle = ?self.lifecycle,
+            tick = self.emulator.ticks(),
             "emulator runtime started"
         );
-        self.publish(lifecycle, None, None, Some(&mut emulator));
+        self.publish(None, None);
         loop {
-            if !self.process_commands(&mut emulator, &mut lifecycle) {
+            let proceed = self.process_commands()
+                && match self.lifecycle {
+                    LifecycleState::Running => self.step(),
+                    LifecycleState::Paused => self.wait_for_command(),
+                    _ => true,
+                };
+            if !proceed {
                 break;
-            }
-            if lifecycle == LifecycleState::Running {
-                let current_tick = emulator.backend.machine().ticks();
-                while self
-                    .scheduled_uart
-                    .front()
-                    .is_some_and(|input| input.at_tick <= current_tick)
-                {
-                    let input = self
-                        .scheduled_uart
-                        .pop_front()
-                        .expect("scheduled UART queue was just checked");
-                    emulator.deliver_uart(input.port, &input.bytes);
-                }
-                if self
-                    .execution_deadline
-                    .is_some_and(|deadline| current_tick >= deadline)
-                {
-                    lifecycle = LifecycleState::Paused;
-                    self.publish(
-                        lifecycle,
-                        Some("execution deadline reached".into()),
-                        emulator.flush().err().map(|error| error.to_string()),
-                        Some(&mut emulator),
-                    );
-                    last_publish = Instant::now();
-                    continue;
-                }
-                emulator.drain_uart(&self.uart);
-                let mut instruction_budget =
-                    self.remaining_instructions
-                        .map_or(emulator.instruction_batch, |remaining| {
-                            usize::try_from(remaining)
-                                .unwrap_or(usize::MAX)
-                                .min(emulator.instruction_batch)
-                        });
-                let tick_boundary = self
-                    .execution_deadline
-                    .into_iter()
-                    .chain(self.scheduled_uart.front().map(|input| input.at_tick))
-                    .filter(|boundary| *boundary > current_tick)
-                    .min();
-                if let Some(boundary) = tick_boundary {
-                    instruction_budget = instruction_budget
-                        .min(usize::try_from(boundary - current_tick).unwrap_or(usize::MAX));
-                }
-                let ticks_before = emulator.backend.machine().ticks();
-                let result = emulator.run_batch(instruction_budget, tick_boundary);
-                let executed = emulator
-                    .backend
-                    .machine()
-                    .ticks()
-                    .saturating_sub(ticks_before);
-                let instruction_limit_reached =
-                    self.remaining_instructions
-                        .as_mut()
-                        .is_some_and(|remaining| {
-                            *remaining = remaining.saturating_sub(executed);
-                            *remaining == 0
-                        });
-                match result {
-                    Ok(BackendStop::Unicorn(error)) => {
-                        let flush_error = emulator.flush().err();
-                        let detail = flush_error
-                            .map(|flush| format!("backend {error:?}; flush {flush}"))
-                            .unwrap_or_else(|| format!("backend {error:?}"));
-                        self.publish(
-                            LifecycleState::Failed,
-                            Some(format!("{error:?}")),
-                            Some(detail),
-                            Some(&mut emulator),
-                        );
-                        break;
-                    }
-                    Ok(BackendStop::Breakpoint { address, immediate }) => {
-                        lifecycle = LifecycleState::Paused;
-                        self.remaining_instructions = None;
-                        self.pending_breakpoint = Some(address);
-                        let stop = format!("breakpoint #0x{immediate:04x} at 0x{address:08x}");
-                        info!(
-                            address,
-                            immediate,
-                            tick = emulator.backend.machine().ticks(),
-                            "guest breakpoint paused runtime"
-                        );
-                        self.publish(
-                            lifecycle,
-                            Some(stop),
-                            emulator.flush().err().map(|error| error.to_string()),
-                            Some(&mut emulator),
-                        );
-                        last_publish = Instant::now();
-                    }
-                    Ok(stop) => {
-                        trace!(
-                            ?stop,
-                            pc = emulator.backend.program_counter().ok(),
-                            tick = emulator.backend.machine().ticks(),
-                            "emulator batch stopped"
-                        );
-                        if instruction_limit_reached {
-                            lifecycle = LifecycleState::Paused;
-                            self.remaining_instructions = None;
-                            info!(
-                                tick = emulator.backend.machine().ticks(),
-                                "bounded runtime execution completed"
-                            );
-                            self.publish(
-                                lifecycle,
-                                Some(format!("instruction limit reached ({stop:?})")),
-                                emulator.flush().err().map(|error| error.to_string()),
-                                Some(&mut emulator),
-                            );
-                            last_publish = Instant::now();
-                        } else if last_publish.elapsed() >= self.config.status_period {
-                            self.publish(
-                                lifecycle,
-                                Some(format!("{stop:?}")),
-                                None,
-                                Some(&mut emulator),
-                            );
-                            last_publish = Instant::now();
-                        }
-                    }
-                    Err(error) => {
-                        let flush_error = emulator.flush().err();
-                        let detail = flush_error
-                            .map(|flush| format!("{error}; flush {flush}"))
-                            .unwrap_or_else(|| error.to_string());
-                        self.publish(
-                            LifecycleState::Failed,
-                            None,
-                            Some(detail),
-                            Some(&mut emulator),
-                        );
-                        break;
-                    }
-                }
-            } else if lifecycle == LifecycleState::Paused {
-                match self.commands.recv_timeout(Duration::from_millis(10)) {
-                    Ok(command) => {
-                        if !self.process_command(command, &mut emulator, &mut lifecycle) {
-                            break;
-                        }
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        self.stop(&mut emulator, None);
-                        break;
-                    }
-                }
             }
         }
     }
 
-    fn process_commands(
-        &mut self,
-        emulator: &mut Emulator,
-        lifecycle: &mut LifecycleState,
-    ) -> bool {
+    /// Runs one bounded batch of guest instructions.
+    fn step(&mut self) -> Continue {
+        let current_tick = self.emulator.ticks();
+        self.deliver_scheduled_uart(current_tick);
+        if self
+            .execution_deadline
+            .is_some_and(|deadline| current_tick >= deadline)
+        {
+            self.pause(Some("execution deadline reached".into()));
+            return true;
+        }
+        self.emulator.drain_uart(&self.uart);
+
+        // Never run past the next scheduled event or the caller's instruction limit.
+        let tick_boundary = self
+            .execution_deadline
+            .into_iter()
+            .chain(self.scheduled_uart.front().map(|input| input.at_tick))
+            .filter(|boundary| *boundary > current_tick)
+            .min();
+        let instruction_budget = [
+            self.remaining_instructions,
+            tick_boundary.map(|boundary| boundary - current_tick),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX))
+        .fold(self.emulator.instruction_batch, usize::min);
+
+        let stop = self.emulator.run_batch(instruction_budget, tick_boundary);
+        let executed = self.emulator.ticks().saturating_sub(current_tick);
+        let instruction_limit_reached =
+            self.remaining_instructions
+                .as_mut()
+                .is_some_and(|remaining| {
+                    *remaining = remaining.saturating_sub(executed);
+                    *remaining == 0
+                });
+        self.handle_stop(stop, instruction_limit_reached)
+    }
+
+    fn deliver_scheduled_uart(&mut self, current_tick: u64) {
+        while let Some(input) = self
+            .scheduled_uart
+            .pop_front_if(|input| input.at_tick <= current_tick)
+        {
+            self.emulator.deliver_uart(input.port, &input.bytes);
+        }
+    }
+
+    fn handle_stop(&mut self, stop: BackendStop, instruction_limit_reached: bool) -> Continue {
+        match stop {
+            BackendStop::Unicorn(error) => {
+                self.fail_with_flush(Some(format!("{error:?}")), format!("backend {error:?}"));
+                false
+            }
+            BackendStop::Breakpoint { address, immediate } => {
+                info!(
+                    address,
+                    immediate,
+                    tick = self.emulator.ticks(),
+                    "guest breakpoint paused runtime"
+                );
+                self.pending_breakpoint = Some(address);
+                self.pause(Some(format!(
+                    "breakpoint #0x{immediate:04x} at 0x{address:08x}"
+                )));
+                true
+            }
+            stop => {
+                trace!(
+                    ?stop,
+                    pc = self.emulator.backend.program_counter().ok(),
+                    tick = self.emulator.ticks(),
+                    "emulator batch stopped"
+                );
+                if instruction_limit_reached {
+                    info!(
+                        tick = self.emulator.ticks(),
+                        "bounded runtime execution completed"
+                    );
+                    self.pause(Some(format!("instruction limit reached ({stop:?})")));
+                } else if self.last_publish.elapsed() >= self.status_period {
+                    self.publish(Some(format!("{stop:?}")), None);
+                    self.last_publish = Instant::now();
+                }
+                true
+            }
+        }
+    }
+
+    /// Blocks briefly for the next command while paused.
+    fn wait_for_command(&mut self) -> Continue {
+        match self.commands.recv_timeout(Duration::from_millis(10)) {
+            Ok(command) => self.process_command(command),
+            Err(mpsc::RecvTimeoutError::Timeout) => true,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.stop();
+                false
+            }
+        }
+    }
+
+    /// Processes every queued command without blocking.
+    fn process_commands(&mut self) -> Continue {
         loop {
             match self.commands.try_recv() {
                 Ok(command) => {
-                    if !self.process_command(command, emulator, lifecycle) {
+                    if !self.process_command(command) {
                         return false;
                     }
                 }
                 Err(TryRecvError::Empty) => return true,
                 Err(TryRecvError::Disconnected) => {
-                    self.stop(emulator, None);
+                    self.stop();
                     return false;
                 }
             }
         }
     }
 
-    fn process_command(
-        &mut self,
-        command: Command,
-        emulator: &mut Emulator,
-        lifecycle: &mut LifecycleState,
-    ) -> bool {
+    fn process_command(&mut self, command: Command) -> Continue {
         match command {
-            Command::Pause if *lifecycle == LifecycleState::Running => {
-                info!(
-                    from = ?*lifecycle,
-                    to = ?LifecycleState::Paused,
-                    tick = emulator.backend.machine().ticks(),
-                    "runtime lifecycle transition"
-                );
-                *lifecycle = LifecycleState::Paused;
-                self.remaining_instructions = None;
-                self.publish(
-                    *lifecycle,
-                    None,
-                    emulator.flush().err().map(|error| error.to_string()),
-                    Some(emulator),
-                );
-            }
-            Command::Resume(instruction_limit) if *lifecycle == LifecycleState::Paused => {
-                if let Some(address) = self.pending_breakpoint.take()
-                    && let Err(error) = emulator.resume_from_breakpoint(address)
-                {
-                    self.publish(
-                        LifecycleState::Failed,
-                        None,
-                        Some(error.to_string()),
-                        Some(emulator),
-                    );
-                    return false;
-                }
-                info!(
-                    from = ?*lifecycle,
-                    to = ?LifecycleState::Running,
-                    tick = emulator.backend.machine().ticks(),
-                    "runtime lifecycle transition"
-                );
-                self.remaining_instructions = instruction_limit.map(NonZeroU64::get);
-                *lifecycle = LifecycleState::Running;
-                self.publish_clearing_stop(*lifecycle, emulator);
+            Command::Pause if self.lifecycle == LifecycleState::Running => self.pause(None),
+            Command::Resume(limit) if self.lifecycle == LifecycleState::Paused => {
+                return self.resume(limit);
             }
             Command::Reset
-                if matches!(*lifecycle, LifecycleState::Running | LifecycleState::Paused) =>
+                if matches!(
+                    self.lifecycle,
+                    LifecycleState::Running | LifecycleState::Paused
+                ) =>
             {
-                let previous = *lifecycle;
-                info!(
-                    lifecycle = ?previous,
-                    tick = emulator.backend.machine().ticks(),
-                    "resetting emulator runtime"
-                );
-                match emulator.reset() {
-                    Ok(()) => {
-                        self.pending_breakpoint = None;
-                        self.publish_clearing_stop(previous, emulator);
-                    }
-                    Err(error) => {
-                        error!(error = %error, "emulator reset failed");
-                        self.publish(previous, None, Some(error.to_string()), Some(emulator))
-                    }
-                }
+                self.reset();
             }
             Command::Shutdown => {
                 info!(
-                    lifecycle = ?*lifecycle,
-                    tick = emulator.backend.machine().ticks(),
+                    lifecycle = ?self.lifecycle,
+                    tick = self.emulator.ticks(),
                     "shutting down emulator runtime"
                 );
-                self.stop(emulator, None);
+                self.stop();
                 return false;
             }
-            Command::Inspect(request, response) => {
-                let tick = emulator.backend.machine().ticks();
-                debug!(
-                    request = ?request,
-                    lifecycle = ?*lifecycle,
-                    tick,
-                    "processing runtime inspection request"
-                );
-                let result = emulator.inspect(&request);
-                match &result {
-                    Ok(_) => {
-                        debug!(request = ?request, lifecycle = ?*lifecycle, tick, "completed runtime inspection request")
-                    }
-                    Err(error) => {
-                        warn!(request = ?request, lifecycle = ?*lifecycle, tick, error = %error, "runtime inspection request failed")
-                    }
-                }
-                let _ = response.try_send(result);
-            }
+            Command::Inspect(request, response) => self.inspect(request, response),
             _ => {}
         }
         true
     }
 
-    fn stop(&mut self, emulator: &mut Emulator, error: Option<String>) {
+    /// Pauses execution, persists media, and publishes `stop` as the reason.
+    fn pause(&mut self, stop: Option<String>) {
+        self.transition(LifecycleState::Paused);
+        self.remaining_instructions = None;
+        let flush_error = self.emulator.flush().err().map(|error| error.to_string());
+        self.publish(stop, flush_error);
+        self.last_publish = Instant::now();
+    }
+
+    fn resume(&mut self, instruction_limit: Option<NonZeroU64>) -> Continue {
+        if let Some(address) = self.pending_breakpoint.take()
+            && let Err(error) = self.emulator.resume_from_breakpoint(address)
+        {
+            self.lifecycle = LifecycleState::Failed;
+            self.publish(None, Some(error.to_string()));
+            return false;
+        }
+        self.transition(LifecycleState::Running);
+        self.remaining_instructions = instruction_limit.map(NonZeroU64::get);
+        self.publish_clearing_stop();
+        true
+    }
+
+    fn reset(&mut self) {
         info!(
-            to = ?LifecycleState::Stopping,
-            tick = emulator.backend.machine().ticks(),
-            "runtime lifecycle transition"
+            lifecycle = ?self.lifecycle,
+            tick = self.emulator.ticks(),
+            "resetting emulator runtime"
         );
-        self.publish(LifecycleState::Stopping, None, error, Some(emulator));
-        match emulator.flush() {
+        match self.emulator.reset() {
             Ok(()) => {
-                info!(
-                    to = ?LifecycleState::Stopped,
-                    tick = emulator.backend.machine().ticks(),
-                    "runtime lifecycle transition"
-                );
-                self.publish(LifecycleState::Stopped, None, None, Some(emulator));
+                self.pending_breakpoint = None;
+                self.publish_clearing_stop();
+            }
+            Err(error) => {
+                error!(error = %error, "emulator reset failed");
+                self.publish(None, Some(error.to_string()));
+            }
+        }
+    }
+
+    fn inspect(
+        &mut self,
+        request: RuntimeInspectionRequest,
+        response: SyncSender<InspectionResult>,
+    ) {
+        let lifecycle = self.lifecycle;
+        let tick = self.emulator.ticks();
+        debug!(
+            ?request,
+            ?lifecycle,
+            tick,
+            "processing runtime inspection request"
+        );
+        let result = self.emulator.inspect(&request);
+        match &result {
+            Ok(_) => debug!(
+                ?request,
+                ?lifecycle,
+                tick,
+                "completed runtime inspection request"
+            ),
+            Err(error) => {
+                warn!(?request, ?lifecycle, tick, error = %error, "runtime inspection request failed")
+            }
+        }
+        // A receiver that has gone away no longer wants the result.
+        let _ = response.try_send(result);
+    }
+
+    /// Persists media and publishes the terminal lifecycle state.
+    fn stop(&mut self) {
+        self.transition(LifecycleState::Stopping);
+        self.publish(None, None);
+        match self.emulator.flush() {
+            Ok(()) => {
+                self.transition(LifecycleState::Stopped);
+                self.publish(None, None);
             }
             Err(error) => {
                 error!(error = %error, "runtime shutdown flush failed");
-                self.publish(
-                    LifecycleState::Failed,
-                    None,
-                    Some(error.to_string()),
-                    Some(emulator),
-                );
+                self.lifecycle = LifecycleState::Failed;
+                self.publish(None, Some(error.to_string()));
             }
         }
     }
 
-    fn publish(
-        &self,
-        lifecycle: LifecycleState,
-        last_stop: Option<String>,
-        last_error: Option<String>,
-        emulator: Option<&mut Emulator>,
-    ) {
-        let mut status = self.status.lock().expect("runtime status mutex poisoned");
-        status.lifecycle = lifecycle;
-        if let Some(stop) = last_stop {
-            status.last_stop = Some(stop);
-        }
-        if let Some(error) = last_error {
-            status.last_error = Some(error);
-        }
-        if let Some(emulator) = emulator {
-            status.machine = emulator.status();
-        }
+    /// Marks the runtime failed after attempting to persist media.
+    fn fail_with_flush(&mut self, stop: Option<String>, detail: String) {
+        let detail = match self.emulator.flush() {
+            Ok(()) => detail,
+            Err(flush) => format!("{detail}; flush {flush}"),
+        };
+        self.lifecycle = LifecycleState::Failed;
+        self.publish(stop, Some(detail));
     }
 
-    fn publish_clearing_stop(&self, lifecycle: LifecycleState, emulator: &mut Emulator) {
+    fn transition(&mut self, to: LifecycleState) {
+        info!(
+            from = ?self.lifecycle,
+            ?to,
+            tick = self.emulator.ticks(),
+            "runtime lifecycle transition"
+        );
+        self.lifecycle = to;
+    }
+
+    /// Publishes the current lifecycle and machine status. `None` leaves the
+    /// previously published stop reason or error unchanged.
+    fn publish(&mut self, last_stop: Option<String>, last_error: Option<String>) {
+        self.update_status(|status| {
+            if let Some(stop) = last_stop {
+                status.last_stop = Some(stop);
+            }
+            if let Some(error) = last_error {
+                status.last_error = Some(error);
+            }
+        });
+    }
+
+    fn publish_clearing_stop(&mut self) {
+        self.update_status(|status| status.last_stop = None);
+    }
+
+    /// Atomically publishes lifecycle and machine status along with `update`.
+    fn update_status(&mut self, update: impl FnOnce(&mut RuntimeStatus)) {
+        let machine = self.emulator.status();
         let mut status = self.status.lock().expect("runtime status mutex poisoned");
-        status.lifecycle = lifecycle;
-        status.last_stop = None;
-        status.machine = emulator.status();
+        status.lifecycle = self.lifecycle;
+        status.machine = machine;
+        update(&mut status);
     }
 }
 

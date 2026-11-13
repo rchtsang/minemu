@@ -5,7 +5,7 @@ use minemu_platform::{InspectionRequest, MemRegion, PhysicalAddress, PhysicalRan
 
 use crate::{
     LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeInspectionRequest,
-    ScheduledUartInput, UartPort,
+    RuntimeStatus, ScheduledUartInput, UartPort,
 };
 
 fn running_runtime() -> RuntimeHandle {
@@ -23,29 +23,36 @@ fn running_runtime() -> RuntimeHandle {
     .unwrap()
 }
 
-fn wait_for(runtime: &RuntimeHandle, state: LifecycleState) {
-    for _ in 0..500 {
-        if runtime.status().lifecycle == state {
-            return;
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
-    panic!("runtime did not reach {state:?}");
-}
-
-fn wait_for_paused_tick(runtime: &RuntimeHandle, tick: u64) {
+/// Polls the published status until `done` holds, panicking after about one second.
+fn wait_until(
+    runtime: &RuntimeHandle,
+    what: &str,
+    done: impl Fn(&RuntimeStatus) -> bool,
+) -> RuntimeStatus {
     for _ in 0..500 {
         let status = runtime.status();
-        if status.lifecycle == LifecycleState::Paused && status.machine.ticks == tick {
-            return;
+        if done(&status) {
+            return status;
         }
         thread::sleep(Duration::from_millis(2));
     }
     let status = runtime.status();
     panic!(
-        "runtime did not pause at tick {tick}; lifecycle {:?}, tick {}",
+        "runtime did not reach {what}; lifecycle {:?}, tick {}",
         status.lifecycle, status.machine.ticks
     );
+}
+
+fn wait_for(runtime: &RuntimeHandle, state: LifecycleState) {
+    wait_until(runtime, &format!("{state:?}"), |status| {
+        status.lifecycle == state
+    });
+}
+
+fn wait_for_paused_tick(runtime: &RuntimeHandle, tick: u64) -> RuntimeStatus {
+    wait_until(runtime, &format!("a pause at tick {tick}"), |status| {
+        status.lifecycle == LifecycleState::Paused && status.machine.ticks == tick
+    })
 }
 
 #[test]
@@ -87,27 +94,14 @@ fn bounded_resume_executes_exact_instruction_count_and_pauses() {
     let initial_ticks = runtime.status().machine.ticks;
 
     runtime.resume_for(NonZeroU64::new(7).unwrap()).unwrap();
-    for _ in 0..500 {
-        let status = runtime.status();
-        if status.lifecycle == LifecycleState::Paused && status.machine.ticks == initial_ticks + 7 {
-            assert!(
-                status
-                    .last_stop
-                    .as_deref()
-                    .is_some_and(|stop| stop.contains("instruction limit reached"))
-            );
-            runtime.shutdown().unwrap();
-            return;
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
-    let status = runtime.status();
-    panic!(
-        "bounded runtime stopped at lifecycle {:?}, tick {} instead of {}",
-        status.lifecycle,
-        status.machine.ticks,
-        initial_ticks + 7
+    let status = wait_for_paused_tick(&runtime, initial_ticks + 7);
+    assert!(
+        status
+            .last_stop
+            .as_deref()
+            .is_some_and(|stop| stop.contains("instruction limit reached"))
     );
+    runtime.shutdown().unwrap();
 }
 
 #[test]
@@ -207,18 +201,11 @@ fn reset_clears_a_pending_breakpoint_resume() {
 
     wait_for_paused_tick(&runtime, 1);
     runtime.reset().unwrap();
-    for _ in 0..500 {
-        let status = runtime.status();
-        if status.lifecycle == LifecycleState::Paused
+    wait_until(&runtime, "a cleared pause at tick 0", |status| {
+        status.lifecycle == LifecycleState::Paused
             && status.machine.ticks == 0
             && status.last_stop.is_none()
-        {
-            break;
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
-    assert_eq!(runtime.status().machine.ticks, 0);
-    assert!(runtime.status().last_stop.is_none());
+    });
 
     runtime.resume().unwrap();
     wait_for_paused_tick(&runtime, 1);
@@ -309,13 +296,9 @@ fn dropped_inspection_receivers_do_not_stop_execution() {
         .unwrap();
     drop(receiver);
     runtime.send_uart(UartPort::Uart0, b"coalesced input");
-    for _ in 0..500 {
-        if runtime.status().machine.ticks > 0 {
-            break;
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
-    assert!(runtime.status().machine.ticks > 0);
+    wait_until(&runtime, "a nonzero tick", |status| {
+        status.machine.ticks > 0
+    });
     runtime.shutdown().unwrap();
 }
 

@@ -5,16 +5,26 @@ use unicorn_engine::{RegisterARM, Unicorn, unicorn_const::MemType};
 
 use crate::backend::BackendData;
 
+/// A CP15 access recognized during a batch and completed at its boundary.
 pub(crate) enum PendingCp15 {
     Operation(Cp15Operation),
-    ReadFaultStatus(RegisterARM),
-    ReadFaultAddress(RegisterARM),
-    Undefined { pc: u32 },
+    /// MRC of DFSR or DFAR into the given register.
+    ReadFault(RegisterARM, FaultRegister),
+    Undefined {
+        pc: u32,
+    },
+}
+
+/// The fault-reporting CP15 register read by an MRC.
+#[derive(Clone, Copy)]
+pub(crate) enum FaultRegister {
+    Status,
+    Address,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct DecodedCp15 {
-    pub condition: u32,
+    pub(crate) condition: u32,
     read: bool,
     rt: RegisterARM,
     crn: u32,
@@ -50,7 +60,7 @@ pub(crate) fn decode_cp15(instruction: u32) -> Option<DecodedCp15> {
     Some(DecodedCp15 {
         condition: instruction >> 28,
         read: instruction & (1 << 20) != 0,
-        rt: arm_register((instruction >> 12) & 0x0f)?,
+        rt: general_register((instruction >> 12) & 0x0f),
         crn: (instruction >> 16) & 0x0f,
         crm: instruction & 0x0f,
         opc1: (instruction >> 21) & 0x07,
@@ -58,42 +68,30 @@ pub(crate) fn decode_cp15(instruction: u32) -> Option<DecodedCp15> {
     })
 }
 
+/// Resolves a decoded, privileged, condition-passing CP15 access.
 pub(crate) fn cp15_pending(
-    engine: &mut Unicorn<BackendData>,
+    engine: &Unicorn<BackendData>,
     cp15: DecodedCp15,
     pc: u32,
-) -> Option<PendingCp15> {
+) -> PendingCp15 {
+    let undefined = PendingCp15::Undefined { pc };
+    let source = || engine.reg_read(cp15.rt).map(|value| value as u32);
     match (cp15.read, cp15.crn, cp15.crm, cp15.opc1, cp15.opc2) {
-        (false, 2, 0, 0, 0) => match engine.reg_read(cp15.rt) {
-            Ok(value) => Some(
-                Cp15Operation::set_ttbr0(value as u32)
-                    .map(PendingCp15::Operation)
-                    .unwrap_or(PendingCp15::Undefined { pc }),
-            ),
-            Err(_) => Some(PendingCp15::Undefined { pc }),
-        },
-        (false, 1, 0, 0, 0) => {
-            engine
-                .reg_read(cp15.rt)
-                .ok()
-                .map_or(Some(PendingCp15::Undefined { pc }), |value| {
-                    Some(PendingCp15::Operation(Cp15Operation::set_mmu_enabled(
-                        value as u32,
-                    )))
-                })
-        }
-        (false, 8, 7, 0, 0) => Some(PendingCp15::Operation(Cp15Operation::InvalidateAll)),
-        (false, 12, 0, 0, 0) => match engine.reg_read(cp15.rt) {
-            Ok(value) => Some(
-                Cp15Operation::set_vector_base(value as u32)
-                    .map(PendingCp15::Operation)
-                    .unwrap_or(PendingCp15::Undefined { pc }),
-            ),
-            Err(_) => Some(PendingCp15::Undefined { pc }),
-        },
-        (true, 5, 0, 0, 0) => Some(PendingCp15::ReadFaultStatus(cp15.rt)),
-        (true, 6, 0, 0, 0) => Some(PendingCp15::ReadFaultAddress(cp15.rt)),
-        _ => Some(PendingCp15::Undefined { pc }),
+        (false, 2, 0, 0, 0) => source()
+            .ok()
+            .and_then(|value| Cp15Operation::set_ttbr0(value).ok())
+            .map_or(undefined, PendingCp15::Operation),
+        (false, 1, 0, 0, 0) => source().map_or(undefined, |value| {
+            PendingCp15::Operation(Cp15Operation::set_mmu_enabled(value))
+        }),
+        (false, 8, 7, 0, 0) => PendingCp15::Operation(Cp15Operation::InvalidateAll),
+        (false, 12, 0, 0, 0) => source()
+            .ok()
+            .and_then(|value| Cp15Operation::set_vector_base(value).ok())
+            .map_or(undefined, PendingCp15::Operation),
+        (true, 5, 0, 0, 0) => PendingCp15::ReadFault(cp15.rt, FaultRegister::Status),
+        (true, 6, 0, 0, 0) => PendingCp15::ReadFault(cp15.rt, FaultRegister::Address),
+        _ => undefined,
     }
 }
 
@@ -140,8 +138,9 @@ pub(crate) fn condition_holds(condition: u32, cpsr: u32) -> bool {
     }
 }
 
-fn arm_register(index: u32) -> Option<RegisterARM> {
-    Some(match index {
+/// Maps a four-bit A32 register number to its Unicorn register.
+pub(crate) fn general_register(index: u32) -> RegisterARM {
+    match index & 0x0f {
         0 => RegisterARM::R0,
         1 => RegisterARM::R1,
         2 => RegisterARM::R2,
@@ -157,9 +156,8 @@ fn arm_register(index: u32) -> Option<RegisterARM> {
         12 => RegisterARM::R12,
         13 => RegisterARM::SP,
         14 => RegisterARM::LR,
-        15 => RegisterARM::PC,
-        _ => return None,
-    })
+        _ => RegisterARM::PC,
+    }
 }
 
 #[cfg(test)]

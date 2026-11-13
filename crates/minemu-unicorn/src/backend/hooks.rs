@@ -2,7 +2,7 @@
 //! emulator-visible behavior is auditable without searching construction code.
 
 use minemu_core::InstructionOutcome;
-use minemu_platform::{CPSR_IRQ_DISABLE, MmioTransaction, MmioWidth, PhysicalAddress};
+use minemu_platform::{CPSR_IRQ_DISABLE, MmioTransaction, MmioWidth, PAGE_SIZE, PhysicalAddress};
 use unicorn_engine::unicorn_const::{MemType, TlbEntry, TlbType};
 
 use super::{
@@ -34,6 +34,7 @@ fn virtual_tlb_callback(
     let BackendData {
         machine,
         callback_stop,
+        code_pages,
         ..
     } = engine.get_data_mut();
     let address = VirtualAddress::new(address as u32);
@@ -52,14 +53,20 @@ fn virtual_tlb_callback(
             *callback_stop = Some(BackendStop::MmuFault(fault));
             None
         }
-        Ok(physical) => Some(TlbEntry {
-            paddr: u64::from(physical.get()),
-            perms: match access {
-                Access::Fetch => Prot::EXEC,
+        Ok(physical) => {
+            let perms = match access {
+                Access::Fetch => {
+                    code_pages.insert(physical.get() / PAGE_SIZE);
+                    Prot::EXEC
+                }
                 Access::Read => Prot::READ,
                 Access::Write => Prot::WRITE,
-            },
-        }),
+            };
+            Some(TlbEntry {
+                paddr: u64::from(physical.get()),
+                perms,
+            })
+        }
         Err(fault) => {
             *callback_stop = Some(BackendStop::MmuFault(fault));
             None
@@ -79,8 +86,9 @@ fn instruction_boundary_callback(engine: &mut Unicorn<BackendData>, address: u64
         data.machine
             .finish_instruction(InstructionOutcome::Completed);
     }
-    if irq_deliverable(engine) {
-        // Stop before this instruction; the backend enters the IRQ vector.
+    if engine.get_data().machine.bus.block.has_ram_writes() || irq_deliverable(engine) {
+        // Stop before this instruction. The backend then invalidates code
+        // overwritten by DMA, or enters the IRQ vector.
         let _ = engine.emu_stop();
         return;
     }

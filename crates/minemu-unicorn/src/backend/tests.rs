@@ -514,6 +514,71 @@ fn guest_block_unit_write_and_read_route_through_the_typed_bus() {
 }
 
 #[test]
+fn block_read_over_executed_code_runs_the_new_code() {
+    let ram = MemRegion::Ram.base().get();
+    let routine = ram + 0x1000;
+    let words = |words: &[u32]| -> Vec<u8> { words.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    let branch_link =
+        |from: u32, to: u32| 0xeb00_0000 | ((to.wrapping_sub(from + 8) >> 2) & 0x00ff_ffff);
+    let dma = MemRegion::Dma.base().get();
+
+    let mut main = words(&[branch_link(ram, routine)]); // bl routine (old code)
+    main.extend(load_immediate(0, dma));
+    main.extend(load_immediate(1, routine));
+    main.extend(words(&[0xe580_100c])); // str r1, [r0, #0x0c] PADDR
+    main.extend(load_immediate(1, 1));
+    main.extend(words(&[0xe580_1008, 0xe580_1000])); // SECTOR_COUNT = 1, COMMAND = read
+    main.extend(words(&[
+        0xe590_2010, // poll: ldr r2, [r0, #0x10]
+        0xe312_0002, // tst r2, #2 (complete)
+        0x0aff_fffc, // beq poll
+    ]));
+    let second_call = ram + main.len() as u32;
+    main.extend(words(&[branch_link(second_call, routine), 0xe120_0070])); // bl routine; bkpt
+
+    let mut machine = Machine::default();
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(ram), &main)
+        .unwrap();
+    machine
+        .memory
+        .write_range(
+            PhysicalAddress::new(routine),
+            &words(&[0xe3a0_5001, 0xe12f_ff1e]), // mov r5, #1; bx lr
+        )
+        .unwrap();
+    let mut media = words(&[0xe3a0_5002, 0xe12f_ff1e]); // mov r5, #2; bx lr
+    media.resize(512, 0);
+    machine
+        .bus
+        .block
+        .update(BlockUpdate::Attach { unit: 0, media })
+        .unwrap();
+    let mut backend = UnicornBackend::new(machine).unwrap();
+
+    let mut pc = ram;
+    loop {
+        match backend.run(pc, u32::MAX, 1024) {
+            BackendStop::Breakpoint { .. } => break,
+            BackendStop::InstructionBudget => pc = backend.program_counter().unwrap(),
+            stop => panic!("unexpected stop {stop:?}"),
+        }
+        assert!(backend.machine().ticks() < 10_000, "guest did not finish");
+    }
+    // The DMA landed; the second call must execute it rather than stale code.
+    assert_eq!(
+        backend
+            .machine()
+            .memory
+            .read_u32(PhysicalAddress::new(routine))
+            .unwrap(),
+        0xe3a0_5002
+    );
+    assert_eq!(backend.register(RegisterARM::R5).unwrap(), 2);
+}
+
+#[test]
 fn guest_block_command_snapshots_unit_before_later_mmio_write() {
     let mut machine = Machine::default();
     let start = MemRegion::Ram.base().get();

@@ -1,9 +1,11 @@
 //! Unicorn-backed A32 execution adapter for the backend-independent machine core.
 
+use std::collections::HashSet;
+
 use minemu_core::{ExceptionPlan, InstructionOutcome, Machine, MmuFault};
 use minemu_platform::{
     Access, CPSR_IRQ_DISABLE, CPSR_MODE_MASK, CPSR_THUMB, Cp15Operation, CpuMode, ExceptionKind,
-    FaultCause, MMIO_BASE, MMIO_SIZE, MemRegion, VirtualAddress,
+    FaultCause, MMIO_BASE, MMIO_SIZE, MemRegion, PAGE_SIZE, VirtualAddress,
 };
 use thiserror::Error;
 use tracing::trace;
@@ -102,6 +104,9 @@ pub(crate) struct BackendData {
     instruction_in_flight: bool,
     /// Virtual address of the instruction currently executing.
     current_instruction: u32,
+    /// Physical page numbers Unicorn has fetched code from since its
+    /// translation cache was last flushed.
+    code_pages: HashSet<u32>,
     callback_stop: Option<BackendStop>,
     pending_cp15: Option<PendingCp15>,
     pending_exception: Option<SyncException>,
@@ -136,6 +141,7 @@ impl UnicornBackend {
                 machine,
                 instruction_in_flight: false,
                 current_instruction: 0,
+                code_pages: HashSet::new(),
                 callback_stop: None,
                 pending_cp15: None,
                 pending_exception: None,
@@ -232,6 +238,7 @@ impl UnicornBackend {
 
     /// Installs the batch exit address and clears per-batch callback state.
     fn prepare_batch(&mut self, end: u32) -> std::result::Result<(), uc_error> {
+        self.sync_dma_writes()?;
         if end == u32::MAX {
             self.engine.ctl_set_exits(&[])?;
         } else {
@@ -242,6 +249,30 @@ impl UnicornBackend {
         data.callback_stop = None;
         data.pending_cp15 = None;
         data.pending_exception = None;
+        Ok(())
+    }
+
+    /// Discards code Unicorn translated from RAM that block reads have since
+    /// overwritten. Device DMA writes the shared RAM directly, which Unicorn
+    /// cannot observe.
+    ///
+    /// Unicorn can only invalidate by virtual address, through the guest's
+    /// translation, so the whole translation cache is flushed instead, and
+    /// only when a read overwrote a page code was fetched from. The TLB is
+    /// flushed too so that later fetches refill `code_pages`.
+    fn sync_dma_writes(&mut self) -> std::result::Result<(), uc_error> {
+        let ranges = self.machine_mut().bus.block.take_ram_writes();
+        let data = self.engine.get_data_mut();
+        let overwrote_code = ranges.iter().any(|range| {
+            let first = range.start().get() / PAGE_SIZE;
+            let last = (range.start().get() + (range.length() - 1)) / PAGE_SIZE;
+            (first..=last).any(|page| data.code_pages.contains(&page))
+        });
+        if overwrote_code {
+            data.code_pages.clear();
+            self.engine.ctl_flush_tb()?;
+            self.engine.ctl_flush_tlb()?;
+        }
         Ok(())
     }
 

@@ -69,6 +69,9 @@ pub struct BlockDevice {
     active: Option<Request>,
     units: [MediaUnit; UNIT_COUNT],
     irq: IrqLine,
+    /// RAM ranges written by completed reads and not yet taken by the CPU
+    /// backend, which may hold translated code for them.
+    ram_writes: Vec<PhysicalRange>,
 }
 
 impl BlockDevice {
@@ -84,7 +87,19 @@ impl BlockDevice {
             active: None,
             units: std::array::from_fn(|_| MediaUnit::default()),
             irq: IrqLine::new(Source::Block, interrupt_sender),
+            ram_writes: Vec::new(),
         }
+    }
+
+    /// Returns whether completed reads have written RAM since the last
+    /// [`Self::take_ram_writes`].
+    pub fn has_ram_writes(&self) -> bool {
+        !self.ram_writes.is_empty()
+    }
+
+    /// Takes the RAM ranges written by reads completed since the last call.
+    pub fn take_ram_writes(&mut self) -> Vec<PhysicalRange> {
+        std::mem::take(&mut self.ram_writes)
     }
 
     fn unit_index(unit: u32) -> Result<usize> {
@@ -290,9 +305,12 @@ impl BlockDevice {
         let end = start.checked_add(byte_count).ok_or(Error::InvalidLba)?;
         let sectors = media.get_mut(start..end).ok_or(Error::InvalidLba)?;
         match request.command {
-            COMMAND_READ => memory
-                .write_range(request.dma_address, sectors)
-                .map_err(|_| Error::InvalidDma)?,
+            COMMAND_READ => {
+                memory
+                    .write_range(request.dma_address, sectors)
+                    .map_err(|_| Error::InvalidDma)?;
+                self.ram_writes.push(dma_range);
+            }
             COMMAND_WRITE => {
                 memory
                     .read_range(dma_range, sectors)

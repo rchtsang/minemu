@@ -365,9 +365,9 @@ impl UnicornBackend {
                 );
                 self.machine_mut().mmu.apply_cp15(operation);
                 if (mmu_toggled || matches!(operation, Cp15Operation::InvalidateAll))
-                    && self.engine.ctl_flush_tlb().is_err()
+                    && let Err(error) = self.engine.ctl_flush_tlb()
                 {
-                    return BackendStop::Unicorn(uc_error::ARG);
+                    return BackendStop::Unicorn(error);
                 }
                 BackendStop::Cp15Boundary
             }
@@ -380,8 +380,8 @@ impl UnicornBackend {
                         FaultRegister::Status => fault.status.raw(),
                         FaultRegister::Address => fault.address.get(),
                     });
-                if self.set_register(register, value).is_err() {
-                    return BackendStop::Unicorn(uc_error::ARG);
+                if let Err(error) = self.set_register(register, value) {
+                    return unicorn_stop(error);
                 }
                 BackendStop::Cp15Boundary
             }
@@ -435,7 +435,7 @@ impl UnicornBackend {
             .finish_instruction(InstructionOutcome::Fault(fault, VirtualAddress::new(pc)))
         {
             Some(plan) => self.enter_planned(plan),
-            None => BackendStop::Unicorn(uc_error::ARG),
+            None => unreachable!("a fault always plans an abort entry"),
         }
     }
 
@@ -490,7 +490,7 @@ impl UnicornBackend {
         let kind = plan.request.kind;
         match self.enter_exception(plan) {
             Ok(()) => BackendStop::Exception(kind),
-            Err(_) => BackendStop::Unicorn(uc_error::ARG),
+            Err(error) => unicorn_stop(error),
         }
     }
 
@@ -539,5 +539,14 @@ impl UnicornBackend {
             Some(hooks::mmio_read_callback),
             Some(hooks::mmio_write_callback),
         )?)
+    }
+}
+
+/// Reports a failed register access as the Unicorn error that caused it.
+fn unicorn_stop(error: BackendError) -> BackendStop {
+    match error {
+        BackendError::Unicorn(error) => BackendStop::Unicorn(error),
+        // Register access and exception entry only fail inside Unicorn.
+        other => unreachable!("register access failed outside Unicorn: {other}"),
     }
 }

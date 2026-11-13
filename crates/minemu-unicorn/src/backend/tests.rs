@@ -1292,3 +1292,13 @@ mod batch_independence {
         assert_eq!(run_until_irq(1024), exact);
     }
 }
+
+#[test]
+fn failed_register_access_reports_the_original_unicorn_error() {
+    use unicorn_engine::unicorn_const::uc_error;
+
+    assert_eq!(
+        super::unicorn_stop(BackendError::Unicorn(uc_error::NOMEM)),
+        BackendStop::Unicorn(uc_error::NOMEM)
+    );
+}

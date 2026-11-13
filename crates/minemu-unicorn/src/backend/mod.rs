@@ -98,6 +98,8 @@ pub(crate) struct BackendData {
     /// Whether an instruction has begun and not yet been retired. It is retired
     /// at the next instruction boundary, or when the batch ends.
     instruction_in_flight: bool,
+    /// Virtual address of the instruction currently executing.
+    current_instruction: u32,
     callback_stop: Option<BackendStop>,
     pending_cp15: Option<PendingCp15>,
     pending_exception: Option<SyncException>,
@@ -131,6 +133,7 @@ impl UnicornBackend {
             BackendData {
                 machine,
                 instruction_in_flight: false,
+                current_instruction: 0,
                 callback_stop: None,
                 pending_cp15: None,
                 pending_exception: None,

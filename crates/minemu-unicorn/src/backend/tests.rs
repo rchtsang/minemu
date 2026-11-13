@@ -561,6 +561,122 @@ fn invalid_mmio_load_updates_fault_status_and_address() {
     assert!(!fault.status.is_write());
 }
 
+/// Encodes `movw rd, #low16; movt rd, #high16` as little-endian bytes.
+fn load_immediate(rd: u32, value: u32) -> Vec<u8> {
+    let movw = 0xe300_0000 | (value & 0xf000) << 4 | rd << 12 | (value & 0xfff);
+    let movt = 0xe340_0000 | (value >> 28) << 16 | rd << 12 | (value >> 16 & 0xfff);
+    [movw, movt]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect()
+}
+
+#[test]
+fn invalid_mmio_access_aborts_before_writing_registers() {
+    let invalid_address = MemRegion::Rng.base().get() + 0x0c;
+    let mut code = load_immediate(1, invalid_address);
+    code.extend(load_immediate(0, 0x55));
+    code.extend(0xe491_0004_u32.to_le_bytes()); // ldr r0, [r1], #4
+    let (mut backend, start) = backend_with_code(&code);
+    let faulting_pc = start + 16;
+
+    assert_eq!(
+        backend.run(start, u32::MAX, 16),
+        BackendStop::Exception(ExceptionKind::DataAbort)
+    );
+    assert_eq!(backend.register(RegisterARM::LR).unwrap(), faulting_pc + 8);
+    assert_eq!(backend.register(RegisterARM::R0).unwrap(), 0x55);
+    assert_eq!(backend.register(RegisterARM::R1).unwrap(), invalid_address);
+    // Four completed instructions; the abort entry costs one more.
+    assert_eq!(backend.machine().ticks(), 5);
+
+    let mut code = load_immediate(1, invalid_address);
+    code.extend(0xe481_0004_u32.to_le_bytes()); // str r0, [r1], #4
+    let (mut backend, start) = backend_with_code(&code);
+    assert_eq!(
+        backend.run(start, u32::MAX, 16),
+        BackendStop::Exception(ExceptionKind::DataAbort)
+    );
+    assert_eq!(backend.register(RegisterARM::LR).unwrap(), start + 16);
+    assert_eq!(backend.register(RegisterARM::R1).unwrap(), invalid_address);
+    assert!(
+        backend
+            .machine()
+            .mmu
+            .last_fault()
+            .unwrap()
+            .status
+            .is_write()
+    );
+}
+
+/// Runs `instruction` at VA 8 with r1 = `base` and r2 = 2, where VA 0x5000 maps
+/// the RNG page (SEED rw, DATA ro, STATE ro, nothing at 0x0c), and returns the
+/// recorded data-abort address.
+fn mapped_mmio_fault_address(instruction: u32, base: u32) -> u32 {
+    let mut machine = Machine::default();
+    let ram = MemRegion::Ram.base().get();
+    let table = ram + 0x1000;
+    let code = ram + 0x2000;
+    machine
+        .memory
+        .write_u32(PhysicalAddress::new(ram), table | PTE_VALID)
+        .unwrap();
+    machine
+        .memory
+        .write_u32(
+            PhysicalAddress::new(table),
+            code | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE,
+        )
+        .unwrap();
+    machine
+        .memory
+        .write_u32(
+            PhysicalAddress::new(table + 5 * 4),
+            MemRegion::Rng.base().get() | PTE_VALID | PTE_READABLE | PTE_WRITABLE,
+        )
+        .unwrap();
+    let mut program = load_immediate(1, base);
+    program.extend(load_immediate(2, 2));
+    program.extend(instruction.to_le_bytes());
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(code), &program)
+        .unwrap();
+    machine.mmu.set_ttbr0(PhysicalAddress::new(ram));
+    machine.mmu.set_enabled(true);
+    let mut backend = UnicornBackend::new(machine).unwrap();
+
+    assert_eq!(
+        backend.run(0, u32::MAX, 16),
+        BackendStop::Exception(ExceptionKind::DataAbort),
+        "{instruction:#010x}"
+    );
+    assert_eq!(backend.register(RegisterARM::LR).unwrap(), 16 + 8);
+    let fault = backend.machine().mmu.last_fault().unwrap();
+    assert_eq!(fault.status.cause(), Some(FaultCause::DeviceAccess));
+    fault.address.get()
+}
+
+#[test]
+fn invalid_mmio_access_through_the_mmu_reports_the_virtual_address() {
+    for (instruction, base, expected, form) in [
+        (0xe591_0000, 0x500c, 0x500c, "ldr r0, [r1]"),
+        (0xe5b1_0004, 0x5008, 0x500c, "ldr r0, [r1, #4]!"),
+        (0xe491_0004, 0x500c, 0x500c, "ldr r0, [r1], #4"),
+        (0xe791_0102, 0x5004, 0x500c, "ldr r0, [r1, r2, lsl #2]"),
+        (0xe151_00b4, 0x5010, 0x500c, "ldrh r0, [r1, #-4]"),
+        (0xe931_0005, 0x5010, 0x500c, "ldmdb r1!, {r0, r2}"),
+        (0xe521_0004, 0x5008, 0x5004, "str r0, [r1, #-4]!"),
+    ] {
+        assert_eq!(
+            mapped_mmio_fault_address(instruction, base),
+            expected,
+            "{form}"
+        );
+    }
+}
+
 #[test]
 fn physical_mmio_fetch_enters_prefetch_abort() {
     let address = MemRegion::Rng.base().get();

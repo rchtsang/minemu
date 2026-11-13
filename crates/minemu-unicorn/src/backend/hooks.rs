@@ -74,6 +74,7 @@ fn virtual_tlb_callback(
 /// (MINEMU-ABI1-TIME-003/004).
 fn instruction_boundary_callback(engine: &mut Unicorn<BackendData>, address: u64, size: u32) {
     let data = engine.get_data_mut();
+    data.current_instruction = address as u32;
     if std::mem::take(&mut data.instruction_in_flight) {
         data.machine
             .finish_instruction(InstructionOutcome::Completed);
@@ -180,6 +181,8 @@ pub(super) fn mmio_write_callback(
 }
 
 /// Dispatches one guest MMIO access to the typed bus, stopping the batch on failure.
+///
+/// A failure is reported at the access's virtual address (MINEMU-MMU1-FAULT-003).
 fn mmio_access(
     engine: &mut Unicorn<BackendData>,
     offset: u64,
@@ -187,42 +190,63 @@ fn mmio_access(
     access: Access,
     value: u32,
 ) -> Option<u32> {
-    let address = u64::from(MMIO_BASE) + offset;
+    let physical = PhysicalAddress::new((u64::from(MMIO_BASE) + offset) as u32);
     let direction = if matches!(access, Access::Write) {
         "write"
     } else {
         "read"
     };
-    let Ok(width) = MmioWidth::try_from(size) else {
+    let result = match MmioWidth::try_from(size) {
+        Err(_) => Err(format!("unsupported {direction} width {size}")),
+        Ok(width) => {
+            let transaction = match access {
+                Access::Write => MmioTransaction::write(physical, width, value),
+                _ => MmioTransaction::read(physical, width),
+            };
+            let machine = &mut engine.get_data_mut().machine;
+            let now = machine.ticks();
+            machine
+                .bus
+                .access(transaction, now)
+                .map_err(|error| error.to_string())
+        }
+    };
+    result.unwrap_or_else(|detail| {
+        let address = fault_virtual_address(engine, physical.get()).unwrap_or(physical.get());
         stop_batch(
             engine,
             BackendStop::MmioFault {
-                address: address as u32,
+                address,
                 access,
-                detail: format!("unsupported {direction} width {size}"),
+                detail,
             },
         );
-        return None;
-    };
-    let physical = PhysicalAddress::new(address as u32);
-    let transaction = match access {
-        Access::Write => MmioTransaction::write(physical, width, value),
-        _ => MmioTransaction::read(physical, width),
-    };
-    let machine = &mut engine.get_data_mut().machine;
-    let now = machine.ticks();
-    match machine.bus.access(transaction, now) {
-        Ok(value) => value,
-        Err(error) => {
-            stop_batch(
-                engine,
-                BackendStop::MmioFault {
-                    address: address as u32,
-                    access,
-                    detail: error.to_string(),
-                },
-            );
-            None
-        }
+        None
+    })
+}
+
+/// Recovers the virtual address of a failed MMIO access, which Unicorn's MMIO
+/// callbacks (and, under a virtual TLB, its memory hooks) only report
+/// physically.
+///
+/// The callback runs before the instruction writes any register, so the
+/// instruction's addressing registers still hold their original values.
+fn fault_virtual_address(engine: &Unicorn<BackendData>, physical: u32) -> Option<u32> {
+    let data = engine.get_data();
+    if !data.machine.mmu.enabled() {
+        return Some(physical);
     }
+    let pc = data.current_instruction;
+    let mut bytes = [0; 4];
+    engine
+        .vmem_read(u64::from(pc), Prot::EXEC, &mut bytes)
+        .ok()?;
+    let register = |index: u32| match index {
+        15 => pc.wrapping_add(8),
+        _ => engine
+            .reg_read(arm::general_register(index))
+            .map_or(0, |value| value as u32),
+    };
+    let range = arm::data_access_range(u32::from_le_bytes(bytes), register)?;
+    arm::address_in_range_with_offset(range, physical)
 }

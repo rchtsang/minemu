@@ -139,6 +139,91 @@ pub(crate) fn condition_holds(condition: u32, cpsr: u32) -> bool {
 }
 
 /// Maps a four-bit A32 register number to its Unicorn register.
+/// Returns the virtual byte range `(start, length)` that an A32 load or store
+/// accesses, given each register's value before the instruction executes
+/// (`register(15)` must return the instruction address plus 8).
+///
+/// Covers single, halfword, doubleword, exclusive, swap, and block transfers.
+pub(crate) fn data_access_range(
+    instruction: u32,
+    register: impl Fn(u32) -> u32,
+) -> Option<(u32, u32)> {
+    let bit = |index: u32| instruction & (1 << index) != 0;
+    let base = register((instruction >> 16) & 0x0f);
+    let (pre_indexed, add) = (bit(24), bit(23));
+    let indexed = |offset: u32| match (pre_indexed, add) {
+        (false, _) => base,
+        (true, true) => base.wrapping_add(offset),
+        (true, false) => base.wrapping_sub(offset),
+    };
+    let size = |byte: bool| if byte { 1 } else { 4 };
+    match (instruction >> 25) & 0b111 {
+        // LDR/STR/LDRB/STRB with an immediate offset.
+        0b010 => Some((indexed(instruction & 0xfff), size(bit(22)))),
+        // LDR/STR/LDRB/STRB with a shifted register offset.
+        0b011 if !bit(4) => {
+            let rm = register(instruction & 0x0f);
+            let amount = (instruction >> 7) & 0x1f;
+            let offset = match ((instruction >> 5) & 0b11, amount) {
+                (0b00, _) => rm << amount,
+                (0b01, 0) => 0,
+                (0b01, _) => rm >> amount,
+                (0b10, 0) => ((rm as i32) >> 31) as u32,
+                (0b10, _) => ((rm as i32) >> amount) as u32,
+                // RRX depends on the carry flag; it is never used to address MMIO.
+                (_, 0) => return None,
+                _ => rm.rotate_right(amount),
+            };
+            Some((indexed(offset), size(bit(22))))
+        }
+        0b000 if bit(7) && bit(4) => match (instruction >> 5) & 0b11 {
+            // SWP and the exclusive loads and stores address [Rn].
+            0b00 if bit(24) => Some((base, 8)),
+            0b00 => None,
+            kind => {
+                let offset = if bit(22) {
+                    ((instruction >> 4) & 0xf0) | (instruction & 0x0f)
+                } else {
+                    register(instruction & 0x0f)
+                };
+                let length = match (kind, bit(20)) {
+                    (0b10, true) => 1,                  // LDRSB
+                    (0b10, false) | (0b11, false) => 8, // LDRD/STRD
+                    _ => 2,                             // LDRH/STRH/LDRSH
+                };
+                Some((indexed(offset), length))
+            }
+        },
+        // LDM/STM.
+        0b100 => {
+            let length = (instruction & 0xffff).count_ones() * 4;
+            let start = match (pre_indexed, add) {
+                (false, true) => base,
+                (true, true) => base.wrapping_add(4),
+                (false, false) => base.wrapping_sub(length).wrapping_add(4),
+                (true, false) => base.wrapping_sub(length),
+            };
+            Some((start, length))
+        }
+        _ => None,
+    }
+}
+
+/// Returns the address in `range` whose page offset matches `physical`. An
+/// aligned device access never crosses a page, so for ranges shorter than a
+/// page this is the virtual address of that access.
+pub(crate) fn address_in_range_with_offset(
+    (start, length): (u32, u32),
+    physical: u32,
+) -> Option<u32> {
+    const PAGE_MASK: u32 = 0xfff;
+    let mut candidate = (start & !PAGE_MASK) | (physical & PAGE_MASK);
+    if candidate < start {
+        candidate = candidate.wrapping_add(PAGE_MASK + 1);
+    }
+    (candidate.wrapping_sub(start) < length).then_some(candidate)
+}
+
 pub(crate) fn general_register(index: u32) -> RegisterARM {
     match index & 0x0f {
         0 => RegisterARM::R0,
@@ -163,6 +248,21 @@ pub(crate) fn general_register(index: u32) -> RegisterARM {
 #[cfg(test)]
 mod tests {
     use super::{DecodedBreakpoint, decode_breakpoint};
+
+    #[test]
+    fn device_offsets_select_the_matching_address_in_a_range() {
+        use super::address_in_range_with_offset;
+        assert_eq!(
+            address_in_range_with_offset((0x5008, 8), 0x1000_300c),
+            Some(0x500c)
+        );
+        // A range that crosses into the next page.
+        assert_eq!(
+            address_in_range_with_offset((0x5ffc, 8), 0x1000_3000),
+            Some(0x6000)
+        );
+        assert_eq!(address_in_range_with_offset((0x5008, 4), 0x1000_300c), None);
+    }
 
     #[test]
     fn decodes_only_valid_a32_breakpoints() {

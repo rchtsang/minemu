@@ -285,6 +285,45 @@ fn execution_deadline_fires_once_and_rearms_on_reset() {
     runtime.shutdown().unwrap();
 }
 
+#[test]
+fn reset_replays_scheduled_uart_input() {
+    let mut machine = Machine::default();
+    let entry = MemRegion::Ram.base().get();
+    let instruction = [0xfe, 0xff, 0xff, 0xea]; // b .
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(entry), &instruction)
+        .unwrap();
+    let mut config = RuntimeConfig::new(machine, entry)
+        .with_initial_ram_write(PhysicalAddress::new(entry), instruction.to_vec());
+    config.execution_deadline = Some(7);
+    config.scheduled_uart.push(ScheduledUartInput {
+        at_tick: 3,
+        port: UartPort::Uart1,
+        bytes: b"scheduled".to_vec(),
+    });
+    let runtime = RuntimeHandle::spawn(config).unwrap();
+    let rx_queued = || {
+        let RuntimeInspection::Peripherals(peripherals) =
+            runtime.inspect(InspectionRequest::Peripherals).unwrap()
+        else {
+            panic!("peripheral inspection has a fixed response type");
+        };
+        peripherals.uart1.rx_queued
+    };
+
+    wait_for_paused_tick(&runtime, 7);
+    assert_eq!(rx_queued(), b"scheduled".len());
+
+    runtime.reset().unwrap();
+    wait_for_paused_tick(&runtime, 0);
+    assert_eq!(rx_queued(), 0);
+    runtime.resume().unwrap();
+    wait_for_paused_tick(&runtime, 7);
+    assert_eq!(rx_queued(), b"scheduled".len());
+    runtime.shutdown().unwrap();
+}
+
 /// Encodes `movw rd, #low16; movt rd, #high16`.
 fn load_immediate(rd: u32, value: u32) -> [u32; 2] {
     let encode = |opcode: u32, half: u32| opcode | (half >> 12) << 16 | rd << 12 | (half & 0xfff);

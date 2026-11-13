@@ -422,8 +422,11 @@ struct Service {
     pending_breakpoint: Option<u32>,
     /// The configured deadline, re-armed on every reset.
     configured_deadline: Option<u64>,
+    /// The configured UART inputs in tick order, re-armed on every reset.
+    configured_uart: Vec<ScheduledUartInput>,
     /// The armed deadline; cleared once reached so later resumes can run past it.
     execution_deadline: Option<u64>,
+    /// Armed UART inputs not yet delivered.
     scheduled_uart: VecDeque<ScheduledUartInput>,
 }
 
@@ -446,7 +449,7 @@ impl Service {
             }
         };
         config.scheduled_uart.sort_by_key(|input| input.at_tick);
-        let service = Self {
+        let mut service = Self {
             emulator,
             lifecycle: if config.start_paused {
                 LifecycleState::Paused
@@ -461,9 +464,11 @@ impl Service {
             remaining_instructions: None,
             pending_breakpoint: None,
             configured_deadline: config.execution_deadline,
-            execution_deadline: config.execution_deadline,
-            scheduled_uart: config.scheduled_uart.into(),
+            configured_uart: config.scheduled_uart,
+            execution_deadline: None,
+            scheduled_uart: VecDeque::new(),
         };
+        service.arm_schedule();
         // The emulator holds its own reset copy; release the configured machine's RAM.
         drop(config.machine);
         service.run();
@@ -529,6 +534,12 @@ impl Service {
                     *remaining == 0
                 });
         self.handle_stop(stop, instruction_limit_reached)
+    }
+
+    /// Arms the configured deadline and UART inputs for a run starting at tick zero.
+    fn arm_schedule(&mut self) {
+        self.execution_deadline = self.configured_deadline;
+        self.scheduled_uart = self.configured_uart.iter().cloned().collect();
     }
 
     fn deliver_scheduled_uart(&mut self, current_tick: u64) {
@@ -672,7 +683,7 @@ impl Service {
         match self.emulator.reset() {
             Ok(()) => {
                 self.pending_breakpoint = None;
-                self.execution_deadline = self.configured_deadline;
+                self.arm_schedule();
                 self.publish_cleared();
             }
             Err(error) => {

@@ -74,18 +74,17 @@ just conformance
 This executes the equivalent of:
 
 ```sh
-make -C minimum-tests \
+make -C conformance \
   MINEMU="cargo run --manifest-path $PWD/Cargo.toml -p minemu --" test
 ```
 
-The nested `make test` first builds/runs the baseline image test, including the
-Boot ROM consistency check, then builds/runs every focused case registered in
-`minimum-tests/headless/Makefile`. It is fail-fast unless Make is invoked with
-different scheduling options.
+The nested `make test` checks the reference Boot ROM, builds the conformance
+runtime, then builds and runs every case registered in `conformance/Makefile`,
+starting with the boot-handoff baseline. It is fail-fast. The suite is
+self-contained and does not use `minimum-template`.
 
-See the [`minimum-tests` maintainer guide](../../minimum-tests/README.md) and
-[conformance-authoring guide](../../minimum-tests/docs/conformance-authoring.md)
-for individual targets and case construction.
+See the [conformance guide](../../conformance/README.md) for individual targets
+and case construction.
 
 ## Full CI-Equivalent Check
 
@@ -115,12 +114,11 @@ just --justfile container/justfile smoke
 just clean
 ```
 
-Root clean runs only `cargo clean`. It does not remove generated files from
-either submodule.
+Root clean runs only `cargo clean`. It does not remove generated guest files.
 
 ```sh
 make -C minimum-template clean
-make -C minimum-tests clean
+make -C conformance clean
 ```
 
 Each submodule clean recursively removes its component-local `build/`

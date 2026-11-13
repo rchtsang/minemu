@@ -189,5 +189,5 @@ MMU, peripheral, interrupt, and fault views.
 `minemu test` parses the strict schema documented in
 [Headless testing](headless-testing.md), runs to an exact deadline, captures a
 pre-shutdown execution snapshot, shuts down and flushes media, then evaluates
-host assertions. Guest conformance programs are maintained separately in the
-`minimum-tests` submodule.
+host assertions. Guest conformance programs live in the self-contained
+`conformance/` suite, which does not depend on the student template.

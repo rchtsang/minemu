@@ -38,7 +38,7 @@ template:
 
 # build and run the minimum platform conformance tests
 conformance:
-    make -C "{{ root }}/minimum-tests" MINEMU="{{ cargo }} run --manifest-path {{ root }}/Cargo.toml -p minemu --" test
+    make -C "{{ root }}/conformance" MINEMU="{{ cargo }} run --manifest-path {{ root }}/Cargo.toml -p minemu --" test
 
 # ci pipeline
 ci: fmt check lint test docs template conformance

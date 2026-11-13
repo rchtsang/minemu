@@ -4,6 +4,12 @@ All notable changes to `minemu` are documented in this file.
 
 ## 0.2.4 - 2026-11-13
 
+### Changed
+
+- Guest conformance tests moved from the `minimum-tests` fork into the
+  self-contained `conformance/` suite, which owns its reference Boot ROM and
+  kernel runtime and no longer depends on the student template.
+
 ### Fixed
 
 - Guest-visible timing no longer depends on `instruction_batch`. Device

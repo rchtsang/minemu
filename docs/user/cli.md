@@ -111,7 +111,7 @@ and the command returns nonzero.
 `minemu test MANIFEST` runs scheduled UART input and assertions:
 
 ```sh
-minemu test minimum-tests/image/minimum-test.toml
+minemu test conformance/baseline/test.toml
 ```
 
 Success is silent and returns status 0. Captured UART is evaluated by assertions

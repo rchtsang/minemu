@@ -11,7 +11,7 @@ Git submodules.
 |---|---|---|
 | `minemu` | Emulator, image tooling, TUI, headless runner, and platform contract | [Documentation index](docs/README.md) |
 | `minimum-template` | Student starter with reset firmware, kernel and user scaffolding, examples, and image definitions | [Template quickstart](minimum-template/README.md) |
-| `minimum-tests` | Emulator conformance fork with focused guest programs, manifests, and assertions | [Conformance README](minimum-tests/README.md) |
+| `conformance/` | Self-contained guest conformance suite: reference Boot ROM, frozen runtime, focused cases | [Conformance guide](conformance/README.md) |
 
 Clone with submodules, or initialize them in an existing checkout:
 
@@ -25,7 +25,7 @@ git submodule update --init --recursive
 |---|---|
 | Students using the starter | [Template quickstart](minimum-template/README.md), [TUI guide](docs/dev/tui.md), and [platform ABI v2](docs/platform/abi-v2.md) |
 | Emulator users | [Command-line interface](docs/user/cli.md) and [TUI guide](docs/dev/tui.md) |
-| Conformance authors | [Conformance matrix](docs/dev/abi-conformance.md) and [minimum-tests](minimum-tests/README.md) |
+| Conformance authors | [Conformance matrix](docs/dev/abi-conformance.md) and [conformance guide](conformance/README.md) |
 | Emulator contributors | [Architecture](docs/dev/architecture.md), [development workflows](docs/dev/workflows.md), and [documentation index](docs/README.md) |
 | Container users | [Student development image](container/README.md) and [AI-assisted development](container/ai-development.md) |
 

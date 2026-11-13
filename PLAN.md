@@ -7,8 +7,9 @@ guest headers, supplied synchronous block interface, and conformance fixtures
 are implemented in `minemu` 0.2.3. This plan tracks only unfinished work.
 
 `minimum-template` is the canonical source for supplied guest components.
-Validate changes there, synchronize shared artifacts into `minimum-tests` and
-`minimum-rtsang`, and then run each repository's verification.
+Validate changes there, synchronize shared artifacts into `minimum-rtsang`, and
+then run each repository's verification. The `conformance/` suite owns its own
+Boot ROM and runtime and is not synchronized with the template.
 
 ## Bootstrap Workspace
 
@@ -18,13 +19,13 @@ Before Assignment 2 becomes authoritative:
   shared assembly constants where practical.
 - Export the complete reserved bootstrap range so allocators cannot return
   page-table or handoff frames.
-- Synchronize startup and linker changes across all three guest repositories.
+- Synchronize startup and linker changes into `minimum-rtsang`.
 
 Primary files:
 
 - `minimum-template/kernel/src/startup/boot.S`
 - `minimum-template/kernel/linker/kernel.ld`
-- Mirrored startup and linker files in `minimum-tests` and `minimum-rtsang`
+- Mirrored startup and linker files in `minimum-rtsang`
 
 ## Loader And Address Spaces
 
@@ -75,7 +76,7 @@ cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 make -C minimum-template clean all
-make -C minimum-tests clean test
+make -C conformance clean test
 make -C minimum-rtsang clean all
 just ci
 git diff --check

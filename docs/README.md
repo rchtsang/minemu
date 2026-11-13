@@ -10,7 +10,7 @@ the [project overview](../README.md) for the relationship among the repositories
 |---|---|---|
 | Students | [`minimum-template` quickstart](../minimum-template/README.md) | [TUI guide](dev/tui.md), [platform ABI v2](platform/abi-v2.md) |
 | Emulator users | [Command-line interface](user/cli.md) | [TUI guide](dev/tui.md) |
-| Conformance authors | [`minimum-tests` overview](../minimum-tests/README.md) | [Conformance authoring](../minimum-tests/docs/conformance-authoring.md), [ABI matrix](dev/abi-conformance.md), [versioned specifications](#normative-platform-specifications) |
+| Conformance authors | [Conformance guide](../conformance/README.md) | [ABI matrix](dev/abi-conformance.md), [versioned specifications](#normative-platform-specifications) |
 | Emulator contributors | [Architecture](dev/architecture.md) | [Development workflows](dev/workflows.md), [TUI architecture](dev/tui-architecture.md), [ABI conformance matrix](dev/abi-conformance.md) |
 
 ## Document Status

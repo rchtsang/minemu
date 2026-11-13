@@ -1,8 +1,10 @@
 //! Read-only inspection of live CPU and memory state at execution boundaries.
 
-use minemu_platform::{MemRegion, PAGE_SIZE, PhysicalAddress, PhysicalRange, VirtualAddress};
+use minemu_platform::{
+    Access, MemRegion, PAGE_SIZE, PhysicalAddress, PhysicalRange, VirtualAddress,
+};
 use tracing::{debug, debug_span, trace, warn};
-use unicorn_engine::unicorn_const::Prot;
+use unicorn_engine::RegisterARM;
 
 use super::{BackendError, ExecutionInspection, MEMORY_SEARCH_CHUNK_SIZE, Result, UnicornBackend};
 
@@ -16,6 +18,7 @@ impl UnicornBackend {
             physical_address = address.get(),
             length, "reading physical Unicorn memory for inspection"
         );
+        check_inspection_range(address.get(), length)?;
         let mut bytes = vec![0; length];
         match self.engine.mem_read(u64::from(address.get()), &mut bytes) {
             Ok(()) => Ok(bytes),
@@ -31,13 +34,13 @@ impl UnicornBackend {
         }
     }
 
-    /// Reads virtual instruction bytes through the active Unicorn translation state.
+    /// Reads virtual instruction bytes through the current MMU state.
     pub fn read_virtual_memory(
         &mut self,
         address: VirtualAddress,
         length: usize,
     ) -> Result<Vec<u8>> {
-        self.read_translated_memory(address, length, Prot::EXEC, false)
+        self.read_translated_memory(address, length, Access::Fetch)
     }
 
     /// Reads virtual data bytes without allowing inspection to trigger MMIO reads.
@@ -46,7 +49,7 @@ impl UnicornBackend {
         address: VirtualAddress,
         length: usize,
     ) -> Result<Vec<u8>> {
-        self.read_translated_memory(address, length, Prot::READ, true)
+        self.read_translated_memory(address, length, Access::Read)
     }
 
     /// Translates one virtual address using read permissions and current MMU state.
@@ -54,70 +57,63 @@ impl UnicornBackend {
         &mut self,
         address: VirtualAddress,
     ) -> Result<PhysicalAddress> {
-        let physical = self
-            .engine
-            .vmem_translate(u64::from(address.get()), Prot::READ)?;
-        let physical = u32::try_from(physical).map_err(|_| BackendError::InspectionRange)?;
-        Ok(PhysicalAddress::new(physical))
+        self.probe(address, Access::Read)
+    }
+
+    /// Translates for inspection in the current CPU mode. Unlike guest
+    /// translation, this records no fault, sets no Accessed/Dirty bits, and
+    /// fills no Unicorn TLB entry.
+    fn probe(&self, address: VirtualAddress, access: Access) -> Result<PhysicalAddress> {
+        let user_mode = self
+            .register(RegisterARM::CPSR)
+            .is_ok_and(super::arm::is_user_mode);
+        let machine = self.machine();
+        machine
+            .mmu
+            .probe(&machine.memory, address, access, user_mode)
+            .map_err(|cause| BackendError::InspectionTranslation {
+                address: address.get(),
+                cause,
+            })
     }
 
     fn read_translated_memory(
         &mut self,
         address: VirtualAddress,
         length: usize,
-        protection: Prot,
-        reject_devices: bool,
+        access: Access,
     ) -> Result<Vec<u8>> {
-        let access = if protection == Prot::EXEC {
-            "execute"
-        } else {
-            "read"
-        };
         trace!(
             virtual_address = address.get(),
-            length, access, "reading translated Unicorn memory for inspection"
+            length,
+            ?access,
+            "reading translated memory for inspection"
         );
+        check_inspection_range(address.get(), length)?;
         let mut bytes = vec![0; length];
         let mut offset = 0;
         while offset < length {
-            let offset_u32 = u32::try_from(offset).map_err(|_| BackendError::InspectionRange)?;
-            let virtual_address = address
-                .get()
-                .checked_add(offset_u32)
-                .ok_or(BackendError::InspectionRange)?;
+            let virtual_address = address.get() + offset as u32;
             let page_remaining = PAGE_SIZE - virtual_address % PAGE_SIZE;
             let count = (length - offset).min(page_remaining as usize);
-            let physical_address = self
-                .engine
-                .vmem_translate(u64::from(virtual_address), protection)
-                .map_err(|error| {
-                    warn!(
-                        virtual_address,
-                        length = count,
-                        access,
-                        error = ?error,
-                        "Unicorn virtual inspection translation failed"
-                    );
-                    BackendError::Unicorn(error)
-                })?;
-            let physical_u32 =
-                u32::try_from(physical_address).map_err(|_| BackendError::InspectionRange)?;
-            if reject_devices
-                && Option::<MemRegion>::from(PhysicalAddress::new(physical_u32))
-                    .is_some_and(MemRegion::is_device)
-            {
-                return Err(BackendError::VirtualInspectionDevice(physical_u32));
+            let physical = self.probe(VirtualAddress::new(virtual_address), access)?;
+            // Inspection must never trigger device side effects.
+            if Option::<MemRegion>::from(physical).is_some_and(MemRegion::is_device) {
+                return Err(BackendError::VirtualInspectionDevice(physical.get()));
             }
             self.engine
-                .mem_read(physical_address, &mut bytes[offset..offset + count])
+                .mem_read(
+                    u64::from(physical.get()),
+                    &mut bytes[offset..offset + count],
+                )
                 .map_err(|error| {
                     warn!(
                         virtual_address,
-                        physical_address,
+                        physical_address = physical.get(),
                         length = count,
-                        access,
+                        ?access,
                         error = ?error,
-                        "Unicorn translated physical inspection read failed"
+                        "translated physical inspection read failed"
                     );
                     BackendError::Unicorn(error)
                 })?;
@@ -245,4 +241,15 @@ impl UnicornBackend {
             instruction_error,
         })
     }
+}
+
+/// Rejects a byte range that extends past the 32-bit address space before
+/// anything is allocated for it.
+fn check_inspection_range(start: u32, length: usize) -> Result<()> {
+    u64::try_from(length)
+        .ok()
+        .and_then(|length| u64::from(start).checked_add(length))
+        .filter(|end| *end <= 1 << 32)
+        .map(drop)
+        .ok_or(BackendError::InspectionRange)
 }

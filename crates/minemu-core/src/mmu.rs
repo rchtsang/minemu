@@ -118,14 +118,51 @@ impl Mmu {
         if !self.enabled {
             return Ok(PhysicalAddress::new(address.get()));
         }
-        let fault = |walker: &mut Self, cause| {
+        let walked = self
+            .walk(memory, address, access, user_mode)
+            .and_then(|walk| {
+                let updated = walk.entry.record_successful_access(access);
+                if updated.raw() != walk.entry.raw()
+                    && memory.write_u32(walk.entry_address, updated.raw()).is_err()
+                {
+                    return Err(FaultCause::Translation);
+                }
+                Ok(walk.target)
+            });
+        walked.map_err(|cause| {
             let fault = MmuFault {
                 address,
                 status: FaultStatus::new(cause, user_mode, access),
             };
-            walker.last_fault = Some(fault);
+            self.last_fault = Some(fault);
             fault
-        };
+        })
+    }
+
+    /// Translates like [`Self::translate`] without recording a fault or
+    /// updating Accessed/Dirty bits, for host inspection.
+    pub fn probe(
+        &self,
+        memory: &dyn PhysicalMemoryAccess,
+        address: VirtualAddress,
+        access: Access,
+        user_mode: bool,
+    ) -> std::result::Result<PhysicalAddress, FaultCause> {
+        if !self.enabled {
+            return Ok(PhysicalAddress::new(address.get()));
+        }
+        self.walk(memory, address, access, user_mode)
+            .map(|walk| walk.target)
+    }
+
+    /// Walks the page tables and checks permissions, without side effects.
+    fn walk(
+        &self,
+        memory: &dyn PhysicalMemoryAccess,
+        address: VirtualAddress,
+        access: Access,
+        user_mode: bool,
+    ) -> std::result::Result<Walk, FaultCause> {
         let directory_address =
             PhysicalAddress::new(self.ttbr0.get() + address.directory_index() * 4);
         let directory = memory
@@ -133,40 +170,37 @@ impl Mmu {
             .ok()
             .and_then(|raw| PageDirectoryEntry::new(raw).ok())
             .and_then(|entry| entry.table_address().ok().flatten())
-            .ok_or_else(|| fault(self, FaultCause::Translation))?;
+            .ok_or(FaultCause::Translation)?;
         let entry_address = PhysicalAddress::new(directory.get() + address.table_index() * 4);
         let entry = memory
             .read_u32(entry_address)
-            .ok()
             .map(PageTableEntry::new)
-            .ok_or_else(|| fault(self, FaultCause::Translation))?;
+            .map_err(|_| FaultCause::Translation)?;
         // `authorize` also reports an invalid entry as a translation fault.
-        if let Err(cause) = entry.authorize(access, user_mode) {
-            return Err(fault(self, cause));
-        }
+        entry.authorize(access, user_mode)?;
         if entry.permissions().contains(Permissions::USER)
             && Option::<MemRegion>::from(entry.page_address()).is_some_and(MemRegion::is_device)
         {
-            return Err(fault(self, FaultCause::protection(access)));
+            return Err(FaultCause::protection(access));
         }
         let target = entry
             .target_address()
             .ok()
             .flatten()
-            .ok_or_else(|| fault(self, FaultCause::Translation))?;
+            .ok_or(FaultCause::Translation)?;
         if matches!(access, Access::Write)
             && matches!(
                 Option::<MemRegion>::from(target),
                 Some(MemRegion::BootRom | MemRegion::SystemRom)
             )
         {
-            return Err(fault(self, FaultCause::WriteProtection));
+            return Err(FaultCause::WriteProtection);
         }
-        let updated = entry.record_successful_access(access);
-        if updated.raw() != entry.raw() && memory.write_u32(entry_address, updated.raw()).is_err() {
-            return Err(fault(self, FaultCause::Translation));
-        }
-        Ok(PhysicalAddress::new(target.get() | address.page_offset()))
+        Ok(Walk {
+            entry_address,
+            entry,
+            target: PhysicalAddress::new(target.get() | address.page_offset()),
+        })
     }
 }
 
@@ -174,6 +208,13 @@ impl Default for Mmu {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// A successful page-table walk.
+struct Walk {
+    entry_address: PhysicalAddress,
+    entry: PageTableEntry,
+    target: PhysicalAddress,
 }
 
 #[cfg(test)]

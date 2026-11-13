@@ -3,7 +3,7 @@
 use minemu_core::{ExceptionPlan, InstructionOutcome, Machine, MmuFault};
 use minemu_platform::{
     Access, CPSR_IRQ_DISABLE, CPSR_MODE_MASK, CPSR_THUMB, Cp15Operation, CpuMode, ExceptionKind,
-    MMIO_BASE, MMIO_SIZE, MemRegion, VirtualAddress,
+    FaultCause, MMIO_BASE, MMIO_SIZE, MemRegion, VirtualAddress,
 };
 use thiserror::Error;
 use tracing::trace;
@@ -73,6 +73,8 @@ pub enum BackendError {
     EmptySearchPattern,
     #[error("memory search pattern exceeds the {maximum}-byte limit: {length} bytes")]
     SearchPatternTooLarge { length: usize, maximum: usize },
+    #[error("virtual address 0x{address:08x} has no translation for inspection ({cause:?})")]
+    InspectionTranslation { address: u32, cause: FaultCause },
     #[error("virtual memory inspection resolves to device address 0x{0:08x}")]
     VirtualInspectionDevice(u32),
 }

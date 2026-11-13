@@ -409,6 +409,49 @@ fn higher_half_execution_inspection_reads_translated_instruction_bytes() {
 }
 
 #[test]
+fn inspection_does_not_change_guest_visible_mmu_state() {
+    let (machine, data_pte) = read_then_write_machine(0);
+    let mut backend = UnicornBackend::new(machine).unwrap();
+    let pte_before = backend.machine().memory.read_u32(data_pte).unwrap();
+
+    // VA 0x1000 is mapped readable; VA 0x9000 is unmapped.
+    backend
+        .inspect_virtual_memory(VirtualAddress::new(0x1000), 4)
+        .unwrap();
+    backend
+        .read_virtual_memory(VirtualAddress::new(0x1000), 4)
+        .unwrap_err();
+    backend
+        .translate_virtual_address(VirtualAddress::new(0x1000))
+        .unwrap();
+    assert!(
+        backend
+            .inspect_virtual_memory(VirtualAddress::new(0x9000), 4)
+            .is_err()
+    );
+    assert!(
+        backend
+            .translate_virtual_address(VirtualAddress::new(0x9000))
+            .is_err()
+    );
+
+    assert_eq!(backend.machine().mmu.last_fault(), None);
+    assert_eq!(
+        backend.machine().memory.read_u32(data_pte).unwrap(),
+        pte_before
+    );
+}
+
+#[test]
+fn oversized_virtual_inspection_is_rejected_before_allocating() {
+    let mut backend = UnicornBackend::new(Machine::default()).unwrap();
+    assert!(matches!(
+        backend.inspect_virtual_memory(VirtualAddress::new(0x1000), usize::MAX),
+        Err(BackendError::InspectionRange)
+    ));
+}
+
+#[test]
 fn enabled_mmu_inspection_retains_cpu_state_when_instruction_bytes_are_unmapped() {
     let mut machine = Machine::default();
     machine.mmu.set_enabled(true);

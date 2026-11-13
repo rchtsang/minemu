@@ -2,11 +2,12 @@ use minemu_runtime::RuntimeStatus;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     text::Line,
     widgets::{Block, Borders, Paragraph, Tabs},
 };
 
+use super::theme;
 use crate::tui::{
     action::Action,
     event::AppEvent,
@@ -31,13 +32,8 @@ impl TuiWidget for HeaderWidget {
     fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
         let block = Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray))
-            .title(Line::styled(
-                " minemu ",
-                Style::default()
-                    .fg(Color::LightYellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
+            .border_style(theme::muted())
+            .title(Line::styled(" minemu ", theme::focused()));
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -53,12 +49,8 @@ impl TuiWidget for HeaderWidget {
         frame.render_widget(
             Tabs::new(titles)
                 .select(selected)
-                .style(Style::default().fg(Color::DarkGray))
-                .highlight_style(
-                    Style::default()
-                        .fg(Color::LightYellow)
-                        .add_modifier(Modifier::BOLD),
-                )
+                .style(theme::muted())
+                .highlight_style(theme::focused())
                 .padding("", "")
                 .divider(" "),
             columns[0],
@@ -72,10 +64,7 @@ impl TuiWidget for HeaderWidget {
             ..columns[1]
         };
         frame.render_widget(
-            Paragraph::new(Line::styled(
-                status,
-                Style::default().fg(Color::LightYellow),
-            )),
+            Paragraph::new(Line::styled(status, Style::default().fg(theme::ACCENT))),
             status_area,
         );
     }

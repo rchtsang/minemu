@@ -192,10 +192,7 @@ impl TuiWidget for ConsoleWidget {
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
                 .block(pane_block(
-                    format!(
-                        "[^c] console (uart {})",
-                        if self.uart == UartPort::Uart0 { 0 } else { 1 }
-                    ),
+                    format!("[^c] console (uart {})", self.uart.index()),
                     context.focused == self.id(),
                     area.width,
                 )),

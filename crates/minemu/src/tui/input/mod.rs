@@ -4,6 +4,14 @@ mod search;
 
 pub use motion::{DecodeResult, Motion, MotionDecoder};
 
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use minemu_runtime::RuntimeInspectionRequest;
+
+use super::{
+    action::Action,
+    types::{DialogMessage, InputMode, View, WidgetId},
+};
+
 pub fn parse_hex_address(value: &str) -> Result<u32, String> {
     let value = value
         .strip_prefix("0x")
@@ -14,14 +22,6 @@ pub fn parse_hex_address(value: &str) -> Result<u32, String> {
     }
     u32::from_str_radix(value, 16).map_err(|_| "address must be hexadecimal".into())
 }
-
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use minemu_runtime::RuntimeInspectionRequest;
-
-use super::{
-    action::Action,
-    types::{DialogMessage, InputMode, View, WidgetId},
-};
 
 pub struct InputRouter {
     mode: InputMode,
@@ -63,7 +63,7 @@ impl InputRouter {
         format!("{prefix}{}", self.buffer)
     }
 
-    pub fn route(&mut self, event: Event, focused: WidgetId, _view: View) -> Vec<Action> {
+    pub fn route(&mut self, event: Event, focused: WidgetId) -> Vec<Action> {
         match event {
             Event::Paste(text) if self.mode == InputMode::Insert => {
                 vec![Action::InsertText {
@@ -177,23 +177,26 @@ impl InputRouter {
                 let input = std::mem::take(&mut self.buffer);
                 let result = match self.mode {
                     InputMode::Command => command::parse(&input, focused),
-                    InputMode::SearchAscii => search::ascii(&input).map(|pattern| {
-                        vec![Action::RequestInspection {
-                            target: focused,
-                            request: RuntimeInspectionRequest::SearchMemory { pattern },
-                        }]
-                    }),
-                    InputMode::SearchBytes => search::bytes(&input).map(|pattern| {
-                        vec![Action::RequestInspection {
-                            target: focused,
-                            request: RuntimeInspectionRequest::SearchMemory { pattern },
-                        }]
-                    }),
+                    InputMode::SearchAscii | InputMode::SearchBytes => {
+                        let pattern = if self.mode == InputMode::SearchAscii {
+                            search::ascii(&input)
+                        } else {
+                            search::bytes(&input)
+                        };
+                        pattern.map(|pattern| {
+                            vec![Action::RequestInspection {
+                                target: focused,
+                                request: RuntimeInspectionRequest::SearchMemory { pattern },
+                            }]
+                        })
+                    }
                     InputMode::Goto => Ok(vec![Action::Goto {
                         target: focused,
                         value: input,
                     }]),
-                    _ => unreachable!(),
+                    InputMode::Normal | InputMode::Insert | InputMode::Leader => {
+                        unreachable!("text input is only active in command, search, and goto modes")
+                    }
                 };
                 let mut actions = result
                     .unwrap_or_else(|error| vec![Action::ShowMessage(DialogMessage::error(error))]);
@@ -224,14 +227,14 @@ mod tests {
         let mut router = InputRouter::default();
         assert!(matches!(
             router
-                .route(key(KeyCode::Char(' ')), WidgetId::Console, View::Runtime)
+                .route(key(KeyCode::Char(' ')), WidgetId::Console)
                 .as_slice(),
             [Action::SetMode(InputMode::Leader)]
         ));
         router.set_mode(InputMode::Leader);
         assert!(matches!(
             router
-                .route(key(KeyCode::Char('i')), WidgetId::Console, View::Runtime)
+                .route(key(KeyCode::Char('i')), WidgetId::Console)
                 .as_slice(),
             [
                 Action::SelectView(View::Inspect),
@@ -242,9 +245,7 @@ mod tests {
         router.set_mode(InputMode::Normal);
         let focus = Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
         assert!(matches!(
-            router
-                .route(focus, WidgetId::Console, View::Runtime)
-                .as_slice(),
+            router.route(focus, WidgetId::Console).as_slice(),
             [Action::Focus(WidgetId::Dialog)]
         ));
     }
@@ -255,7 +256,7 @@ mod tests {
         router.set_mode(InputMode::Insert);
         assert!(matches!(
             router
-                .route(key(KeyCode::Char('x')), WidgetId::Primary, View::Inspect)
+                .route(key(KeyCode::Char('x')), WidgetId::Primary)
                 .as_slice(),
             [Action::WidgetKey {
                 target: WidgetId::Primary,

@@ -30,7 +30,8 @@ impl UartPort {
     /// Every UART port, in index order.
     pub const ALL: [Self; 2] = [Self::Uart0, Self::Uart1];
 
-    pub(crate) const fn index(self) -> usize {
+    /// Returns the port number used in UART names and manifests.
+    pub const fn index(self) -> usize {
         match self {
             Self::Uart0 => 0,
             Self::Uart1 => 1,

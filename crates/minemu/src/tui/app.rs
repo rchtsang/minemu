@@ -31,6 +31,17 @@ use super::{
     },
 };
 
+/// Whether opening the command bar paused a running emulator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommandPause {
+    /// The command bar did not pause emulation.
+    None,
+    /// Emulation resumes when the command bar closes.
+    ResumeOnExit,
+    /// A command took explicit run control, so emulation stays paused on close.
+    StayPaused,
+}
+
 pub struct App {
     runtime: RuntimeController,
     widgets: Vec<Box<dyn TuiWidget>>,
@@ -40,8 +51,7 @@ pub struct App {
     layout: SplitLayout,
     actions: VecDeque<Action>,
     quit: bool,
-    resume_after_input: bool,
-    suppress_input_resume: bool,
+    command_pause: CommandPause,
     last_pulse: Instant,
     terminal_area: Rect,
     dragging: Option<SplitId>,
@@ -98,8 +108,7 @@ impl App {
             layout: SplitLayout::default(),
             actions: VecDeque::new(),
             quit: false,
-            resume_after_input: false,
-            suppress_input_resume: false,
+            command_pause: CommandPause::None,
             last_pulse: Instant::now(),
             terminal_area: Rect::default(),
             dragging: None,
@@ -123,8 +132,7 @@ impl App {
                 if let Some(stop) = breakpoint {
                     self.show_message(DialogMessage::info(stop));
                 }
-                self.actions.push_back(Action::Refresh(WidgetId::Primary));
-                self.actions.push_back(Action::Refresh(WidgetId::Secondary));
+                self.refresh_inspectors();
             }
         }
         for result in self.runtime.poll() {
@@ -170,8 +178,7 @@ impl App {
             self.process_actions();
             return;
         }
-        self.actions
-            .extend(self.input.route(event, self.focused, self.view));
+        self.actions.extend(self.input.route(event, self.focused));
         self.process_actions();
     }
 
@@ -219,7 +226,7 @@ impl App {
     fn process_action(&mut self, action: Action) {
         match action {
             Action::Quit => {
-                self.suppress_input_resume = true;
+                self.keep_paused_after_command();
                 self.quit = true;
             }
             Action::SelectView(view) => self.select_view(view),
@@ -231,8 +238,8 @@ impl App {
             }
             Action::SetMode(mode) => self.set_mode(mode),
             Action::ToggleRun => {
-                self.suppress_input_resume = true;
-                if self.resume_after_input {
+                self.keep_paused_after_command();
+                if self.command_pause != CommandPause::None {
                     self.stop();
                 } else {
                     match self.runtime.status().lifecycle {
@@ -245,22 +252,21 @@ impl App {
                 }
             }
             Action::Start(instruction_limit) => {
-                self.suppress_input_resume = true;
+                self.keep_paused_after_command();
                 self.start_emulation(instruction_limit);
             }
             Action::Stop => {
-                self.suppress_input_resume = true;
+                self.keep_paused_after_command();
                 self.stop();
             }
             Action::Reset => {
-                self.suppress_input_resume = true;
+                self.keep_paused_after_command();
                 if let Err(error) = self.runtime.reset() {
                     self.runtime_error("reset", error.to_string());
                 } else {
                     self.broadcast(AppEvent::Reset);
                     self.show_message(DialogMessage::info("emulator reset requested"));
-                    self.actions.push_back(Action::Refresh(WidgetId::Primary));
-                    self.actions.push_back(Action::Refresh(WidgetId::Secondary));
+                    self.refresh_inspectors();
                 }
             }
             Action::SendUart(port, bytes) => self.runtime.send_uart(port, &bytes),
@@ -273,8 +279,9 @@ impl App {
                 let context = InputContext {
                     mode: self.input.mode(),
                 };
-                if let Some(widget) = self.widgets.iter_mut().find(|widget| widget.id() == target) {
-                    self.actions.extend(widget.handle_key(key, &context));
+                if let Some(widget) = self.widget_mut(target) {
+                    let actions = widget.handle_key(key, &context);
+                    self.actions.extend(actions);
                 }
             }
             Action::InsertText { target, text } => self.target(target, AppEvent::InsertText(text)),
@@ -286,11 +293,7 @@ impl App {
                 self.broadcast(AppEvent::UartSelected(port));
                 self.show_message(DialogMessage::info(format!(
                     "console input set to UART{}",
-                    if port == minemu_runtime::UartPort::Uart0 {
-                        0
-                    } else {
-                        1
-                    }
+                    port.index()
                 )));
             }
             Action::SetPrimary(subview) => self.broadcast(AppEvent::PrimarySelected(subview)),
@@ -306,7 +309,7 @@ impl App {
 
     fn select_view(&mut self, view: View) {
         if view == View::Inspect {
-            self.suppress_input_resume = true;
+            self.keep_paused_after_command();
         }
         if self.view == view {
             return;
@@ -318,7 +321,6 @@ impl App {
             View::Inspect => WidgetId::Primary,
         };
         if view == View::Inspect && self.runtime.status().lifecycle == LifecycleState::Running {
-            self.suppress_input_resume = true;
             self.stop();
         }
         self.broadcast(AppEvent::ViewChanged(view));
@@ -333,21 +335,29 @@ impl App {
             && self.runtime.status().lifecycle == LifecycleState::Running
             && self.runtime.pause().is_ok()
         {
-            self.resume_after_input = true;
-            self.suppress_input_resume = false;
+            self.command_pause = CommandPause::ResumeOnExit;
         }
         self.input.set_mode(mode);
         if previous == InputMode::Command && mode == InputMode::Normal {
-            if self.resume_after_input && !self.suppress_input_resume {
+            if self.command_pause == CommandPause::ResumeOnExit {
                 self.start_emulation(None);
             }
-            self.resume_after_input = false;
-            self.suppress_input_resume = false;
+            self.command_pause = CommandPause::None;
+        }
+    }
+
+    /// Records that a command took explicit run control, so closing the
+    /// command bar must not resume emulation it paused.
+    fn keep_paused_after_command(&mut self) {
+        if self.command_pause == CommandPause::ResumeOnExit {
+            self.command_pause = CommandPause::StayPaused;
         }
     }
 
     fn start_emulation(&mut self, instruction_limit: Option<std::num::NonZeroU64>) {
-        if self.runtime.status().lifecycle != LifecycleState::Paused && !self.resume_after_input {
+        if self.runtime.status().lifecycle != LifecycleState::Paused
+            && self.command_pause == CommandPause::None
+        {
             self.show_message(DialogMessage::error("emulation is not paused"));
             return;
         }
@@ -365,8 +375,7 @@ impl App {
     fn stop(&mut self) {
         if self.runtime.status().lifecycle != LifecycleState::Running {
             if self.runtime.status().lifecycle == LifecycleState::Paused {
-                self.actions.push_back(Action::Refresh(WidgetId::Primary));
-                self.actions.push_back(Action::Refresh(WidgetId::Secondary));
+                self.refresh_inspectors();
             } else {
                 self.show_message(DialogMessage::error("emulation is not running"));
             }
@@ -376,14 +385,24 @@ impl App {
             self.runtime_error("stop", error.to_string());
         } else {
             self.show_message(DialogMessage::info("emulation stopped"));
-            self.actions.push_back(Action::Refresh(WidgetId::Primary));
-            self.actions.push_back(Action::Refresh(WidgetId::Secondary));
+            self.refresh_inspectors();
         }
     }
 
+    fn widget_mut(&mut self, id: WidgetId) -> Option<&mut Box<dyn TuiWidget>> {
+        self.widgets.iter_mut().find(|widget| widget.id() == id)
+    }
+
+    /// Re-requests inspection data for both inspect-view panes.
+    fn refresh_inspectors(&mut self) {
+        self.actions.push_back(Action::Refresh(WidgetId::Primary));
+        self.actions.push_back(Action::Refresh(WidgetId::Secondary));
+    }
+
     fn target(&mut self, target: WidgetId, event: AppEvent) {
-        if let Some(widget) = self.widgets.iter_mut().find(|widget| widget.id() == target) {
-            self.actions.extend(widget.update(&event));
+        if let Some(widget) = self.widget_mut(target) {
+            let actions = widget.update(&event);
+            self.actions.extend(actions);
         }
     }
 

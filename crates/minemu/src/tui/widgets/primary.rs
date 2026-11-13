@@ -5,7 +5,7 @@ use minemu_runtime::{ExecutionInspection, RuntimeInspection, RuntimeInspectionRe
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::Style,
     text::{Line, Span, Text},
     widgets::Paragraph,
 };
@@ -18,7 +18,7 @@ use crate::tui::{
     widget::{InputContext, RenderContext, TuiWidget},
 };
 
-use super::{pane_block, render_scrollbar};
+use super::{pane_block, render_scrollbar, theme};
 
 const MEMORY_REGIONS: [MemRegion; 3] = [MemRegion::BootRom, MemRegion::SystemRom, MemRegion::Ram];
 const DEFAULT_MEMORY_WINDOW: u32 = 256;
@@ -97,45 +97,27 @@ impl PrimaryWidget {
     }
 
     fn nav_physical_memory(&mut self, motion: Motion) {
-        let count = motion_count(motion);
-        let step = match motion {
-            Motion::Left(_) | Motion::Right(_) => 1,
-            Motion::Up(_) | Motion::Down(_) => self.memory_columns,
-            Motion::NextItem(_) | Motion::EndItem(_) => 4,
-            Motion::Top | Motion::Bottom => 0,
-        };
         let current = memory_linear_offset(self.memory_cursor).unwrap_or(0);
         let maximum = memory_map_size().saturating_sub(1);
-        let linear = match motion {
-            Motion::Top => 0,
-            Motion::Bottom => maximum,
-            Motion::Left(_) | Motion::Up(_) => current.saturating_sub(step.saturating_mul(count)),
-            Motion::EndItem(_) => current / 4 * 4 + 3,
-            _ => current.saturating_add(step.saturating_mul(count)),
-        }
-        .min(maximum);
-        self.memory_cursor = memory_address_at(linear);
+        let linear = apply_motion(
+            motion,
+            current as u64,
+            maximum as u64,
+            self.memory_columns as u64,
+        );
+        self.memory_cursor = memory_address_at(linear as usize);
         self.ensure_cursor_visible();
     }
 
     fn nav_virtual_memory(&mut self, motion: Motion) {
         self.virtual_initialized = true;
-        let count = motion_count(motion) as u32;
-        let step = match motion {
-            Motion::Left(_) | Motion::Right(_) => 1,
-            Motion::Up(_) | Motion::Down(_) => self.memory_columns as u32,
-            Motion::NextItem(_) | Motion::EndItem(_) => 4,
-            Motion::Top | Motion::Bottom => 0,
-        };
-        let current = self.virtual_cursor.get();
-        let address = match motion {
-            Motion::Top => 0,
-            Motion::Bottom => u32::MAX,
-            Motion::Left(_) | Motion::Up(_) => current.saturating_sub(step.saturating_mul(count)),
-            Motion::EndItem(_) => current / 4 * 4 + 3,
-            _ => current.saturating_add(step.saturating_mul(count)),
-        };
-        self.virtual_cursor = VirtualAddress::new(address);
+        let address = apply_motion(
+            motion,
+            u64::from(self.virtual_cursor.get()),
+            u64::from(u32::MAX),
+            self.memory_columns as u64,
+        );
+        self.virtual_cursor = VirtualAddress::new(address as u32);
         self.ensure_virtual_cursor_visible();
     }
 
@@ -195,21 +177,21 @@ impl PrimaryWidget {
                     .collect::<String>()
             )),
         ];
-        let selected = Style::default()
-            .fg(Color::Black)
-            .bg(Color::LightYellow)
-            .add_modifier(Modifier::BOLD);
+        let style_at = |address: u32| {
+            if address == cursor {
+                theme::selected()
+            } else {
+                Style::default()
+            }
+        };
         for (row, bytes) in bytes.chunks(columns).enumerate() {
             let address = start + (row * columns) as u32;
             let mut spans = vec![Span::raw(format!("{address:08x}: "))];
             for (column, byte) in bytes.iter().enumerate() {
-                let byte_address = address + column as u32;
-                let style = if byte_address == cursor {
-                    selected
-                } else {
-                    Style::default()
-                };
-                spans.push(Span::styled(format!("{byte:02x}"), style));
+                spans.push(Span::styled(
+                    format!("{byte:02x}"),
+                    style_at(address + column as u32),
+                ));
                 spans.push(Span::raw(" "));
             }
             for _ in bytes.len()..columns {
@@ -222,12 +204,10 @@ impl PrimaryWidget {
                 } else {
                     '.'
                 };
-                let style = if address + column as u32 == cursor {
-                    selected
-                } else {
-                    Style::default()
-                };
-                spans.push(Span::styled(character.to_string(), style));
+                spans.push(Span::styled(
+                    character.to_string(),
+                    style_at(address + column as u32),
+                ));
             }
             lines.push(Line::from(spans));
         }
@@ -263,10 +243,6 @@ impl PrimaryWidget {
                     "  {address_label:<10} raw          disasm"
                 ))];
                 let pc = u64::from(execution.registers[15]);
-                let selected = Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::LightYellow)
-                    .add_modifier(Modifier::BOLD);
                 lines.extend(instructions.iter().map(|instruction| {
                     let bytes = instruction
                         .bytes()
@@ -279,7 +255,7 @@ impl PrimaryWidget {
                         Span::styled(
                             address,
                             if instruction.address() == pc {
-                                selected
+                                theme::selected()
                             } else {
                                 Style::default()
                             },
@@ -406,16 +382,17 @@ impl TuiWidget for PrimaryWidget {
             PrimarySubview::VirtualMemory => "vmem",
             PrimarySubview::Disassembly => "disasm",
         };
+        let block = pane_block(
+            format!("[^p] primary ({name})"),
+            context.focused == self.id(),
+            area.width,
+        );
         match self.subview {
             PrimarySubview::PhysicalMemory | PrimarySubview::VirtualMemory => {
                 self.update_memory_geometry(area);
                 let virtual_memory = self.subview == PrimarySubview::VirtualMemory;
                 frame.render_widget(
-                    Paragraph::new(self.render_memory(virtual_memory)).block(pane_block(
-                        format!("[^p] primary ({name})"),
-                        context.focused == self.id(),
-                        area.width,
-                    )),
+                    Paragraph::new(self.render_memory(virtual_memory)).block(block),
                     area,
                 );
                 render_scrollbar(
@@ -435,14 +412,7 @@ impl TuiWidget for PrimaryWidget {
                 );
             }
             PrimarySubview::Disassembly => {
-                frame.render_widget(
-                    Paragraph::new(self.render_disassembly()).block(pane_block(
-                        format!("[^p] primary ({name})"),
-                        context.focused == self.id(),
-                        area.width,
-                    )),
-                    area,
-                );
+                frame.render_widget(Paragraph::new(self.render_disassembly()).block(block), area);
                 let position = self
                     .execution
                     .as_ref()
@@ -599,6 +569,25 @@ fn memory_address_at(mut offset: usize) -> PhysicalAddress {
     }
     let region = MemRegion::Ram;
     PhysicalAddress::new(region.base().get() + region.size() - 1)
+}
+
+/// Moves a linear memory position by `motion`, clamped to `0..=maximum`.
+///
+/// Horizontal motions move by bytes, vertical motions by rows of `columns`
+/// bytes, and word motions by four-byte words.
+fn apply_motion(motion: Motion, current: u64, maximum: u64, columns: u64) -> u64 {
+    let distance = |step: u64| step.saturating_mul(motion_count(motion) as u64);
+    match motion {
+        Motion::Top => 0,
+        Motion::Bottom => maximum,
+        Motion::Left(_) => current.saturating_sub(distance(1)),
+        Motion::Up(_) => current.saturating_sub(distance(columns)),
+        Motion::Right(_) => current.saturating_add(distance(1)),
+        Motion::Down(_) => current.saturating_add(distance(columns)),
+        Motion::NextItem(_) => current.saturating_add(distance(4)),
+        Motion::EndItem(_) => current / 4 * 4 + 3,
+    }
+    .min(maximum)
 }
 
 fn motion_count(motion: Motion) -> usize {

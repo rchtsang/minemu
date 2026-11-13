@@ -1,5 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use minemu_platform::{FaultCause, MmuInspection, PeripheralsInspection};
+use minemu_platform::{
+    FaultCause, InspectionRequest, MmuInspection, PeripheralsInspection, UartInspection,
+};
 use minemu_runtime::{ExecutionInspection, RuntimeInspection, RuntimeInspectionRequest};
 use ratatui::{Frame, layout::Rect, widgets::Paragraph};
 
@@ -13,7 +15,16 @@ use crate::tui::{
 
 use super::{pane_block, render_scrollbar};
 
-const REGISTER_COUNT: usize = 18;
+/// Register rows in display order; `:goto` accepts these names.
+const REGISTER_NAMES: [&str; 18] = [
+    "pc", "lr", "sp", "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11",
+    "r12", "cpsr", "spsr",
+];
+const REGISTER_COUNT: usize = REGISTER_NAMES.len();
+/// Number of general registers addressable as `r<n>`.
+const NUMBERED_REGISTERS: usize = 13;
+/// Row of `r0` in [`REGISTER_NAMES`].
+const FIRST_NUMBERED_ROW: usize = 3;
 const SECONDARY_VIEW_COUNT: usize = 4;
 
 pub struct SecondaryWidget {
@@ -42,38 +53,22 @@ impl Default for SecondaryWidget {
 
 impl SecondaryWidget {
     fn refresh(&self) -> Vec<Action> {
+        let request = |request| Action::RequestInspection {
+            target: self.id(),
+            request,
+        };
+        let machine = |inspection| request(RuntimeInspectionRequest::Machine(inspection));
         match self.subview {
-            SecondarySubview::Registers => vec![Action::RequestInspection {
-                target: self.id(),
-                request: RuntimeInspectionRequest::Execution {
-                    address: None,
-                    before: 0,
-                    after: 4,
-                },
-            }],
-            SecondarySubview::System => vec![Action::RequestInspection {
-                target: self.id(),
-                request: RuntimeInspectionRequest::Machine(minemu_platform::InspectionRequest::Mmu),
-            }],
-            SecondarySubview::Peripherals => vec![Action::RequestInspection {
-                target: self.id(),
-                request: RuntimeInspectionRequest::Machine(
-                    minemu_platform::InspectionRequest::Peripherals,
-                ),
-            }],
+            SecondarySubview::Registers => vec![request(RuntimeInspectionRequest::Execution {
+                address: None,
+                before: 0,
+                after: 4,
+            })],
+            SecondarySubview::System => vec![machine(InspectionRequest::Mmu)],
+            SecondarySubview::Peripherals => vec![machine(InspectionRequest::Peripherals)],
             SecondarySubview::Pending => vec![
-                Action::RequestInspection {
-                    target: self.id(),
-                    request: RuntimeInspectionRequest::Machine(
-                        minemu_platform::InspectionRequest::Mmu,
-                    ),
-                },
-                Action::RequestInspection {
-                    target: self.id(),
-                    request: RuntimeInspectionRequest::Machine(
-                        minemu_platform::InspectionRequest::Peripherals,
-                    ),
-                },
+                machine(InspectionRequest::Mmu),
+                machine(InspectionRequest::Peripherals),
             ],
         }
     }
@@ -86,20 +81,13 @@ impl SecondaryWidget {
         let Some(execution) = &self.execution else {
             return "register snapshot unavailable".into();
         };
-        let mut values = vec![
-            ("pc".to_string(), execution.registers[15]),
-            ("lr".to_string(), execution.registers[14]),
-            ("sp".to_string(), execution.registers[13]),
-        ];
-        values.extend((0..13).map(|index| (format!("r{index}"), execution.registers[index])));
-        values.push(("cpsr".into(), execution.cpsr));
-        values.push(("spsr".into(), execution.spsr));
+        let values = REGISTER_NAMES.into_iter().zip(register_values(execution));
         let mut lines = vec![if show_decimal {
             "       hex          decimal".into()
         } else {
             "       hex".into()
         }];
-        lines.extend(values.into_iter().skip(self.row()).map(|(name, value)| {
+        lines.extend(values.skip(self.row()).map(|(name, value)| {
             if show_decimal {
                 format!("{name:<5} 0x{value:08x}  {value:>10}")
             } else {
@@ -136,28 +124,18 @@ impl SecondaryWidget {
                         )
                     },
                 );
-                let block = format_block(&p.block);
                 format!(
-                    "UART0:\n  status:  0x{:08x}\n  control: 0x{:08x}\n  rx:      {}\n  rx irq:  {}\n  tx:      {} bytes\n\
-UART1:\n  status:  0x{:08x}\n  control: 0x{:08x}\n  rx:      {}\n  rx irq:  {}\n  tx:      {} bytes\n\
+                    "{}\n{}\n\
 SysTick:\n  period:  {}\n  control: 0x{:08x}\n  status:  0x{:08x}\n\
 {}\n\
 RNG:\n  state:   0x{:08x}\n\
 Trace:\n  events:  {}\n{}",
-                    p.uart0.status,
-                    p.uart0.control,
-                    p.uart0.rx_queued,
-                    enabled_disabled(p.uart0.rx_irq_enabled),
-                    p.uart0.tx_history.len(),
-                    p.uart1.status,
-                    p.uart1.control,
-                    p.uart1.rx_queued,
-                    enabled_disabled(p.uart1.rx_irq_enabled),
-                    p.uart1.tx_history.len(),
+                    format_uart("UART0", &p.uart0),
+                    format_uart("UART1", &p.uart1),
                     p.systick.period,
                     p.systick.control,
                     p.systick.status,
-                    block,
+                    format_block(&p.block),
                     p.rng.state,
                     p.trace.len(),
                     latest_trace
@@ -208,34 +186,62 @@ Trace:\n  events:  {}\n{}",
     }
 
     fn goto_register(&mut self, value: &str) -> Vec<Action> {
-        let row = match value.to_ascii_lowercase().as_str() {
-            "pc" => 0,
-            "lr" => 1,
-            "sp" => 2,
-            register if register.starts_with('r') => {
-                let Ok(value) = register[1..].parse::<usize>() else {
-                    return vec![Action::ShowMessage(DialogMessage::error(
-                        "unknown register",
-                    ))];
-                };
-                if value >= 13 {
-                    return vec![Action::ShowMessage(DialogMessage::error(
-                        "unknown register",
-                    ))];
-                }
-                value + 3
-            }
-            "cpsr" => 16,
-            "spsr" => 17,
-            _ => {
-                return vec![Action::ShowMessage(DialogMessage::error(
-                    "unknown register",
-                ))];
-            }
+        let Some(row) = register_row(&value.to_ascii_lowercase()) else {
+            return vec![Action::ShowMessage(DialogMessage::error(
+                "unknown register",
+            ))];
         };
         self.rows[SecondarySubview::Registers.index()] = row;
         Vec::new()
     }
+}
+
+/// Returns register values in [`REGISTER_NAMES`] order.
+fn register_values(execution: &ExecutionInspection) -> [u32; REGISTER_COUNT] {
+    let r = &execution.registers;
+    [
+        r[15],
+        r[14],
+        r[13],
+        r[0],
+        r[1],
+        r[2],
+        r[3],
+        r[4],
+        r[5],
+        r[6],
+        r[7],
+        r[8],
+        r[9],
+        r[10],
+        r[11],
+        r[12],
+        execution.cpsr,
+        execution.spsr,
+    ]
+}
+
+/// Finds the display row for a lowercase register name, also accepting any
+/// `r<n>` spelling that parses to a numbered register.
+fn register_row(name: &str) -> Option<usize> {
+    REGISTER_NAMES
+        .iter()
+        .position(|register| *register == name)
+        .or_else(|| {
+            let number = name.strip_prefix('r')?.parse::<usize>().ok()?;
+            (number < NUMBERED_REGISTERS).then_some(FIRST_NUMBERED_ROW + number)
+        })
+}
+
+fn format_uart(name: &str, uart: &UartInspection) -> String {
+    format!(
+        "{name}:\n  status:  0x{:08x}\n  control: 0x{:08x}\n  rx:      {}\n  rx irq:  {}\n  tx:      {} bytes",
+        uart.status,
+        uart.control,
+        uart.rx_queued,
+        enabled_disabled(uart.rx_irq_enabled),
+        uart.tx_history.len(),
+    )
 }
 
 fn format_block(block: &minemu_platform::BlockInspection) -> String {
@@ -424,7 +430,21 @@ mod tests {
     use minemu_platform::{BlockInspection, BlockUnitInspection, VirtualAddress};
     use minemu_runtime::ExecutionInspection;
 
-    use super::{SecondaryWidget, format_block};
+    use super::{FIRST_NUMBERED_ROW, REGISTER_NAMES, SecondaryWidget, format_block, register_row};
+
+    #[test]
+    fn register_rows_follow_the_display_table() {
+        assert_eq!(REGISTER_NAMES[FIRST_NUMBERED_ROW], "r0");
+        assert_eq!(register_row("pc"), Some(0));
+        assert_eq!(register_row("r0"), Some(3));
+        assert_eq!(register_row("r07"), Some(10));
+        assert_eq!(register_row("r12"), Some(15));
+        assert_eq!(register_row("r13"), None);
+        assert_eq!(register_row("cpsr"), Some(16));
+        assert_eq!(register_row("spsr"), Some(17));
+        assert_eq!(register_row("x0"), None);
+    }
+
     use crate::tui::{event::AppEvent, input::Motion, types::SecondarySubview, widget::TuiWidget};
 
     #[test]

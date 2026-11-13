@@ -7,6 +7,7 @@ mod hints;
 mod input_bar;
 mod primary;
 mod secondary;
+mod theme;
 
 pub use console::ConsoleWidget;
 pub use dialog::DialogWidget;
@@ -21,7 +22,7 @@ pub use secondary::SecondaryWidget;
 use ratatui::{
     Frame,
     layout::{Margin, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState, block::Padding},
 };
 
@@ -33,11 +34,9 @@ pub fn pane_block(title: impl Into<String>, focused: bool, width: u16) -> Block<
         title.push(' ');
     }
     let style = if focused {
-        Style::default()
-            .fg(Color::LightYellow)
-            .add_modifier(Modifier::BOLD)
+        theme::focused()
     } else {
-        Style::default().fg(Color::DarkGray)
+        theme::muted()
     };
     Block::default()
         .borders(Borders::ALL)
@@ -79,8 +78,8 @@ pub fn render_scrollbar(
         return;
     }
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .track_style(Style::default().fg(Color::DarkGray))
-        .thumb_style(Style::default().fg(Color::LightYellow));
+        .track_style(theme::muted())
+        .thumb_style(Style::default().fg(theme::ACCENT));
     let maximum_position = content_length.saturating_sub(viewport_length);
     let mut state = ScrollbarState::new(maximum_position + 1)
         .position(position.min(maximum_position))

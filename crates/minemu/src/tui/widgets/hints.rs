@@ -1,10 +1,10 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
 };
 
+use super::theme;
 use crate::tui::{
     types::{InputMode, View, WidgetId},
     widget::{RenderContext, TuiWidget},
@@ -40,7 +40,7 @@ impl TuiWidget for HintsWidget {
                 _ => "Scroll: [#]jk/arrows  Current: G  Leader: <space>  Help: ?",
             },
         };
-        let style = Style::default().fg(Color::DarkGray);
+        let style = theme::muted();
         let hint_area = Rect {
             width: columns[0].width.saturating_sub(1),
             ..columns[0]

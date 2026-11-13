@@ -163,14 +163,20 @@ impl Mmu {
         access: Access,
         user_mode: bool,
     ) -> std::result::Result<Walk, FaultCause> {
-        let directory_address =
-            PhysicalAddress::new(self.ttbr0.get() + address.directory_index() * 4);
+        // Guest TTBR0 writes are validated, but `set_ttbr0` is not.
+        let directory_address = self
+            .ttbr0
+            .get()
+            .checked_add(address.directory_index() * 4)
+            .map(PhysicalAddress::new)
+            .ok_or(FaultCause::Translation)?;
         let directory = memory
             .read_u32(directory_address)
             .ok()
             .and_then(|raw| PageDirectoryEntry::new(raw).ok())
             .and_then(|entry| entry.table_address().ok().flatten())
             .ok_or(FaultCause::Translation)?;
+        // A table address is page-aligned, so its entries cannot overflow.
         let entry_address = PhysicalAddress::new(directory.get() + address.table_index() * 4);
         let entry = memory
             .read_u32(entry_address)
@@ -225,6 +231,24 @@ mod tests {
     };
 
     use crate::{Mmu, PhysicalMemory, PhysicalMemoryAccess};
+
+    #[test]
+    fn a_directory_at_the_top_of_the_address_space_faults_instead_of_overflowing() {
+        let mut memory = PhysicalMemory::default();
+        let mut mmu = Mmu::default();
+        // Only the unvalidated host API can set an unaligned TTBR0.
+        mmu.set_ttbr0(PhysicalAddress::new(0xffff_fff0));
+        mmu.set_enabled(true);
+        let fault = mmu
+            .translate(
+                &mut memory,
+                VirtualAddress::new(0xffff_f000),
+                Access::Read,
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(fault.status.cause(), Some(FaultCause::Translation));
+    }
 
     #[test]
     fn walk_updates_accessed_bit_after_successful_translation() {

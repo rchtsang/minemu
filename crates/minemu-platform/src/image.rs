@@ -45,28 +45,28 @@ pub struct ImageHeader {
 impl ImageHeader {
     /// Decodes and validates a fixed-width image header.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        require_length(bytes, IMAGE_HEADER_SIZE)?;
-        if read_u32(bytes, 0)? != IMAGE_MAGIC {
+        let bytes = fixed::<IMAGE_HEADER_SIZE>(bytes)?;
+        if read_u32(bytes, 0) != IMAGE_MAGIC {
             return Err(PlatformError::InvalidImageField("magic"));
         }
-        if read_u16(bytes, 4)? != ABI_VERSION {
+        if read_u16(bytes, 4) != ABI_VERSION {
             return Err(PlatformError::InvalidImageField("version"));
         }
-        if read_u16(bytes, 6)? != IMAGE_HEADER_SIZE as u16 {
+        if read_u16(bytes, 6) != IMAGE_HEADER_SIZE as u16 {
             return Err(PlatformError::InvalidImageField("header size"));
         }
-        if read_u32(bytes, 40)? != 0 || !reserved_zero(bytes, 44, 20)? {
+        if read_u32(bytes, 40) != 0 || !reserved_zero(bytes, 44, 20) {
             return Err(PlatformError::InvalidImageField("reserved header bits"));
         }
         let header = Self {
-            image_size: read_u32(bytes, 8)?,
-            kernel_segment_table_offset: read_u32(bytes, 12)?,
-            kernel_segment_count: read_u32(bytes, 16)?,
-            module_table_offset: read_u32(bytes, 20)?,
-            module_count: read_u32(bytes, 24)?,
-            bootstrap_entry_paddr: PhysicalAddress::new(read_u32(bytes, 28)?),
-            kernel_entry_vaddr: VirtualAddress::new(read_u32(bytes, 32)?),
-            boot_info_paddr: PhysicalAddress::new(read_u32(bytes, 36)?),
+            image_size: read_u32(bytes, 8),
+            kernel_segment_table_offset: read_u32(bytes, 12),
+            kernel_segment_count: read_u32(bytes, 16),
+            module_table_offset: read_u32(bytes, 20),
+            module_count: read_u32(bytes, 24),
+            bootstrap_entry_paddr: PhysicalAddress::new(read_u32(bytes, 28)),
+            kernel_entry_vaddr: VirtualAddress::new(read_u32(bytes, 32)),
+            boot_info_paddr: PhysicalAddress::new(read_u32(bytes, 36)),
         };
         header.validate()?;
         Ok(header)
@@ -133,19 +133,19 @@ pub struct KernelSegment {
 impl KernelSegment {
     /// Decodes and validates one kernel-segment record.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        require_length(bytes, KERNEL_SEGMENT_SIZE)?;
-        if !reserved_zero(bytes, 24, 8)? {
+        let bytes = fixed::<KERNEL_SEGMENT_SIZE>(bytes)?;
+        if !reserved_zero(bytes, 24, 8) {
             return Err(PlatformError::InvalidImageField(
                 "kernel segment reserved bits",
             ));
         }
         let segment = Self {
-            data_offset: read_u32(bytes, 0)?,
-            physical_address: PhysicalAddress::new(read_u32(bytes, 4)?),
-            virtual_address: VirtualAddress::new(read_u32(bytes, 8)?),
-            file_size: read_u32(bytes, 12)?,
-            memory_size: read_u32(bytes, 16)?,
-            flags: read_u32(bytes, 20)?,
+            data_offset: read_u32(bytes, 0),
+            physical_address: PhysicalAddress::new(read_u32(bytes, 4)),
+            virtual_address: VirtualAddress::new(read_u32(bytes, 8)),
+            file_size: read_u32(bytes, 12),
+            memory_size: read_u32(bytes, 16),
+            flags: read_u32(bytes, 20),
         };
         segment.validate()?;
         Ok(segment)
@@ -204,16 +204,16 @@ pub struct ModuleRecord {
 impl ModuleRecord {
     /// Decodes and validates one module record.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        require_length(bytes, MODULE_RECORD_SIZE)?;
-        if read_u32(bytes, 20)? != 0 || !reserved_zero(bytes, 24, 8)? {
+        let bytes = fixed::<MODULE_RECORD_SIZE>(bytes)?;
+        if read_u32(bytes, 20) != 0 || !reserved_zero(bytes, 24, 8) {
             return Err(PlatformError::InvalidImageField("module reserved bits"));
         }
         Ok(Self {
-            name_offset: read_u32(bytes, 0)?,
-            name_length: read_u32(bytes, 4)?,
-            segment_table_offset: read_u32(bytes, 8)?,
-            segment_count: read_u32(bytes, 12)?,
-            entry_virtual_address: VirtualAddress::new(read_u32(bytes, 16)?),
+            name_offset: read_u32(bytes, 0),
+            name_length: read_u32(bytes, 4),
+            segment_table_offset: read_u32(bytes, 8),
+            segment_count: read_u32(bytes, 12),
+            entry_virtual_address: VirtualAddress::new(read_u32(bytes, 16)),
         })
     }
 
@@ -242,18 +242,18 @@ pub struct ModuleSegment {
 impl ModuleSegment {
     /// Decodes and validates one module-segment record.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        require_length(bytes, MODULE_SEGMENT_SIZE)?;
-        if !reserved_zero(bytes, 20, 12)? {
+        let bytes = fixed::<MODULE_SEGMENT_SIZE>(bytes)?;
+        if !reserved_zero(bytes, 20, 12) {
             return Err(PlatformError::InvalidImageField(
                 "module segment reserved bits",
             ));
         }
         let segment = Self {
-            data_offset: read_u32(bytes, 0)?,
-            virtual_address: VirtualAddress::new(read_u32(bytes, 4)?),
-            file_size: read_u32(bytes, 8)?,
-            memory_size: read_u32(bytes, 12)?,
-            flags: read_u32(bytes, 16)?,
+            data_offset: read_u32(bytes, 0),
+            virtual_address: VirtualAddress::new(read_u32(bytes, 4)),
+            file_size: read_u32(bytes, 8),
+            memory_size: read_u32(bytes, 12),
+            flags: read_u32(bytes, 16),
         };
         segment.validate()?;
         Ok(segment)
@@ -295,25 +295,25 @@ pub struct BootInfo {
 impl BootInfo {
     /// Decodes and validates boot info.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        require_length(bytes, BOOT_INFO_SIZE)?;
-        if read_u32(bytes, 0)? != BOOT_INFO_MAGIC
-            || read_u16(bytes, 4)? != ABI_VERSION
-            || read_u16(bytes, 6)? != BOOT_INFO_SIZE as u16
-            || read_u32(bytes, 36)? != 0
-            || !reserved_zero(bytes, 40, 24)?
+        let bytes = fixed::<BOOT_INFO_SIZE>(bytes)?;
+        if read_u32(bytes, 0) != BOOT_INFO_MAGIC
+            || read_u16(bytes, 4) != ABI_VERSION
+            || read_u16(bytes, 6) != BOOT_INFO_SIZE as u16
+            || read_u32(bytes, 36) != 0
+            || !reserved_zero(bytes, 40, 24)
         {
             return Err(PlatformError::InvalidImageField("boot info header"));
         }
         let info = Self {
-            system_rom_base: PhysicalAddress::new(read_u32(bytes, 8)?),
-            image_size: read_u32(bytes, 12)?,
-            module_table_offset: read_u32(bytes, 16)?,
-            module_count: read_u32(bytes, 20)?,
+            system_rom_base: PhysicalAddress::new(read_u32(bytes, 8)),
+            image_size: read_u32(bytes, 12),
+            module_table_offset: read_u32(bytes, 16),
+            module_count: read_u32(bytes, 20),
         };
         if info.system_rom_base != MemRegion::SystemRom.base()
-            || read_u32(bytes, 24)? != DIRECT_MAP_BASE
-            || read_u32(bytes, 28)? != MemRegion::Ram.base().get()
-            || read_u32(bytes, 32)? != MemRegion::Ram.size()
+            || read_u32(bytes, 24) != DIRECT_MAP_BASE
+            || read_u32(bytes, 28) != MemRegion::Ram.base().get()
+            || read_u32(bytes, 32) != MemRegion::Ram.size()
         {
             return Err(PlatformError::InvalidImageField("boot info mapping"));
         }
@@ -342,36 +342,27 @@ impl BootInfo {
     }
 }
 
-fn require_length(bytes: &[u8], expected: usize) -> Result<()> {
-    if bytes.len() < expected {
-        return Err(PlatformError::InvalidImageLength {
-            expected,
+/// Borrows the fixed-width prefix of a record, rejecting short input.
+fn fixed<const N: usize>(bytes: &[u8]) -> Result<&[u8; N]> {
+    bytes
+        .get(..N)
+        .and_then(|prefix| prefix.try_into().ok())
+        .ok_or(PlatformError::InvalidImageLength {
+            expected: N,
             actual: bytes.len(),
-        });
-    }
-    Ok(())
+        })
 }
 
-fn read_u16(bytes: &[u8], offset: usize) -> Result<u16> {
-    let end = offset + 2;
-    let slice = bytes
-        .get(offset..end)
-        .ok_or(PlatformError::InvalidImageLength {
-            expected: end,
-            actual: bytes.len(),
-        })?;
-    Ok(u16::from_le_bytes([slice[0], slice[1]]))
+fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
 }
 
-fn read_u32(bytes: &[u8], offset: usize) -> Result<u32> {
-    let end = offset + 4;
-    let slice = bytes
-        .get(offset..end)
-        .ok_or(PlatformError::InvalidImageLength {
-            expected: end,
-            actual: bytes.len(),
-        })?;
-    Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("four-byte slice"),
+    )
 }
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -382,15 +373,8 @@ fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
 
-fn reserved_zero(bytes: &[u8], offset: usize, length: usize) -> Result<bool> {
-    let end = offset + length;
-    let slice = bytes
-        .get(offset..end)
-        .ok_or(PlatformError::InvalidImageLength {
-            expected: end,
-            actual: bytes.len(),
-        })?;
-    Ok(slice.iter().all(|byte| *byte == 0))
+fn reserved_zero(bytes: &[u8], offset: usize, length: usize) -> bool {
+    bytes[offset..offset + length].iter().all(|byte| *byte == 0)
 }
 
 fn validate_table(offset: u32, count: u32, record_size: usize, image_size: u32) -> Result<()> {

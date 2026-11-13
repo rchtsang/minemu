@@ -14,6 +14,62 @@ use crate::tui::{
 #[derive(Default)]
 pub struct HelpWidget;
 
+enum Entry {
+    Section(&'static str),
+    Command(&'static str, &'static str),
+}
+
+use Entry::{Command, Section};
+
+/// Help rows; `tests::every_command_is_documented` keeps this in step with the
+/// command parser.
+const HELP: &[Entry] = &[
+    Section("VIEWS / EMULATION"),
+    Command("Space r", "Select runtime view"),
+    Command("Space i", "Select inspect view and pause"),
+    Command("Space s", "Toggle emulation start/stop"),
+    Command(
+        ":start [COUNT]",
+        "Run continuously or for COUNT instructions",
+    ),
+    Command(":s [COUNT]", "Toggle, or run COUNT instructions"),
+    Command(":stop", "Stop emulation"),
+    Command(":reset", "Request an emulated power cycle"),
+    Section("FOCUS AND MODES"),
+    Command("Ctrl+c/e/d", "Focus console, events, or dialog"),
+    Command("Ctrl+p/s", "Focus primary or secondary inspector"),
+    Command("i / Esc", "Console insert mode / return to normal mode"),
+    Command("? / :help", "Open this help window (also :?)"),
+    Section("NAVIGATION"),
+    Command("[#] arrows / hjkl", "Move by pane-local units"),
+    Command(
+        "[#] w / e",
+        "Memory: next / end of 4-byte word; elsewhere like j",
+    ),
+    Command("gg / G", "Move to first / last item"),
+    Command("Tab", "Switch the focused inspector subview"),
+    Command("/text", "Physical memory: search RAM for ASCII text"),
+    Command("\\de ad be ef", "Physical memory: search RAM for hex bytes"),
+    Command(
+        ">location",
+        "Primary or registers: goto an address or register",
+    ),
+    Section("COMMANDS"),
+    Command(":view [r|i]", "Toggle or select a view (alias :v)"),
+    Command(":set uart 0|1", "Select console input UART"),
+    Command(":set primary", "Select pmem, vmem, or disasm"),
+    Command(":set secondary", "Select reg, sys, peri, or pend"),
+    Command(
+        ":goto LOCATION",
+        "Goto in the focused pane, like > (alias :g)",
+    ),
+    Command(
+        ":translate ADDR",
+        "Translate a virtual address (alias :xlate)",
+    ),
+    Command(":q / :quit", "Quit minemu"),
+];
+
 impl TuiWidget for HelpWidget {
     fn id(&self) -> WidgetId {
         WidgetId::Help
@@ -30,102 +86,15 @@ impl TuiWidget for HelpWidget {
             .width
             .saturating_sub(2 + 1 + COMMAND_WIDTH + COLUMN_SPACING)
             .max(1) as usize;
-        let rows = vec![
-            section("VIEWS / EMULATION"),
-            command("Space r", "Select runtime view", description_width),
-            command(
-                "Space i",
-                "Select inspect view and pause",
-                description_width,
-            ),
-            command("Space s", "Toggle emulation start/stop", description_width),
-            command(
-                ":start [COUNT]",
-                "Run continuously or for COUNT instructions",
-                description_width,
-            ),
-            command(
-                ":s [COUNT] / :stop",
-                "Toggle, run COUNT instructions, or stop",
-                description_width,
-            ),
-            command(
-                ":reset",
-                "Request an emulated power cycle",
-                description_width,
-            ),
-            section("FOCUS AND MODES"),
-            command(
-                "Ctrl+c/e/d",
-                "Focus console, events, or dialog",
-                description_width,
-            ),
-            command(
-                "Ctrl+p/s",
-                "Focus primary or secondary inspector",
-                description_width,
-            ),
-            command(
-                "i / Esc",
-                "Enter insert mode / return to normal mode",
-                description_width,
-            ),
-            command("? / :help", "Open this help window", description_width),
-            section("NAVIGATION"),
-            command(
-                "[#] arrows / h/j/k/l",
-                "Move by pane-local units",
-                description_width,
-            ),
-            command(
-                "gg / G",
-                "Move to first / current or last item",
-                description_width,
-            ),
-            command(
-                "Tab",
-                "Switch the focused inspector subview",
-                description_width,
-            ),
-            command(
-                "/text",
-                "Search physical RAM for ASCII text",
-                description_width,
-            ),
-            command(
-                "\\de ad be ef",
-                "Search physical RAM for hex bytes",
-                description_width,
-            ),
-            command(
-                ">location",
-                "Goto an address or register",
-                description_width,
-            ),
-            section("COMMANDS"),
-            command(":view [r|i]", "Toggle or select a view", description_width),
-            command(
-                ":set uart 0|1",
-                "Select console input UART",
-                description_width,
-            ),
-            command(
-                ":set primary",
-                "Select pmem, vmem, or disasm",
-                description_width,
-            ),
-            command(
-                ":set secondary",
-                "Select reg, sys, peri, or pend",
-                description_width,
-            ),
-            command(
-                ":translate ADDR",
-                "Translate a virtual address",
-                description_width,
-            ),
-            command(":q", "Quit minemu", description_width),
-        ];
+        let rows = HELP
+            .iter()
+            .map(|entry| match *entry {
+                Entry::Section(title) => section(title),
+                Entry::Command(input, description) => {
+                    command(input, description, description_width)
+                }
+            })
+            .collect::<Vec<_>>();
         let border = Style::default().fg(Color::Green);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -194,7 +163,31 @@ fn wrap_words(value: &str, width: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_words;
+    use super::{Entry, HELP, wrap_words};
+    use crate::tui::{input::command, types::WidgetId};
+
+    #[test]
+    fn every_command_is_documented() {
+        let help = HELP
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Command(input, description) => Some(format!("{input} {description}")),
+                Entry::Section(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        for name in command::NAMES {
+            assert!(
+                !command::parse(name, WidgetId::Dialog)
+                    .is_err_and(|error| error.starts_with("unknown command")),
+                "{name} is not a parser command"
+            );
+            let documented = help
+                .split(|c: char| c.is_whitespace() || c == '/' || c == '(' || c == ')')
+                .any(|word| word == format!(":{name}"));
+            assert!(documented, ":{name} is missing from the help table");
+        }
+    }
 
     #[test]
     fn descriptions_wrap_at_word_boundaries() {

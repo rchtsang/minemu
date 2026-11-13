@@ -9,6 +9,26 @@ use crate::tui::{
     types::{PrimarySubview, SecondarySubview, View, WidgetId},
 };
 
+/// Every command name and alias accepted by [`parse`].
+#[cfg(test)]
+pub const NAMES: &[&str] = &[
+    "q",
+    "quit",
+    "?",
+    "help",
+    "start",
+    "stop",
+    "s",
+    "reset",
+    "v",
+    "view",
+    "set",
+    "g",
+    "goto",
+    "translate",
+    "xlate",
+];
+
 pub fn parse(command: &str, target: WidgetId) -> Result<Vec<Action>, String> {
     let mut words = command.split_whitespace();
     let Some(name) = words.next() else {

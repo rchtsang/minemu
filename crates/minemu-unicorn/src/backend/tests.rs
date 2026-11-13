@@ -770,6 +770,21 @@ fn fetch_fault_after_completed_instructions_charges_each_of_them() {
 }
 
 #[test]
+fn prefetch_abort_records_the_faulting_instruction_address() {
+    let (machine, _) = read_then_write_machine(0);
+    let mut backend = UnicornBackend::new(machine).unwrap();
+    // VA 0x2004 is in an unmapped page, but not at its start.
+    assert_eq!(
+        backend.run(0x2004, u32::MAX, 1),
+        BackendStop::Exception(ExceptionKind::PrefetchAbort)
+    );
+    let fault = backend.machine().mmu.last_fault().unwrap();
+    assert!(fault.status.is_fetch());
+    assert_eq!(fault.address, VirtualAddress::new(0x2004));
+    assert_eq!(backend.register(RegisterARM::LR).unwrap(), 0x2008);
+}
+
+#[test]
 fn enabled_pending_uart_delivers_an_irq_at_the_instruction_boundary() {
     let mut machine = Machine::default();
     let start = MemRegion::Ram.base().get();

@@ -373,8 +373,14 @@ impl UnicornBackend {
     }
 
     /// Enters the abort vector for a faulting access, which costs no instruction tick.
-    fn finish_fault(&mut self, fault: MmuFault) -> BackendStop {
+    fn finish_fault(&mut self, mut fault: MmuFault) -> BackendStop {
         let pc = self.program_counter().unwrap_or(fault.address.get());
+        if fault.status.is_fetch() && fault.address.get() != pc {
+            // Unicorn translates code a page at a time, so the translation
+            // callback sees the page address; the faulting VA is the PC.
+            fault.address = VirtualAddress::new(pc);
+            self.machine_mut().mmu.record_fault(fault);
+        }
         trace!(
             address = fault.address.get(),
             pc,

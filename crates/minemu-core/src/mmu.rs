@@ -63,6 +63,11 @@ impl Mmu {
         }
     }
 
+    /// Replaces the fault reported through DFSR and DFAR.
+    pub fn record_fault(&mut self, fault: MmuFault) {
+        self.last_fault = Some(fault);
+    }
+
     /// Records a backend-detected invalid MMIO access for DFSR and DFAR.
     pub fn record_invalid_mmio_fault(
         &mut self,

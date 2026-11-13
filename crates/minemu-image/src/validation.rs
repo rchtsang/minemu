@@ -1,6 +1,7 @@
 use minemu_platform::{
-    BOOT_STACK_BASE, BOOT_STACK_SIZE, BOOTSTRAP_ENTRY_PADDR, DIRECT_MAP_BASE, KernelSegment,
-    ModuleSegment, PhysicalAddress, PhysicalRange, RAM_SIZE, SEGMENT_EXECUTABLE, VirtualAddress,
+    BOOT_INFO_SIZE, BOOT_STACK_BASE, BOOT_STACK_SIZE, BOOTSTRAP_ENTRY_PADDR, DIRECT_MAP_BASE,
+    KernelSegment, ModuleSegment, PhysicalAddress, PhysicalRange, RAM_SIZE, SEGMENT_EXECUTABLE,
+    VirtualAddress,
 };
 
 use crate::{ImageError, Result};
@@ -8,19 +9,6 @@ use crate::{ImageError, Result};
 const A32_INSTRUCTION_SIZE: u32 = 4;
 const KERNEL_DIRECT_MAP_START: u32 = DIRECT_MAP_BASE;
 const KERNEL_DIRECT_MAP_END: u64 = DIRECT_MAP_BASE as u64 + RAM_SIZE as u64;
-
-pub(crate) fn validate_kernel_segments(
-    segments: &[(KernelSegment, Vec<u8>)],
-    entry: VirtualAddress,
-) -> Result<()> {
-    validate_kernel_records(
-        &segments
-            .iter()
-            .map(|(segment, _)| *segment)
-            .collect::<Vec<_>>(),
-        entry,
-    )
-}
 
 pub(crate) fn validate_kernel_records(
     segments: &[KernelSegment],
@@ -45,19 +33,22 @@ pub(crate) fn validate_kernel_records(
             "missing initialized executable bootstrap segment",
         ));
     }
-    let boot_workspace =
-        PhysicalRange::new(PhysicalAddress::new(BOOT_STACK_BASE), BOOT_STACK_SIZE + 64)
-            .expect("fixed boot workspace range is valid");
+    // The boot ROM stack is immediately followed by the boot-info record.
+    let boot_workspace = PhysicalRange::new(
+        PhysicalAddress::new(BOOT_STACK_BASE),
+        BOOT_STACK_SIZE + BOOT_INFO_SIZE as u32,
+    )
+    .expect("fixed boot workspace range is valid");
     for (index, segment) in segments.iter().enumerate() {
         let physical = physical_range(*segment)?;
-        if physical_ranges_overlap(physical, boot_workspace) {
+        if physical.overlaps(boot_workspace) {
             return Err(ImageError::InvalidImage(
                 "kernel segment overlaps boot ROM workspace",
             ));
         }
         let virtual_range = AddressRange::new(segment.virtual_address, segment.memory_size)?;
         for other in &segments[index + 1..] {
-            if physical_ranges_overlap(physical, physical_range(*other)?)
+            if physical.overlaps(physical_range(*other)?)
                 || virtual_range
                     .overlaps(AddressRange::new(other.virtual_address, other.memory_size)?)
             {
@@ -66,19 +57,6 @@ pub(crate) fn validate_kernel_records(
         }
     }
     Ok(())
-}
-
-pub(crate) fn validate_module_segments(
-    segments: &[(ModuleSegment, Vec<u8>)],
-    entry: VirtualAddress,
-) -> Result<()> {
-    validate_module_records(
-        &segments
-            .iter()
-            .map(|(segment, _)| *segment)
-            .collect::<Vec<_>>(),
-        entry,
-    )
 }
 
 pub(crate) fn validate_module_records(
@@ -169,9 +147,4 @@ fn initialized_executable_module_range(segment: ModuleSegment) -> Option<Address
 
 fn physical_range(segment: KernelSegment) -> Result<PhysicalRange> {
     PhysicalRange::new(segment.physical_address, segment.memory_size).map_err(ImageError::from)
-}
-
-fn physical_ranges_overlap(left: PhysicalRange, right: PhysicalRange) -> bool {
-    u64::from(left.start().get()) < right.end_exclusive()
-        && u64::from(right.start().get()) < left.end_exclusive()
 }

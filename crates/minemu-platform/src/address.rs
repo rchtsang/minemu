@@ -98,6 +98,12 @@ impl PhysicalRange {
         self.start.get() as u64 + self.length as u64
     }
 
+    /// Returns whether this range shares any address with `other`.
+    pub const fn overlaps(self, other: Self) -> bool {
+        (self.start.get() as u64) < other.end_exclusive()
+            && (other.start.get() as u64) < self.end_exclusive()
+    }
+
     /// Returns whether this range contains an address.
     pub const fn contains_address(self, address: PhysicalAddress) -> bool {
         (address.get() as u64) >= self.start.get() as u64

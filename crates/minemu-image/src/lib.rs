@@ -12,9 +12,10 @@ use minemu_platform::{
 use thiserror::Error;
 
 use crate::{
+    elf::ElfSegment,
     elf::parse_elf,
     format::{PackedModule, build_image},
-    validation::{validate_kernel_segments, validate_module_segments},
+    validation::{validate_kernel_records, validate_module_records},
 };
 
 pub use boot::{BootCopy, BootPlan};
@@ -66,9 +67,34 @@ impl<'a> ImageBuilder<'a> {
 
     pub fn build(self) -> Result<SystemImage> {
         let (kernel_entry, kernel_segments) = parse_elf(self.kernel)?;
-        let mut packed_kernel = Vec::with_capacity(kernel_segments.len());
-        for segment in kernel_segments {
+        let kernel_entry = VirtualAddress::new(kernel_entry);
+        let kernel_segments = pack_kernel_segments(kernel_segments)?;
+        validate_kernel_records(&records(&kernel_segments), kernel_entry)?;
+
+        let mut modules = self
+            .modules
+            .into_iter()
+            .map(pack_module)
+            .collect::<Result<Vec<_>>>()?;
+        modules.sort_by(|left, right| left.name.cmp(&right.name));
+        if modules
+            .windows(2)
+            .any(|modules| modules[0].name == modules[1].name)
+        {
+            return Err(ImageError::InvalidImage("duplicate module name"));
+        }
+
+        build_image(kernel_entry, kernel_segments, modules)
+    }
+}
+
+/// Converts kernel ELF segments into address-sorted, individually valid records.
+fn pack_kernel_segments(segments: Vec<ElfSegment>) -> Result<Vec<(KernelSegment, Vec<u8>)>> {
+    let mut packed = segments
+        .into_iter()
+        .map(|segment| {
             let virtual_address = VirtualAddress::new(segment.address);
+            // Kernel segments are linked either identity-mapped in RAM or in the direct map.
             let physical_address = if MemRegion::Ram
                 .range()
                 .contains_address(PhysicalAddress::new(segment.address))
@@ -87,52 +113,46 @@ impl<'a> ImageBuilder<'a> {
                 flags: segment.flags,
             };
             record.validate()?;
-            packed_kernel.push((record, segment.bytes));
-        }
-        packed_kernel.sort_by_key(|(segment, _)| segment.virtual_address.get());
-        validate_kernel_segments(&packed_kernel, VirtualAddress::new(kernel_entry))?;
+            Ok((record, segment.bytes))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    packed.sort_by_key(|(segment, _)| segment.virtual_address.get());
+    Ok(packed)
+}
 
-        let mut packed_modules = Vec::with_capacity(self.modules.len());
-        for input in self.modules {
-            if input.name.is_empty() {
-                return Err(ImageError::InvalidImage("module name"));
-            }
-            let (entry, segments) = parse_elf(input.elf)?;
-            let mut records = Vec::with_capacity(segments.len());
-            for segment in segments {
-                let record = ModuleSegment {
-                    data_offset: 0,
-                    virtual_address: VirtualAddress::new(segment.address),
-                    file_size: u32::try_from(segment.bytes.len())
-                        .map_err(|_| ImageError::InvalidElf("module segment size"))?,
-                    memory_size: segment.memory_size,
-                    flags: segment.flags,
-                };
-                record.validate()?;
-                records.push((record, segment.bytes));
-            }
-            records.sort_by_key(|(segment, _)| segment.virtual_address.get());
-            validate_module_segments(&records, VirtualAddress::new(entry))?;
-            packed_modules.push(PackedModule {
-                name: input.name.as_bytes().to_vec(),
-                entry: VirtualAddress::new(entry),
-                segments: records,
-            });
-        }
-        packed_modules.sort_by(|left, right| left.name.cmp(&right.name));
-        if packed_modules
-            .windows(2)
-            .any(|modules| modules[0].name == modules[1].name)
-        {
-            return Err(ImageError::InvalidImage("duplicate module name"));
-        }
-
-        build_image(
-            VirtualAddress::new(kernel_entry),
-            packed_kernel,
-            packed_modules,
-        )
+/// Parses and validates one user module.
+fn pack_module(input: ModuleInput<'_>) -> Result<PackedModule> {
+    if input.name.is_empty() {
+        return Err(ImageError::InvalidImage("module name"));
     }
+    let (entry, segments) = parse_elf(input.elf)?;
+    let entry = VirtualAddress::new(entry);
+    let mut segments = segments
+        .into_iter()
+        .map(|segment| {
+            let record = ModuleSegment {
+                data_offset: 0,
+                virtual_address: VirtualAddress::new(segment.address),
+                file_size: u32::try_from(segment.bytes.len())
+                    .map_err(|_| ImageError::InvalidElf("module segment size"))?,
+                memory_size: segment.memory_size,
+                flags: segment.flags,
+            };
+            record.validate()?;
+            Ok((record, segment.bytes))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    segments.sort_by_key(|(segment, _)| segment.virtual_address.get());
+    validate_module_records(&records(&segments), entry)?;
+    Ok(PackedModule {
+        name: input.name.as_bytes().to_vec(),
+        entry,
+        segments,
+    })
+}
+
+fn records<T: Copy>(packed: &[(T, Vec<u8>)]) -> Vec<T> {
+    packed.iter().map(|(record, _)| *record).collect()
 }
 
 /// Packages a kernel ELF and user modules without retaining builder state.

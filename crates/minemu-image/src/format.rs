@@ -59,8 +59,11 @@ impl SystemImage {
 
         let mut kernel_segments = Vec::new();
         for index in 0..header.kernel_segment_count as usize {
-            let offset = header.kernel_segment_table_offset as usize + index * KERNEL_SEGMENT_SIZE;
-            let segment = KernelSegment::decode(&bytes[offset..offset + KERNEL_SEGMENT_SIZE])?;
+            let segment = KernelSegment::decode(table_entry::<KERNEL_SEGMENT_SIZE>(
+                bytes,
+                header.kernel_segment_table_offset,
+                index,
+            ))?;
             if segment.file_size != 0 {
                 image_map.occupy(
                     Span::from_offset_length(segment.data_offset, segment.file_size)?,
@@ -75,8 +78,11 @@ impl SystemImage {
         let mut modules = Vec::new();
         let mut names = BTreeSet::new();
         for index in 0..header.module_count as usize {
-            let offset = header.module_table_offset as usize + index * MODULE_RECORD_SIZE;
-            let record = ModuleRecord::decode(&bytes[offset..offset + MODULE_RECORD_SIZE])?;
+            let record = ModuleRecord::decode(table_entry::<MODULE_RECORD_SIZE>(
+                bytes,
+                header.module_table_offset,
+                index,
+            ))?;
             let name_span = Span::from_offset_length(record.name_offset, record.name_length)?;
             let segment_table = Span::new_checked(
                 record.segment_table_offset,
@@ -92,11 +98,11 @@ impl SystemImage {
             }
             let mut segments = Vec::new();
             for segment_index in 0..record.segment_count as usize {
-                let segment_offset =
-                    record.segment_table_offset as usize + segment_index * MODULE_SEGMENT_SIZE;
-                let segment = ModuleSegment::decode(
-                    &bytes[segment_offset..segment_offset + MODULE_SEGMENT_SIZE],
-                )?;
+                let segment = ModuleSegment::decode(table_entry::<MODULE_SEGMENT_SIZE>(
+                    bytes,
+                    record.segment_table_offset,
+                    segment_index,
+                ))?;
                 if segment.file_size != 0 {
                     image_map.occupy(
                         Span::from_offset_length(segment.data_offset, segment.file_size)?,
@@ -189,8 +195,12 @@ pub(crate) fn build_image(
     let mut bytes = vec![0; cursor];
     bytes[..IMAGE_HEADER_SIZE].copy_from_slice(&header.encode()?);
     for (index, (segment, data)) in kernel_segments.iter().enumerate() {
-        let offset = kernel_table_offset + index * KERNEL_SEGMENT_SIZE;
-        bytes[offset..offset + KERNEL_SEGMENT_SIZE].copy_from_slice(&segment.encode()?);
+        table_entry_mut::<KERNEL_SEGMENT_SIZE>(
+            &mut bytes,
+            header.kernel_segment_table_offset,
+            index,
+        )
+        .copy_from_slice(&segment.encode()?);
         copy_data(&mut bytes, segment.data_offset, data)?;
     }
     for (index, module) in modules.iter().enumerate() {
@@ -201,14 +211,16 @@ pub(crate) fn build_image(
             segment_count: size32(module.segments.len(), "module segment count")?,
             entry_virtual_address: module.entry,
         };
-        let offset = module_table_offset + index * MODULE_RECORD_SIZE;
-        bytes[offset..offset + MODULE_RECORD_SIZE].copy_from_slice(&record.encode());
+        table_entry_mut::<MODULE_RECORD_SIZE>(&mut bytes, header.module_table_offset, index)
+            .copy_from_slice(&record.encode());
         copy_data(&mut bytes, record.name_offset, &module.name)?;
         for (segment_index, (segment, data)) in module.segments.iter().enumerate() {
-            let segment_offset =
-                record.segment_table_offset as usize + segment_index * MODULE_SEGMENT_SIZE;
-            bytes[segment_offset..segment_offset + MODULE_SEGMENT_SIZE]
-                .copy_from_slice(&segment.encode()?);
+            table_entry_mut::<MODULE_SEGMENT_SIZE>(
+                &mut bytes,
+                record.segment_table_offset,
+                segment_index,
+            )
+            .copy_from_slice(&segment.encode()?);
             copy_data(&mut bytes, segment.data_offset, data)?;
         }
     }
@@ -272,6 +284,23 @@ impl Span {
     fn overlaps(self, other: Self) -> bool {
         self.start < other.end && other.start < self.end
     }
+}
+
+/// Borrows entry `index` of a table of `SIZE`-byte records at `table_offset`.
+///
+/// Callers must have bounds-checked the table against the image.
+fn table_entry<const SIZE: usize>(bytes: &[u8], table_offset: u32, index: usize) -> &[u8] {
+    let start = table_offset as usize + index * SIZE;
+    &bytes[start..start + SIZE]
+}
+
+fn table_entry_mut<const SIZE: usize>(
+    bytes: &mut [u8],
+    table_offset: u32,
+    index: usize,
+) -> &mut [u8] {
+    let start = table_offset as usize + index * SIZE;
+    &mut bytes[start..start + SIZE]
 }
 
 fn size32(value: usize, detail: &'static str) -> Result<u32> {

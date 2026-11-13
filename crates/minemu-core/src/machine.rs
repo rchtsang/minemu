@@ -97,6 +97,8 @@ impl Machine {
                 Some(ExceptionPlan::synchronous(kind, pc))
             }
             InstructionOutcome::Fault(fault, pc) => {
+                // A faulting instruction never retires (MINEMU-DEV1-TRACE-001).
+                self.bus.discard_trace_events();
                 let plan = ExceptionPlan::fault(fault, pc);
                 self.advance_ticks(plan.request.kind.entry_ticks());
                 self.record_event(ObservableEvent::Exception(plan.request.kind));
@@ -169,6 +171,34 @@ mod tests {
     };
 
     use crate::{BlockUpdate, InstructionOutcome, Machine, PhysicalMemory, PhysicalMemoryAccess};
+
+    #[test]
+    fn faulting_instruction_trace_writes_are_not_committed() {
+        let mut machine = Machine::default();
+        let trace = MmioTransaction::write(MemRegion::Trace.base(), MmioWidth::U32, 0xabcd);
+        machine.bus.access(trace, machine.ticks()).unwrap();
+        machine.finish_instruction(InstructionOutcome::Fault(
+            crate::MmuFault {
+                address: VirtualAddress::new(4),
+                status: minemu_platform::FaultStatus::new(
+                    minemu_platform::FaultCause::Translation,
+                    false,
+                    minemu_platform::Access::Write,
+                ),
+            },
+            VirtualAddress::new(0x1000),
+        ));
+        machine.finish_instruction(InstructionOutcome::Completed);
+        let InspectionResponse::Events(events) =
+            machine.inspect(InspectionRequest::Events).unwrap()
+        else {
+            unreachable!("event inspection has a fixed response type")
+        };
+        assert_eq!(
+            events,
+            [ObservableEvent::Exception(ExceptionKind::DataAbort)]
+        );
+    }
 
     #[test]
     fn virtual_time_distinguishes_traps_and_faults() {

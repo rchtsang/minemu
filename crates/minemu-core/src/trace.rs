@@ -31,6 +31,11 @@ impl TraceDevice {
         self.staged.push(value);
     }
 
+    /// Drops writes staged by an instruction that faulted and so never retired.
+    pub(crate) fn discard_staged(&mut self) {
+        self.staged.clear();
+    }
+
     /// Commits staged writes at `tick` and returns the events that were retained.
     pub(crate) fn retire(&mut self, tick: u64) -> Vec<TraceEvent> {
         let mut committed = Vec::new();

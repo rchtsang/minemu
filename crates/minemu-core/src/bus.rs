@@ -122,6 +122,11 @@ impl MmioBus {
         self.interrupts.process_signals();
     }
 
+    /// Drops trace writes staged by a faulting instruction.
+    pub fn discard_trace_events(&mut self) {
+        self.trace.discard_staged();
+    }
+
     pub fn retire_trace_events(&mut self, tick: u64) -> Vec<TraceEvent> {
         self.trace.retire(tick)
     }

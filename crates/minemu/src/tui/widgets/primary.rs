@@ -130,8 +130,8 @@ impl PrimaryWidget {
                     .map(|value| VirtualAddress::new(value.registers[15]))
             })
             .unwrap_or(VirtualAddress::new(0));
-        let count = motion_count(motion) as u32;
-        let step = match motion {
+        let count = u32::try_from(motion_count(motion)).unwrap_or(u32::MAX);
+        let step: u32 = match motion {
             Motion::Up(_) | Motion::Down(_) | Motion::NextItem(_) | Motion::EndItem(_) => 4,
             Motion::Left(_) | Motion::Right(_) => 1,
             Motion::Top | Motion::Bottom => 0,
@@ -139,8 +139,10 @@ impl PrimaryWidget {
         let address = match motion {
             Motion::Top => 0,
             Motion::Bottom => u32::MAX - 255,
-            Motion::Left(_) | Motion::Up(_) => current.get().saturating_sub(step * count),
-            _ => current.get().saturating_add(step * count),
+            Motion::Left(_) | Motion::Up(_) => {
+                current.get().saturating_sub(step.saturating_mul(count))
+            }
+            _ => current.get().saturating_add(step.saturating_mul(count)),
         };
         self.disassembly_address = Some(VirtualAddress::new(address & !3));
     }
@@ -697,6 +699,18 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert!(heading.contains("vaddr"));
+    }
+
+    #[test]
+    fn large_disassembly_counts_saturate_at_the_address_space_ends() {
+        let mut widget = PrimaryWidget {
+            disassembly_address: Some(VirtualAddress::new(0x1000)),
+            ..PrimaryWidget::default()
+        };
+        widget.nav_disassembly(Motion::Down(1 << 31));
+        assert_eq!(widget.disassembly_address, Some(VirtualAddress::new(!3)));
+        widget.nav_disassembly(Motion::Up(usize::MAX));
+        assert_eq!(widget.disassembly_address, Some(VirtualAddress::new(0)));
     }
 
     #[test]

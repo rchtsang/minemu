@@ -99,16 +99,19 @@ backend stop with PC left on the instruction.
 
 ## Time And Exceptions
 
-The backend counts attempted/completed instructions and reports boundaries to
-`Machine`. Core accounting advances deterministic ticks, services SysTick and
-block deadlines, drains interrupt levels, and commits staged trace events.
+The backend's per-instruction hook retires each completed instruction at the
+next instruction boundary, so device deadlines, trace stamps, and IRQ delivery
+do not depend on how many instructions a batch requests. Core accounting
+advances deterministic ticks, services SysTick and block deadlines, drains
+interrupt levels, and commits staged trace events.
 Synchronous exceptions and failed accesses use explicit outcomes so their
 different tick costs remain visible.
 
 Exception entry is split between layers. Core produces a backend-neutral
 exception plan and records the observable event. The Unicorn adapter updates
 CPSR/SPSR, selects banked state, writes LR, and transfers PC to the VBAR-relative
-vector. IRQ delivery occurs between instruction batches after priority claim.
+vector. A pending, unmasked IRQ stops the batch at the first eligible
+instruction boundary and is entered after priority claim.
 
 ## Runtime Service
 

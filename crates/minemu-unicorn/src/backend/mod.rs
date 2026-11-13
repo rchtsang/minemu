@@ -95,7 +95,9 @@ struct SyncException {
 /// State shared with Unicorn callbacks during one batch.
 pub(crate) struct BackendData {
     machine: Machine,
-    executed_instructions: u64,
+    /// Whether an instruction has begun and not yet been retired. It is retired
+    /// at the next instruction boundary, or when the batch ends.
+    instruction_in_flight: bool,
     callback_stop: Option<BackendStop>,
     pending_cp15: Option<PendingCp15>,
     pending_exception: Option<SyncException>,
@@ -128,7 +130,7 @@ impl UnicornBackend {
             Mode::ARM | Mode::LITTLE_ENDIAN,
             BackendData {
                 machine,
-                executed_instructions: 0,
+                instruction_in_flight: false,
                 callback_stop: None,
                 pending_cp15: None,
                 pending_exception: None,
@@ -231,17 +233,20 @@ impl UnicornBackend {
             self.engine.ctl_set_exits(&[u64::from(end)])?;
         }
         let data = self.engine.get_data_mut();
-        data.executed_instructions = 0;
+        data.instruction_in_flight = false;
         data.callback_stop = None;
         data.pending_cp15 = None;
         data.pending_exception = None;
         Ok(())
     }
 
-    /// Collects callback requests and charges one tick per completed instruction.
+    /// Collects callback requests and retires the batch's final instruction.
     ///
-    /// An instruction that stopped the batch by faulting or trapping has not
-    /// completed; its tick is charged when its exception is entered.
+    /// Earlier instructions were retired at the following instruction boundary
+    /// by the boundary hook. An instruction that stopped the batch by faulting
+    /// or trapping has not completed; its tick is charged when its exception is
+    /// entered. A failed fetch happens before its instruction begins, so the
+    /// instruction in flight then is the previous, completed one.
     fn retire_batch(&mut self) -> BatchRequests {
         let data = self.engine.get_data_mut();
         let requests = BatchRequests {
@@ -254,12 +259,10 @@ impl UnicornBackend {
                 || requests.pending_exception.is_some()
                 || matches!(
                     requests.callback_stop,
-                    Some(BackendStop::MmuFault(_) | BackendStop::MmioFault { .. })
-                );
-        let completed_instructions = data
-            .executed_instructions
-            .saturating_sub(u64::from(faulting_instruction));
-        for _ in 0..completed_instructions {
+                    Some(BackendStop::MmuFault(fault)) if !fault.status.is_fetch()
+                )
+                || matches!(requests.callback_stop, Some(BackendStop::MmioFault { .. }));
+        if std::mem::take(&mut data.instruction_in_flight) && !faulting_instruction {
             data.machine
                 .finish_instruction(InstructionOutcome::Completed);
         }

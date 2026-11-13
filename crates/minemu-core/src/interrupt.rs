@@ -78,6 +78,13 @@ impl InterruptController {
     }
 
     /// Returns and retains the active source until matching EOI.
+    /// Returns whether [`Self::claim`] would select or retain a source, without
+    /// selecting one.
+    pub fn has_claim(&mut self) -> bool {
+        self.process_signals();
+        self.claim.is_some() || self.pending & self.enabled != 0
+    }
+
     pub fn claim(&mut self) -> Option<Source> {
         self.process_signals();
         if self.claim.is_none() {

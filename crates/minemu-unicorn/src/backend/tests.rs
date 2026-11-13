@@ -731,6 +731,45 @@ fn prefetch_and_data_faults_enter_the_correct_abort_vectors() {
 }
 
 #[test]
+fn fetch_fault_after_completed_instructions_charges_each_of_them() {
+    let mut machine = Machine::default();
+    let ram = MemRegion::Ram.base().get();
+    let table = ram + 0x1000;
+    let code = ram + 0x2000;
+    machine
+        .memory
+        .write_u32(PhysicalAddress::new(ram), table | PTE_VALID)
+        .unwrap();
+    machine
+        .memory
+        .write_u32(
+            PhysicalAddress::new(table),
+            code | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE,
+        )
+        .unwrap();
+    machine
+        .memory
+        .write_range(
+            PhysicalAddress::new(code),
+            &[
+                0x00, 0xf0, 0x20, 0xe3, // nop
+                0xfd, 0x03, 0x00, 0xea, // b 0x1000 (unmapped)
+            ],
+        )
+        .unwrap();
+    machine.mmu.set_ttbr0(PhysicalAddress::new(ram));
+    machine.mmu.set_enabled(true);
+    let mut backend = UnicornBackend::new(machine).unwrap();
+    assert_eq!(
+        backend.run(0, u32::MAX, 16),
+        BackendStop::Exception(ExceptionKind::PrefetchAbort)
+    );
+    // nop and b complete (one tick each); the abort entry costs one more.
+    assert_eq!(backend.machine().ticks(), 3);
+    assert_eq!(backend.register(RegisterARM::LR).unwrap(), 0x1004);
+}
+
+#[test]
 fn enabled_pending_uart_delivers_an_irq_at_the_instruction_boundary() {
     let mut machine = Machine::default();
     let start = MemRegion::Ram.base().get();
@@ -763,8 +802,10 @@ fn enabled_pending_uart_delivers_an_irq_at_the_instruction_boundary() {
         backend.run(start, start + 4, 1),
         BackendStop::Exception(ExceptionKind::Interrupt)
     );
+    // The IRQ is taken at the boundary before the nop, which has not run.
     assert_eq!(backend.register(RegisterARM::PC).unwrap(), 24);
-    assert_eq!(backend.machine().ticks(), 2);
+    assert_eq!(backend.register(RegisterARM::LR).unwrap(), start + 4);
+    assert_eq!(backend.machine().ticks(), 1);
 }
 
 #[test]
@@ -838,4 +879,116 @@ fn ttbr_switch_requires_and_honors_tlbiall() {
     assert_eq!(backend.run(4, 8, 1), BackendStop::Cp15Boundary);
     assert_eq!(backend.run(8, 12, 1), BackendStop::InstructionBudget);
     assert_eq!(backend.register(RegisterARM::R1).unwrap(), 2);
+}
+
+mod batch_independence {
+    use minemu_core::{InterruptUpdate, Machine, PhysicalMemoryAccess};
+    use minemu_platform::{
+        Cp15Operation, CpuMode, ExceptionKind, InspectionRequest, InspectionResponse, MemRegion,
+        ObservableEvent, Peripheral, PhysicalAddress,
+        peripherals::{interrupt, systick},
+    };
+    use unicorn_engine::RegisterARM;
+
+    use super::super::{BackendStop, UnicornBackend};
+
+    fn movw(rd: u32, value: u32) -> u32 {
+        0xe300_0000 | (value & 0xf000) << 4 | rd << 12 | (value & 0xfff)
+    }
+
+    fn movt(rd: u32, value: u32) -> u32 {
+        0xe340_0000 | (value >> 28) << 16 | rd << 12 | (value >> 16 & 0xfff)
+    }
+
+    /// Encodes `str rt, [rn, #offset]`.
+    fn store(rt: u32, rn: u32, offset: u32) -> u32 {
+        0xe580_0000 | rn << 16 | rt << 12 | offset
+    }
+
+    /// The observable result of running until the first IRQ entry.
+    #[derive(Debug, Eq, PartialEq)]
+    struct Outcome {
+        irq_tick: u64,
+        irq_lr: u32,
+        events: Vec<ObservableEvent>,
+    }
+
+    /// Programs a one-shot 50-tick SysTick from the guest after a few
+    /// instructions, then writes an incrementing counter to the trace device
+    /// until the timer IRQ is taken.
+    fn run_until_irq(instruction_batch: usize) -> Outcome {
+        let ram = MemRegion::Ram.base().get();
+        let start = ram + 0x100;
+        let systick_base = MemRegion::SysTick.base().get();
+        let trace_base = MemRegion::Trace.base().get();
+        let program = [
+            0xe320_f000, // nop
+            0xe320_f000, // nop
+            0xe320_f000, // nop
+            movw(0, systick_base),
+            movt(0, systick_base),
+            movw(1, 50),
+            store(1, 0, 0x00), // PERIOD
+            movw(1, systick::CONTROL_ENABLE | systick::CONTROL_IRQ_ENABLE),
+            store(1, 0, 0x04), // CONTROL
+            movw(2, trace_base),
+            movt(2, trace_base),
+            movw(3, 0),
+            store(3, 2, 0), // loop: str r3, [r2]
+            0xe283_3001,    // add r3, r3, #1
+            0xeaff_fffc,    // b loop
+        ];
+        let bytes: Vec<u8> = program.iter().flat_map(|word| word.to_le_bytes()).collect();
+        let mut machine = Machine::default();
+        machine
+            .memory
+            .write_range(PhysicalAddress::new(start), &bytes)
+            .unwrap();
+        machine
+            .mmu
+            .apply_cp15(Cp15Operation::set_vector_base(ram).unwrap());
+        machine
+            .bus
+            .interrupts
+            .update(InterruptUpdate::Write {
+                register: interrupt::Register::Enable,
+                value: interrupt::Source::SysTick.bit(),
+            })
+            .unwrap();
+        let mut backend = UnicornBackend::new(machine).unwrap();
+        backend
+            .set_register(RegisterARM::CPSR, CpuMode::Supervisor.bits())
+            .unwrap();
+
+        let mut pc = start;
+        loop {
+            match backend.run_until_tick(pc, u32::MAX, instruction_batch, 1_000) {
+                BackendStop::Exception(ExceptionKind::Interrupt) => break,
+                BackendStop::InstructionBudget => pc = backend.program_counter().unwrap(),
+                stop => panic!("unexpected stop {stop:?}"),
+            }
+            assert!(backend.machine().ticks() < 1_000, "no IRQ was taken");
+        }
+        let InspectionResponse::Events(events) = backend
+            .machine_mut()
+            .inspect(InspectionRequest::Events)
+            .unwrap()
+        else {
+            unreachable!("event inspection has a fixed response type")
+        };
+        Outcome {
+            irq_tick: backend.machine().ticks(),
+            irq_lr: backend.register(RegisterARM::LR).unwrap(),
+            events,
+        }
+    }
+
+    #[test]
+    fn guest_visible_timing_does_not_depend_on_batch_size() {
+        let exact = run_until_irq(1);
+        // CONTROL issues at tick 8, so the deadline is 58 and IRQ entry costs one tick.
+        assert_eq!(exact.irq_tick, 59, "{exact:#?}");
+        assert_eq!(run_until_irq(7), exact);
+        assert_eq!(run_until_irq(1024), exact);
+    }
 }

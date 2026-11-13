@@ -1,7 +1,8 @@
 //! All Unicorn callback registration is centralized here so the backend's
 //! emulator-visible behavior is auditable without searching construction code.
 
-use minemu_platform::{MmioTransaction, MmioWidth, PhysicalAddress};
+use minemu_core::InstructionOutcome;
+use minemu_platform::{CPSR_IRQ_DISABLE, MmioTransaction, MmioWidth, PhysicalAddress};
 use unicorn_engine::unicorn_const::{MemType, TlbEntry, TlbType};
 
 use super::{
@@ -13,13 +14,12 @@ use crate::arm::PendingCp15;
 /// Size of every A32 instruction.
 const A32_INSTRUCTION_SIZE: u64 = 4;
 
-/// Registers virtual translation, instruction accounting, synchronous A32
-/// trap and breakpoint interception, and invalid-instruction callbacks.
+/// Registers virtual translation, instruction-boundary, and invalid-instruction
+/// callbacks.
 pub(super) fn register(engine: &mut Unicorn<'static, BackendData>) -> Result<()> {
     engine.ctl_set_tlb_type(TlbType::VIRTUAL)?;
     engine.add_tlb_hook(1, 0, virtual_tlb_callback)?;
-    engine.add_code_hook(1, 0, instruction_counter_callback)?;
-    engine.add_code_hook(1, 0, a32_synchronous_trap_callback)?;
+    engine.add_code_hook(1, 0, instruction_boundary_callback)?;
     engine.add_insn_invalid_hook(invalid_instruction_callback)?;
     Ok(())
 }
@@ -67,12 +67,36 @@ fn virtual_tlb_callback(
     }
 }
 
-fn instruction_counter_callback(engine: &mut Unicorn<BackendData>, _: u64, _: u32) {
-    engine.get_data_mut().executed_instructions += 1;
+/// Runs at every instruction boundary, before the instruction at `address`.
+///
+/// Retiring the previous instruction here keeps devices, trace stamps, and IRQ
+/// delivery exact regardless of how many instructions a batch requests
+/// (MINEMU-ABI1-TIME-003/004).
+fn instruction_boundary_callback(engine: &mut Unicorn<BackendData>, address: u64, size: u32) {
+    let data = engine.get_data_mut();
+    if std::mem::take(&mut data.instruction_in_flight) {
+        data.machine
+            .finish_instruction(InstructionOutcome::Completed);
+    }
+    if irq_deliverable(engine) {
+        // Stop before this instruction; the backend enters the IRQ vector.
+        let _ = engine.emu_stop();
+        return;
+    }
+    engine.get_data_mut().instruction_in_flight = true;
+    a32_synchronous_trap(engine, address, size);
+}
+
+/// Whether an IRQ would be taken at this boundary.
+fn irq_deliverable(engine: &mut Unicorn<BackendData>) -> bool {
+    engine.get_data_mut().machine.bus.interrupts.has_claim()
+        && engine
+            .reg_read(RegisterARM::CPSR)
+            .is_ok_and(|cpsr| cpsr as u32 & CPSR_IRQ_DISABLE == 0)
 }
 
 /// Intercepts BKPT, SVC, and MCR/MRC p15 before Unicorn executes them.
-fn a32_synchronous_trap_callback(engine: &mut Unicorn<BackendData>, address: u64, size: u32) {
+fn a32_synchronous_trap(engine: &mut Unicorn<BackendData>, address: u64, size: u32) {
     if u64::from(size) != A32_INSTRUCTION_SIZE {
         return;
     }

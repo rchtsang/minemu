@@ -8,7 +8,7 @@ use std::{
 use crossterm::event::{
     Event, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use minemu_runtime::LifecycleState;
+use minemu_runtime::{LifecycleState, RuntimeStatus};
 use ratatui::{Frame, layout::Rect};
 use tracing::{debug, error, info, warn};
 
@@ -78,7 +78,7 @@ impl App {
                 break;
             }
             if runtime.status().lifecycle == LifecycleState::Failed {
-                return Err(CliError::RuntimeSetup);
+                return Err(CliError::Runtime(failure_reason(runtime.status())));
             }
             thread::sleep(Duration::from_millis(2));
         }
@@ -87,7 +87,10 @@ impl App {
                 lifecycle = ?runtime.status().lifecycle,
                 "timed out waiting for initial TUI pause"
             );
-            return Err(CliError::RuntimeSetup);
+            return Err(CliError::Runtime(format!(
+                "timed out waiting for the initial pause (lifecycle {:?})",
+                runtime.status().lifecycle
+            )));
         }
         let mut app = Self {
             runtime,
@@ -162,7 +165,9 @@ impl App {
         }
         self.process_actions();
         if self.runtime.status().lifecycle == LifecycleState::Failed {
-            return Err(CliError::RuntimeSetup);
+            return Err(CliError::RuntimeFailed(failure_reason(
+                self.runtime.status(),
+            )));
         }
         Ok(())
     }
@@ -212,7 +217,7 @@ impl App {
     pub fn shutdown(&self) -> Result<()> {
         self.runtime.shutdown().map_err(|error| {
             error!(error = %error, "failed to shut down TUI runtime");
-            CliError::RuntimeSetup
+            CliError::RuntimeFailed(format!("shutdown: {error}"))
         })
     }
 
@@ -508,11 +513,20 @@ fn plain_click_action(
         .map(Action::Focus)
 }
 
+/// Describes why a failed runtime stopped, for the error printed after the TUI exits.
+fn failure_reason(status: &RuntimeStatus) -> String {
+    match (&status.last_error, &status.last_stop) {
+        (Some(error), _) => error.clone(),
+        (None, Some(stop)) => format!("stopped after {stop}"),
+        (None, None) => "no reason was reported".into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::layout::Rect;
 
-    use super::plain_click_action;
+    use super::{failure_reason, plain_click_action};
     use crate::tui::{
         action::Action,
         layout::SplitLayout,
@@ -581,5 +595,20 @@ mod tests {
                 .is_none()
             );
         }
+    }
+
+    #[test]
+    fn failure_reason_prefers_the_runtime_error() {
+        let mut status = minemu_runtime::RuntimeStatus {
+            lifecycle: minemu_runtime::LifecycleState::Failed,
+            machine: minemu_core::Machine::default().status(),
+            last_stop: Some("Instructions".into()),
+            last_error: Some("backend READ_UNMAPPED".into()),
+        };
+        assert_eq!(failure_reason(&status), "backend READ_UNMAPPED");
+        status.last_error = None;
+        assert_eq!(failure_reason(&status), "stopped after Instructions");
+        status.last_stop = None;
+        assert_eq!(failure_reason(&status), "no reason was reported");
     }
 }

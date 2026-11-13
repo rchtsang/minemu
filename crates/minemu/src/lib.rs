@@ -53,10 +53,10 @@ pub enum CliError {
     },
     #[error("image validation failed: {0}")]
     Image(#[from] minemu_image::ImageError),
-    #[error("runtime setup failed")]
-    RuntimeSetup,
     #[error("runtime setup failed: {0}")]
     Runtime(String),
+    #[error("emulator runtime failed: {0}")]
+    RuntimeFailed(String),
     #[error("headless assertion failed: {0}")]
     Assertion(String),
 }

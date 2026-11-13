@@ -11,8 +11,8 @@ use minemu_platform::{
     ObservableEvent, PhysicalAddress, PhysicalRange,
 };
 use minemu_runtime::{
-    LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeInspectionRequest,
-    RuntimeStatus, ScheduledUartInput, UartPort,
+    LifecycleState, RuntimeConfig, RuntimeError, RuntimeHandle, RuntimeInspection,
+    RuntimeInspectionRequest, RuntimeStatus, ScheduledUartInput, UartPort,
 };
 use serde::{Deserialize, Deserializer};
 
@@ -224,7 +224,9 @@ fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Re
     } else {
         PausedSnapshot::default()
     };
-    runtime.shutdown().map_err(|_| CliError::RuntimeSetup)?;
+    runtime
+        .shutdown()
+        .map_err(|error| CliError::RuntimeFailed(format!("shutdown: {error}")))?;
     Ok(RunResult {
         execution_status,
         shutdown_status: runtime.status(),
@@ -273,12 +275,16 @@ fn inspect(
     runtime: &RuntimeHandle,
     request: RuntimeInspectionRequest,
 ) -> Result<RuntimeInspection> {
-    runtime
-        .request_inspection(request)
-        .ok()
-        .and_then(|response| response.recv().ok())
-        .and_then(|result| result.ok())
-        .ok_or(CliError::RuntimeSetup)
+    let failed = |error: &dyn std::fmt::Display| {
+        CliError::RuntimeFailed(format!("inspection {request:?}: {error}"))
+    };
+    let response = runtime
+        .request_inspection(request.clone())
+        .map_err(|error| failed(&error))?;
+    response
+        .recv()
+        .map_err(|_| failed(&RuntimeError::Stopped))?
+        .map_err(|error| failed(&error))
 }
 
 /// Spawns a paused interactive runtime.
@@ -357,8 +363,8 @@ fn runtime_config(
     ram_prefill: &[RamPrefill],
     start: RuntimeStart<'_>,
 ) -> Result<RuntimeConfig> {
-    let memory =
-        PhysicalMemory::with_roms(boot_rom, image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
+    let memory = PhysicalMemory::with_roms(boot_rom, image.bytes())
+        .map_err(|error| CliError::Runtime(format!("loading ROMs: {error}")))?;
     let mut config =
         RuntimeConfig::new(Machine::new(memory, DEFAULT_EVENT_CAPACITY), BOOT_ROM_BASE);
     [config.block_media_path, config.block1_media_path] = spec.block_media;

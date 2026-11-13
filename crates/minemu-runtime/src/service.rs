@@ -659,7 +659,7 @@ impl Service {
         }
         self.transition(LifecycleState::Running);
         self.remaining_instructions = instruction_limit.map(NonZeroU64::get);
-        self.publish_clearing_stop();
+        self.publish_cleared();
         true
     }
 
@@ -673,7 +673,7 @@ impl Service {
             Ok(()) => {
                 self.pending_breakpoint = None;
                 self.execution_deadline = self.configured_deadline;
-                self.publish_clearing_stop();
+                self.publish_cleared();
             }
             Err(error) => {
                 error!(error = %error, "emulator reset failed");
@@ -761,8 +761,12 @@ impl Service {
         });
     }
 
-    fn publish_clearing_stop(&mut self) {
-        self.update_status(|status| status.last_stop = None);
+    /// Publishes status with the previous stop reason and error cleared.
+    fn publish_cleared(&mut self) {
+        self.update_status(|status| {
+            status.last_stop = None;
+            status.last_error = None;
+        });
     }
 
     /// Atomically publishes lifecycle and machine status along with `update`.

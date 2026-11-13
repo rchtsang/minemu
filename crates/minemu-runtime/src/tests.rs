@@ -285,6 +285,72 @@ fn execution_deadline_fires_once_and_rearms_on_reset() {
     runtime.shutdown().unwrap();
 }
 
+/// Encodes `movw rd, #low16; movt rd, #high16`.
+fn load_immediate(rd: u32, value: u32) -> [u32; 2] {
+    let encode = |opcode: u32, half: u32| opcode | (half >> 12) << 16 | rd << 12 | (half & 0xfff);
+    [
+        encode(0xe300_0000, value & 0xffff),
+        encode(0xe340_0000, value >> 16),
+    ]
+}
+
+/// Encodes `str rt, [rn, #offset]`.
+fn store(rt: u32, rn: u32, offset: u32) -> u32 {
+    0xe580_0000 | rn << 16 | rt << 12 | offset
+}
+
+#[test]
+fn resume_clears_an_earlier_flush_error() {
+    // Writes RAM sector 0 to block unit 0, then spins.
+    let entry = MemRegion::Ram.base().get();
+    let program: Vec<u32> = [
+        load_immediate(0, MemRegion::Dma.base().get()).to_vec(),
+        load_immediate(1, entry).to_vec(),
+        load_immediate(2, 1).to_vec(),
+        load_immediate(3, 0).to_vec(),
+        load_immediate(4, 2).to_vec(),
+        vec![
+            store(1, 0, 0x0c), // PHYSICAL_ADDRESS
+            store(2, 0, 0x08), // SECTOR_COUNT
+            store(3, 0, 0x04), // LBA
+            store(3, 0, 0x20), // UNIT
+            store(4, 0, 0x00), // COMMAND = write
+            0xeaff_fffe,       // b .
+        ],
+    ]
+    .concat();
+    let bytes: Vec<u8> = program.iter().flat_map(|word| word.to_le_bytes()).collect();
+    let media = std::env::temp_dir().join(format!("minemu-clear-error-{}.img", std::process::id()));
+    std::fs::write(&media, vec![0; 512]).unwrap();
+
+    let mut config = RuntimeConfig::new(Machine::default(), entry)
+        .with_initial_ram_write(PhysicalAddress::new(entry), bytes);
+    config.block_media_path = Some(media.clone());
+    config.start_paused = true;
+    config.execution_deadline = Some(100);
+    let runtime = RuntimeHandle::spawn(config).unwrap();
+    wait_for_paused_tick(&runtime, 0);
+
+    // A directory in place of the media file makes the pause-time flush fail.
+    std::fs::remove_file(&media).unwrap();
+    std::fs::create_dir(&media).unwrap();
+    runtime.resume().unwrap();
+    let status = wait_for_paused_tick(&runtime, 100);
+    assert!(status.last_error.is_some());
+
+    std::fs::remove_dir(&media).unwrap();
+    std::fs::write(&media, vec![0; 512]).unwrap();
+    runtime.resume_for(NonZeroU64::new(1).unwrap()).unwrap();
+    let status = wait_for_paused_tick(&runtime, 101);
+    assert_eq!(status.last_error, None);
+    assert_eq!(
+        std::fs::read(&media).unwrap()[..4],
+        program[0].to_le_bytes()
+    );
+    runtime.shutdown().unwrap();
+    std::fs::remove_file(media).unwrap();
+}
+
 #[test]
 fn scheduled_boundaries_split_multi_tick_exception_entry() {
     let mut machine = Machine::default();

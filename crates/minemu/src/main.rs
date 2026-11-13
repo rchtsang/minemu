@@ -5,7 +5,9 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use minemu::{CliError, RunOptions, package_manifest, run_headless, run_image, run_tui};
+use minemu::{
+    CliError, DEFAULT_MAX_TICKS, RunOptions, package_manifest, run_headless, run_image, run_tui,
+};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -127,14 +129,12 @@ fn execute(command: Command) -> minemu::Result<()> {
                 block_media_path: block0_media,
                 block1_media_path: block1_media,
                 instruction_batch: None,
-                max_ticks: ticks.unwrap_or(100_000),
+                max_ticks: ticks.unwrap_or(DEFAULT_MAX_TICKS),
                 inputs: Vec::new(),
             })?;
             print!("{}", String::from_utf8_lossy(&result.uart0_output));
             eprint!("{}", String::from_utf8_lossy(&result.uart1_output));
-            if result.execution_status.lifecycle == minemu_runtime::LifecycleState::Failed
-                || result.shutdown_status.lifecycle == minemu_runtime::LifecycleState::Failed
-            {
+            if result.failed() {
                 return Err(CliError::Assertion(
                     "emulator terminated with a runtime failure".into(),
                 ));

@@ -1,15 +1,14 @@
 use std::{
-    fs,
     num::NonZeroUsize,
     path::{Path, PathBuf},
     thread,
     time::Duration,
 };
 
-use minemu_core::{Machine, PhysicalMemory};
+use minemu_core::{DEFAULT_EVENT_CAPACITY, Machine, PhysicalMemory};
 use minemu_platform::{
-    BOOT_ROM_BASE, BOOT_ROM_SIZE, InspectionRequest, MemRegion, MmuInspection, ObservableEvent,
-    PhysicalAddress, PhysicalRange,
+    BOOT_ROM_BASE, BOOT_ROM_SIZE, CPSR_MODE_MASK, InspectionRequest, MemRegion, MmuInspection,
+    ObservableEvent, PhysicalAddress, PhysicalRange,
 };
 use minemu_runtime::{
     LifecycleState, RuntimeConfig, RuntimeHandle, RuntimeInspection, RuntimeInspectionRequest,
@@ -17,7 +16,13 @@ use minemu_runtime::{
 };
 use serde::{Deserialize, Deserializer};
 
-use crate::{CliError, Result};
+use crate::{
+    CliError, Result,
+    paths::{manifest_root, read, read_toml, resolve},
+};
+
+/// Virtual-time budget for headless runs that do not specify one.
+pub const DEFAULT_MAX_TICKS: u64 = 100_000;
 
 /// Options for bounded headless execution of a system image.
 #[derive(Clone, Debug)]
@@ -31,8 +36,19 @@ pub struct RunOptions {
     pub inputs: Vec<HeadlessInput>,
 }
 
+/// The files and settings that define one emulated system.
+pub(crate) struct SystemSpec<'a> {
+    pub(crate) image: &'a Path,
+    pub(crate) boot_rom: &'a Path,
+    pub(crate) block_media: [Option<PathBuf>; 2],
+    pub(crate) instruction_batch: Option<NonZeroUsize>,
+}
+
+/// How a newly spawned runtime begins executing.
 enum RuntimeStart<'a> {
+    /// Interactive: wait for the user to resume.
     Paused,
+    /// Headless: run with scheduled input until a virtual-time deadline.
     RunningUntil {
         deadline: u64,
         inputs: &'a [HeadlessInput],
@@ -157,18 +173,37 @@ pub struct RunResult {
     pub events: Vec<ObservableEvent>,
 }
 
+impl RunResult {
+    /// Returns whether the runtime failed during execution or shutdown.
+    pub fn failed(&self) -> bool {
+        self.execution_status.lifecycle == LifecycleState::Failed
+            || self.shutdown_status.lifecycle == LifecycleState::Failed
+    }
+}
+
+/// Machine state captured while the headless runtime is paused.
+#[derive(Default)]
+struct PausedSnapshot {
+    uart0_output: Vec<u8>,
+    uart1_output: Vec<u8>,
+    mmu: Option<MmuInspection>,
+    cpu_mode: Option<u32>,
+    events: Vec<ObservableEvent>,
+}
+
 /// Loads a system image and runs it headlessly for a bounded virtual-time budget.
 pub fn run_image(options: RunOptions) -> Result<RunResult> {
     run_image_with_prefill(options, &[])
 }
 
 fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Result<RunResult> {
-    let runtime = start_runtime_with_prefill(
-        &options.image,
-        &options.boot_rom,
-        options.block_media_path,
-        options.block1_media_path,
-        options.instruction_batch,
+    let runtime = spawn_runtime(
+        SystemSpec {
+            image: &options.image,
+            boot_rom: &options.boot_rom,
+            block_media: [options.block_media_path, options.block1_media_path],
+            instruction_batch: options.instruction_batch,
+        },
         ram_prefill,
         RuntimeStart::RunningUntil {
             deadline: options.max_ticks,
@@ -176,148 +211,109 @@ fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Re
         },
     )?;
 
-    loop {
-        let status = runtime.status();
-        if matches!(
-            status.lifecycle,
-            LifecycleState::Paused | LifecycleState::Stopped | LifecycleState::Failed
-        ) {
-            break;
-        }
+    // The runtime pauses itself at the deadline, or stops or fails first.
+    while !matches!(
+        runtime.status().lifecycle,
+        LifecycleState::Paused | LifecycleState::Stopped | LifecycleState::Failed
+    ) {
         thread::sleep(Duration::from_millis(1));
     }
-
-    if runtime.status().lifecycle == LifecycleState::Running {
-        runtime.pause().map_err(|_| CliError::RuntimeSetup)?;
-        wait_for(&runtime, LifecycleState::Paused)?;
-    }
     let execution_status = runtime.status();
-    let (uart0_output, uart1_output, mmu, cpu_mode, events) =
-        if execution_status.lifecycle == LifecycleState::Paused {
-            let RuntimeInspection::Peripherals(peripherals) = runtime
-                .inspect(InspectionRequest::Peripherals)
-                .map_err(|_| CliError::RuntimeSetup)?
-            else {
-                unreachable!("peripheral inspection has a fixed response type")
-            };
-            let RuntimeInspection::Mmu(mmu) = runtime
-                .inspect(InspectionRequest::Mmu)
-                .map_err(|_| CliError::RuntimeSetup)?
-            else {
-                unreachable!("MMU inspection has a fixed response type")
-            };
-            let RuntimeInspection::Events(events) = runtime
-                .inspect(InspectionRequest::Events)
-                .map_err(|_| CliError::RuntimeSetup)?
-            else {
-                unreachable!("event inspection has a fixed response type")
-            };
-            let RuntimeInspection::Execution(execution) = runtime
-                .request_inspection(RuntimeInspectionRequest::Execution {
-                    address: None,
-                    before: 0,
-                    after: 4,
-                })
-                .map_err(|_| CliError::RuntimeSetup)?
-                .recv()
-                .map_err(|_| CliError::RuntimeSetup)?
-                .map_err(|_| CliError::RuntimeSetup)?
-            else {
-                unreachable!("execution inspection has a fixed response type")
-            };
-            (
-                peripherals.uart0.tx_history,
-                peripherals.uart1.tx_history,
-                Some(mmu),
-                Some(execution.cpsr & minemu_platform::CPSR_MODE_MASK),
-                events,
-            )
-        } else {
-            (Vec::new(), Vec::new(), None, None, Vec::new())
-        };
+    let snapshot = if execution_status.lifecycle == LifecycleState::Paused {
+        capture_snapshot(&runtime)?
+    } else {
+        PausedSnapshot::default()
+    };
     runtime.shutdown().map_err(|_| CliError::RuntimeSetup)?;
-    let shutdown_status = runtime.status();
     Ok(RunResult {
         execution_status,
-        shutdown_status,
-        uart0_output,
-        uart1_output,
-        mmu,
-        cpu_mode,
+        shutdown_status: runtime.status(),
+        uart0_output: snapshot.uart0_output,
+        uart1_output: snapshot.uart1_output,
+        mmu: snapshot.mmu,
+        cpu_mode: snapshot.cpu_mode,
+        events: snapshot.events,
+    })
+}
+
+fn capture_snapshot(runtime: &RuntimeHandle) -> Result<PausedSnapshot> {
+    let machine = |request| inspect(runtime, RuntimeInspectionRequest::Machine(request));
+    let RuntimeInspection::Peripherals(peripherals) = machine(InspectionRequest::Peripherals)?
+    else {
+        unreachable!("peripheral inspection has a fixed response type")
+    };
+    let RuntimeInspection::Mmu(mmu) = machine(InspectionRequest::Mmu)? else {
+        unreachable!("MMU inspection has a fixed response type")
+    };
+    let RuntimeInspection::Events(events) = machine(InspectionRequest::Events)? else {
+        unreachable!("event inspection has a fixed response type")
+    };
+    let RuntimeInspection::Execution(execution) = inspect(
+        runtime,
+        RuntimeInspectionRequest::Execution {
+            address: None,
+            before: 0,
+            after: 4,
+        },
+    )?
+    else {
+        unreachable!("execution inspection has a fixed response type")
+    };
+    Ok(PausedSnapshot {
+        uart0_output: peripherals.uart0.tx_history,
+        uart1_output: peripherals.uart1.tx_history,
+        mmu: Some(mmu),
+        cpu_mode: Some(execution.cpsr & CPSR_MODE_MASK),
         events,
     })
 }
 
-pub(crate) fn start_runtime(
-    image_path: &Path,
-    boot_rom_path: &Path,
-    block_media_path: Option<PathBuf>,
-    block1_media_path: Option<PathBuf>,
-    instruction_batch: Option<NonZeroUsize>,
-) -> Result<RuntimeHandle> {
-    start_runtime_with_prefill(
-        image_path,
-        boot_rom_path,
-        block_media_path,
-        block1_media_path,
-        instruction_batch,
-        &[],
-        RuntimeStart::Paused,
-    )
+/// Performs one inspection on the emulator thread and waits for its result.
+fn inspect(
+    runtime: &RuntimeHandle,
+    request: RuntimeInspectionRequest,
+) -> Result<RuntimeInspection> {
+    runtime
+        .request_inspection(request)
+        .ok()
+        .and_then(|response| response.recv().ok())
+        .and_then(|result| result.ok())
+        .ok_or(CliError::RuntimeSetup)
 }
 
-fn start_runtime_with_prefill(
-    image_path: &Path,
-    boot_rom_path: &Path,
-    block_media_path: Option<PathBuf>,
-    block1_media_path: Option<PathBuf>,
-    instruction_batch: Option<NonZeroUsize>,
+/// Spawns a paused interactive runtime.
+pub(crate) fn start_runtime(spec: SystemSpec<'_>) -> Result<RuntimeHandle> {
+    spawn_runtime(spec, &[], RuntimeStart::Paused)
+}
+
+fn spawn_runtime(
+    spec: SystemSpec<'_>,
     ram_prefill: &[RamPrefill],
     start: RuntimeStart<'_>,
 ) -> Result<RuntimeHandle> {
-    let image = minemu_image::SystemImage::parse(&read(image_path)?)?;
-    let boot_rom = read(boot_rom_path)?;
+    let image = minemu_image::SystemImage::parse(&read(spec.image)?)?;
+    let boot_rom = read(spec.boot_rom)?;
     if boot_rom.len() != BOOT_ROM_SIZE as usize {
         return Err(CliError::InvalidBootRomSize {
-            path: boot_rom_path.into(),
+            path: spec.boot_rom.into(),
             expected: BOOT_ROM_SIZE as usize,
             actual: boot_rom.len(),
         });
     }
-    let (execution_deadline, inputs, start_paused) = match start {
-        RuntimeStart::Paused => (None, &[][..], true),
-        RuntimeStart::RunningUntil { deadline, inputs } => (Some(deadline), inputs, false),
-    };
-    let mut config = runtime_config(
-        &boot_rom,
-        &image,
-        [block_media_path, block1_media_path],
-        instruction_batch,
-        ram_prefill,
-        execution_deadline,
-        inputs,
-    )?;
-    config.start_paused = start_paused;
+    let config = runtime_config(&boot_rom, &image, spec, ram_prefill, start)?;
     RuntimeHandle::spawn(config).map_err(|error| CliError::Runtime(error.to_string()))
 }
 
 /// Loads and executes a declarative headless test manifest.
 pub fn run_headless(path: impl AsRef<Path>) -> Result<RunResult> {
     let path = path.as_ref();
-    let source = fs::read_to_string(path).map_err(|source| CliError::Read {
-        path: path.into(),
-        source,
-    })?;
-    let test: HeadlessTest = toml::from_str(&source).map_err(|source| CliError::Manifest {
-        path: path.into(),
-        source,
-    })?;
+    let test: HeadlessTest = read_toml(path)?;
     if !test.assert.has_expectations() {
         return Err(CliError::Assertion(
             "headless tests require at least one assertion".into(),
         ));
     }
-    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    let root = manifest_root(path);
     let [block0_media_path, block1_media_path] = resolve_block_media_paths(&test, root)?;
     let result = run_image_with_prefill(
         RunOptions {
@@ -357,55 +353,60 @@ fn resolve_block_media_paths(test: &HeadlessTest, root: &Path) -> Result<[Option
 fn runtime_config(
     boot_rom: &[u8],
     image: &minemu_image::SystemImage,
-    block_media_paths: [Option<PathBuf>; 2],
-    instruction_batch: Option<NonZeroUsize>,
+    spec: SystemSpec<'_>,
     ram_prefill: &[RamPrefill],
-    execution_deadline: Option<u64>,
-    inputs: &[HeadlessInput],
+    start: RuntimeStart<'_>,
 ) -> Result<RuntimeConfig> {
     let memory =
         PhysicalMemory::with_roms(boot_rom, image.bytes()).map_err(|_| CliError::RuntimeSetup)?;
-    let mut config = RuntimeConfig::new(Machine::new(memory, 4096), BOOT_ROM_BASE);
-    [config.block_media_path, config.block1_media_path] = block_media_paths;
-    if let Some(instruction_batch) = instruction_batch {
+    let mut config =
+        RuntimeConfig::new(Machine::new(memory, DEFAULT_EVENT_CAPACITY), BOOT_ROM_BASE);
+    [config.block_media_path, config.block1_media_path] = spec.block_media;
+    if let Some(instruction_batch) = spec.instruction_batch {
         config.instruction_batch = instruction_batch.get();
     }
-    config.execution_deadline = execution_deadline;
-    config.scheduled_uart = inputs
-        .iter()
-        .map(|input| {
-            Ok(ScheduledUartInput {
-                at_tick: input.at_tick,
-                port: port(input.uart)?,
-                bytes: input.data.as_bytes().to_vec(),
-            })
-        })
-        .collect::<Result<_>>()?;
-    for fill in ram_prefill {
-        let address = PhysicalAddress::new(fill.address);
-        let range = PhysicalRange::new(address, fill.length).map_err(|_| {
-            CliError::Assertion(format!(
-                "RAM prefill at {:#010x} must have a nonzero in-range length",
-                fill.address
-            ))
-        })?;
-        if !MemRegion::Ram.range().contains_range(range) {
-            return Err(CliError::Assertion(format!(
-                "RAM prefill at {:#010x} with length {} is outside physical RAM",
-                fill.address, fill.length
-            )));
+    match start {
+        RuntimeStart::Paused => config.start_paused = true,
+        RuntimeStart::RunningUntil { deadline, inputs } => {
+            config.execution_deadline = Some(deadline);
+            config.scheduled_uart = inputs
+                .iter()
+                .map(|input| {
+                    Ok(ScheduledUartInput {
+                        at_tick: input.at_tick,
+                        port: port(input.uart)?,
+                        bytes: input.data.as_bytes().to_vec(),
+                    })
+                })
+                .collect::<Result<_>>()?;
         }
-        config
-            .initial_ram_writes
-            .push((address, vec![fill.value; fill.length as usize]));
+    }
+    for fill in ram_prefill {
+        config.initial_ram_writes.push(prefill_write(fill)?);
     }
     Ok(config)
 }
 
+/// Validates one RAM prefill and returns the write it describes.
+fn prefill_write(fill: &RamPrefill) -> Result<(PhysicalAddress, Vec<u8>)> {
+    let address = PhysicalAddress::new(fill.address);
+    let range = PhysicalRange::new(address, fill.length).map_err(|_| {
+        CliError::Assertion(format!(
+            "RAM prefill at {:#010x} must have a nonzero in-range length",
+            fill.address
+        ))
+    })?;
+    if !MemRegion::Ram.range().contains_range(range) {
+        return Err(CliError::Assertion(format!(
+            "RAM prefill at {:#010x} with length {} is outside physical RAM",
+            fill.address, fill.length
+        )));
+    }
+    Ok((address, vec![fill.value; fill.length as usize]))
+}
+
 fn assert_result(result: &RunResult, assertion: &HeadlessAssertion) -> Result<()> {
-    if result.execution_status.lifecycle == LifecycleState::Failed
-        || result.shutdown_status.lifecycle == LifecycleState::Failed
-    {
+    if result.failed() {
         let detail = result
             .execution_status
             .last_error
@@ -523,55 +524,48 @@ fn assert_block_media(paths: [Option<&Path>; 2], assertions: &[BlockMediaAsserti
                 assertion.unit
             ))
         })?;
-        assert_block_media_contents(&read(path)?, std::slice::from_ref(assertion), path)?;
+        assert_block_media_contents(&read(path)?, assertion, path)?;
     }
     Ok(())
 }
 
 fn assert_block_media_contents(
     media: &[u8],
-    assertions: &[BlockMediaAssertion],
+    assertion: &BlockMediaAssertion,
     path: &Path,
 ) -> Result<()> {
-    for assertion in assertions {
-        let start = usize::try_from(assertion.offset).map_err(|_| {
-            CliError::Assertion(format!(
-                "block unit {} media {} region at offset {} is out of range for {} bytes",
-                assertion.unit,
-                path.display(),
-                assertion.offset,
-                media.len()
-            ))
-        })?;
-        let end = start.checked_add(assertion.bytes.len()).ok_or_else(|| {
-            CliError::Assertion(format!(
-                "block unit {} media {} region at offset {} is out of range for {} bytes",
-                assertion.unit,
-                path.display(),
-                assertion.offset,
-                media.len()
-            ))
-        })?;
-        let actual = media.get(start..end).ok_or_else(|| {
-            CliError::Assertion(format!(
-                "block unit {} media {} region at offset {} with length {} is out of range for {} bytes",
-                assertion.unit,
-                path.display(),
-                assertion.offset,
-                assertion.bytes.len(),
-                media.len()
-            ))
-        })?;
-        if actual != assertion.bytes {
-            return Err(CliError::Assertion(format!(
-                "block unit {} media {} mismatch at offset {}: expected {:?}, got {:?}",
-                assertion.unit,
-                path.display(),
-                assertion.offset,
-                assertion.bytes,
-                actual
-            )));
-        }
+    let region = format!(
+        "block unit {} media {} region at offset {}",
+        assertion.unit,
+        path.display(),
+        assertion.offset
+    );
+    let out_of_range = || {
+        CliError::Assertion(format!(
+            "{region} is out of range for {} bytes",
+            media.len()
+        ))
+    };
+    let start = usize::try_from(assertion.offset).map_err(|_| out_of_range())?;
+    let end = start
+        .checked_add(assertion.bytes.len())
+        .ok_or_else(out_of_range)?;
+    let actual = media.get(start..end).ok_or_else(|| {
+        CliError::Assertion(format!(
+            "{region} with length {} is out of range for {} bytes",
+            assertion.bytes.len(),
+            media.len()
+        ))
+    })?;
+    if actual != assertion.bytes {
+        return Err(CliError::Assertion(format!(
+            "block unit {} media {} mismatch at offset {}: expected {:?}, got {:?}",
+            assertion.unit,
+            path.display(),
+            assertion.offset,
+            assertion.bytes,
+            actual
+        )));
     }
     Ok(())
 }
@@ -596,33 +590,8 @@ fn port(value: u8) -> Result<UartPort> {
     }
 }
 
-fn wait_for(runtime: &RuntimeHandle, lifecycle: LifecycleState) -> Result<()> {
-    for _ in 0..500 {
-        if runtime.status().lifecycle == lifecycle {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
-    Err(CliError::RuntimeSetup)
-}
-
-fn resolve(root: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    }
-}
-
-fn read(path: &Path) -> Result<Vec<u8>> {
-    fs::read(path).map_err(|source| CliError::Read {
-        path: path.into(),
-        source,
-    })
-}
-
 const fn default_max_ticks() -> u64 {
-    100_000
+    DEFAULT_MAX_TICKS
 }
 
 #[cfg(test)]
@@ -636,13 +605,24 @@ mod tests {
     };
 
     use super::{
-        BlockMediaAssertion, HeadlessAssertion, HeadlessTest, RamPrefill, RunResult,
-        assert_block_media_contents, assert_result, resolve_block_media_paths, runtime_config,
+        BlockMediaAssertion, HeadlessAssertion, HeadlessTest, RamPrefill, RunResult, RuntimeStart,
+        SystemSpec, assert_block_media_contents, assert_result, resolve_block_media_paths,
+        runtime_config,
     };
     use crate::CliError;
     use minemu_runtime::{
         LifecycleState, RuntimeHandle, RuntimeInspection, RuntimeInspectionRequest,
     };
+
+    fn wait_for_paused(runtime: &RuntimeHandle) {
+        for _ in 0..500 {
+            if runtime.status().lifecycle == LifecycleState::Paused {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("runtime did not pause");
+    }
 
     fn result(output: &[u8]) -> RunResult {
         let status = |lifecycle| minemu_runtime::RuntimeStatus {
@@ -724,11 +704,11 @@ mod tests {
 
     #[test]
     fn block_media_region_assertions_cover_success_out_of_range_and_mismatch() {
-        let expected = [BlockMediaAssertion {
+        let expected = BlockMediaAssertion {
             unit: 0,
             offset: 2,
             bytes: vec![0x22, 0x33],
-        }];
+        };
         assert_block_media_contents(
             &[0x00, 0x11, 0x22, 0x33],
             &expected,
@@ -736,11 +716,11 @@ mod tests {
         )
         .unwrap();
 
-        let out_of_range = [BlockMediaAssertion {
+        let out_of_range = BlockMediaAssertion {
             unit: 1,
             offset: 3,
             bytes: vec![0x33, 0x44],
-        }];
+        };
         assert!(matches!(
             assert_block_media_contents(
                 &[0x00, 0x11, 0x22, 0x33],
@@ -751,11 +731,11 @@ mod tests {
                 && message.contains("unit 1") && message.contains("swap.img")
         ));
 
-        let mismatch = [BlockMediaAssertion {
+        let mismatch = BlockMediaAssertion {
             unit: 0,
             offset: 2,
             bytes: vec![0xaa, 0xbb],
-        }];
+        };
         assert!(matches!(
             assert_block_media_contents(
                 &[0x00, 0x11, 0x22, 0x33],
@@ -861,15 +841,21 @@ block_media_bytes = []
         let config = runtime_config(
             &test_boot_rom(),
             &boot_test_image(),
-            [None, None],
-            std::num::NonZeroUsize::new(7),
+            SystemSpec {
+                image: std::path::Path::new("system.img"),
+                boot_rom: std::path::Path::new("boot.bin"),
+                block_media: [None, None],
+                instruction_batch: std::num::NonZeroUsize::new(7),
+            },
             &[RamPrefill {
                 address: 0x4003_0000,
                 length: 4,
                 value: 0xa5,
             }],
-            Some(99),
-            &[],
+            RuntimeStart::RunningUntil {
+                deadline: 99,
+                inputs: &[],
+            },
         )
         .unwrap();
 
@@ -885,19 +871,23 @@ block_media_bytes = []
         let config = runtime_config(
             &boot_rom,
             &boot_test_image(),
-            [None, None],
-            None,
+            SystemSpec {
+                image: std::path::Path::new("system.img"),
+                boot_rom: std::path::Path::new("boot.bin"),
+                block_media: [None, None],
+                instruction_batch: None,
+            },
             &[],
-            None,
-            &[],
+            RuntimeStart::Paused,
         )
         .unwrap();
         assert_eq!(config.entry, BOOT_ROM_BASE);
         assert_eq!(config.instruction_batch, 1024);
         assert!(config.initial_ram_writes.is_empty());
         let runtime = RuntimeHandle::spawn(config).unwrap();
+        runtime.resume().unwrap();
         runtime.pause().unwrap();
-        super::wait_for(&runtime, LifecycleState::Paused).unwrap();
+        wait_for_paused(&runtime);
         runtime.reset().unwrap();
 
         let RuntimeInspection::Execution(execution) = runtime

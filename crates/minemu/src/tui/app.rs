@@ -12,7 +12,10 @@ use minemu_runtime::LifecycleState;
 use ratatui::{Frame, layout::Rect};
 use tracing::{debug, error, info, warn};
 
-use crate::{CliError, Result, runner::start_runtime};
+use crate::{
+    CliError, Result,
+    runner::{SystemSpec, start_runtime},
+};
 
 use super::{
     action::Action,
@@ -52,7 +55,12 @@ impl App {
         block0_media: Option<PathBuf>,
         block1_media: Option<PathBuf>,
     ) -> Result<Self> {
-        let handle = start_runtime(&image, &boot_rom, block0_media, block1_media, None)?;
+        let handle = start_runtime(SystemSpec {
+            image: &image,
+            boot_rom: &boot_rom,
+            block_media: [block0_media, block1_media],
+            instruction_batch: None,
+        })?;
         let mut runtime = RuntimeController::new(handle);
         for _ in 0..500 {
             runtime.refresh_status();

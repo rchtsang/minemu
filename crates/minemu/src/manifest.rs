@@ -1,11 +1,11 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::{CliError, Result};
+use crate::{
+    Result,
+    paths::{manifest_root, read, read_toml, resolve},
+};
 
 /// Declarative system-image input manifest.
 #[derive(Debug, Deserialize)]
@@ -27,8 +27,8 @@ pub struct ModuleManifest {
 /// Parses a manifest and packages its referenced independently linked ELFs.
 pub fn package_manifest(path: impl AsRef<Path>) -> Result<minemu_image::SystemImage> {
     let path = path.as_ref();
-    let manifest = read_manifest(path)?;
-    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    let manifest: ImageManifest = read_toml(path)?;
+    let root = manifest_root(path);
     let kernel_path = resolve(root, &manifest.kernel);
     let kernel = read(&kernel_path)?;
     let modules = manifest
@@ -41,32 +41,6 @@ pub fn package_manifest(path: impl AsRef<Path>) -> Result<minemu_image::SystemIm
         builder = builder.add_module(minemu_image::ModuleInput { name, elf });
     }
     Ok(builder.build()?)
-}
-
-fn read_manifest(path: &Path) -> Result<ImageManifest> {
-    let source = fs::read_to_string(path).map_err(|source| CliError::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    toml::from_str(&source).map_err(|source| CliError::Manifest {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-fn resolve(root: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    }
-}
-
-fn read(path: &Path) -> Result<Vec<u8>> {
-    fs::read(path).map_err(|source| CliError::Read {
-        path: path.into(),
-        source,
-    })
 }
 
 #[cfg(test)]

@@ -25,6 +25,7 @@ use ratatui::{
     style::Style,
     widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState, block::Padding},
 };
+use unicode_width::UnicodeWidthChar;
 
 pub fn pane_block(title: impl Into<String>, focused: bool, width: u16) -> Block<'static> {
     let mut title = title.into();
@@ -49,6 +50,27 @@ pub fn pane_block(title: impl Into<String>, focused: bool, width: u16) -> Block<
 /// Returns the first visible line of a bottom-anchored pane with `height` rows
 /// including borders. `from_bottom` is clamped to the scrollable range so that
 /// motions after `gg` or past either end take effect immediately.
+/// Splits `value` into rows of at most `width` terminal columns.
+pub fn hard_wrap(value: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut line_width = 0;
+    for character in value.chars() {
+        let character_width = character.width().unwrap_or(0);
+        if !line.is_empty() && line_width + character_width > width {
+            lines.push(std::mem::take(&mut line));
+            line_width = 0;
+        }
+        line.push(character);
+        line_width += character_width;
+    }
+    if !line.is_empty() || lines.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
 pub fn scroll_offset(total_lines: usize, height: u16, from_bottom: &mut usize) -> u16 {
     let visible = usize::from(height.saturating_sub(2));
     let maximum = total_lines.saturating_sub(visible);

@@ -6,18 +6,18 @@ use minemu_runtime::{RuntimeInspection, UartPort};
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{Paragraph, Wrap},
+    text::{Line, Text},
+    widgets::Paragraph,
 };
 
 use crate::tui::{
     action::Action,
     event::AppEvent,
-    input::Motion,
     types::{InputMode, View, WidgetId},
     widget::{InputContext, RenderContext, TuiWidget},
 };
 
-use super::{pane_block, render_scrollbar, scroll_offset};
+use super::{hard_wrap, nav_scroll, pane_block, render_scrollbar, scroll_offset};
 
 const TRANSCRIPT_CAPACITY: usize = 16 * 1024;
 
@@ -183,13 +183,19 @@ impl TuiWidget for ConsoleWidget {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, context: &RenderContext<'_>) {
+        // Wrap here rather than in the paragraph so scrolling counts screen rows.
+        let inner_width = usize::from(area.width.saturating_sub(3));
         let output = self.stream().output();
-        let lines = output.lines().count();
+        let lines = output
+            .lines()
+            .flat_map(|line| hard_wrap(line, inner_width))
+            .map(Line::raw)
+            .collect::<Vec<_>>();
+        let total = lines.len();
         let viewport = usize::from(area.height.saturating_sub(2));
-        let offset = scroll_offset(lines, area.height, &mut self.from_bottom);
+        let offset = scroll_offset(total, area.height, &mut self.from_bottom);
         frame.render_widget(
-            Paragraph::new(output)
-                .wrap(Wrap { trim: false })
+            Paragraph::new(Text::from(lines))
                 .scroll((offset, 0))
                 .block(pane_block(
                     format!("[^c] console (uart {})", self.uart.index()),
@@ -198,7 +204,7 @@ impl TuiWidget for ConsoleWidget {
                 )),
             area,
         );
-        render_scrollbar(frame, area, lines, viewport, usize::from(offset));
+        render_scrollbar(frame, area, total, viewport, usize::from(offset));
     }
 
     fn handle_key(&mut self, key: KeyEvent, context: &InputContext) -> Vec<Action> {
@@ -250,17 +256,7 @@ impl TuiWidget for ConsoleWidget {
                 }];
             }
             AppEvent::UartSelected(uart) => self.uart = *uart,
-            AppEvent::Navigate(motion) => match motion {
-                Motion::Up(count) | Motion::Left(count) => {
-                    self.from_bottom = self.from_bottom.saturating_add(*count)
-                }
-                Motion::Down(count) | Motion::Right(count) => {
-                    self.from_bottom = self.from_bottom.saturating_sub(*count)
-                }
-                Motion::Top => self.from_bottom = usize::MAX,
-                Motion::Bottom => self.from_bottom = 0,
-                _ => {}
-            },
+            AppEvent::Navigate(motion) => nav_scroll(&mut self.from_bottom, *motion),
             AppEvent::InsertText(text) => {
                 return self.send(text.as_bytes().to_vec());
             }
@@ -274,7 +270,34 @@ impl TuiWidget for ConsoleWidget {
 mod tests {
     use minemu_platform::UartInspection;
 
-    use super::ConsoleStream;
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+
+    use super::{ConsoleStream, ConsoleWidget};
+    use crate::tui::{
+        event::AppEvent,
+        input::Motion,
+        types::{InputMode, View, WidgetId},
+        widget::{RenderContext, TuiWidget},
+    };
+
+    /// Renders `widget` into a 20x6 pane and returns its rows as text.
+    fn render(widget: &mut ConsoleWidget) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
+        let context = RenderContext {
+            view: View::Runtime,
+            mode: InputMode::Normal,
+            focused: WidgetId::Console,
+            input: "",
+            ticks: 0,
+        };
+        terminal
+            .draw(|frame| widget.render(frame, Rect::new(0, 0, 20, 6), &context))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..6)
+            .map(|y| (0..20).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
 
     fn inspection(history: &[u8]) -> UartInspection {
         UartInspection {
@@ -312,5 +335,25 @@ mod tests {
         stream.observe(&inspection(b"abcdefgh"));
         stream.observe(&inspection(b"efghijkl"));
         assert_eq!(stream.output(), "abcdefghijkl");
+    }
+
+    #[test]
+    fn wrapped_output_keeps_the_newest_line_visible() {
+        let mut widget = ConsoleWidget::default();
+        // Each 40-character line wraps onto several rows of the 17-column pane.
+        let history = (0..3)
+            .map(|line| format!("{line}{}", "x".repeat(39)))
+            .chain(["last".to_string()])
+            .collect::<Vec<_>>()
+            .join("\n");
+        widget.uart0.observe(&inspection(history.as_bytes()));
+        let rows = render(&mut widget);
+        assert!(rows[4].contains("last"), "{rows:#?}");
+
+        // Scrolling moves by wrapped screen rows, and w scrolls down like j.
+        widget.update(&AppEvent::Navigate(Motion::Up(1)));
+        assert!(!render(&mut widget)[4].contains("last"));
+        widget.update(&AppEvent::Navigate(Motion::NextItem(1)));
+        assert!(render(&mut widget)[4].contains("last"));
     }
 }

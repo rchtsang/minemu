@@ -7,7 +7,6 @@ use ratatui::{
     text::{Line, Text},
     widgets::Paragraph,
 };
-use unicode_width::UnicodeWidthChar;
 
 use crate::tui::{
     action::Action,
@@ -16,7 +15,7 @@ use crate::tui::{
     widget::{RenderContext, TuiWidget},
 };
 
-use super::{nav_scroll, pane_block, render_scrollbar, scroll_offset};
+use super::{hard_wrap, nav_scroll, pane_block, render_scrollbar, scroll_offset};
 
 pub struct DialogWidget {
     messages: VecDeque<DialogMessage>,
@@ -106,26 +105,6 @@ impl TuiWidget for DialogWidget {
         }
         Vec::new()
     }
-}
-
-fn hard_wrap(value: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    let mut line_width = 0;
-    for character in value.chars() {
-        let character_width = character.width().unwrap_or(0);
-        if !line.is_empty() && line_width + character_width > width {
-            lines.push(std::mem::take(&mut line));
-            line_width = 0;
-        }
-        line.push(character);
-        line_width += character_width;
-    }
-    if !line.is_empty() || lines.is_empty() {
-        lines.push(line);
-    }
-    lines
 }
 
 #[cfg(test)]

@@ -256,6 +256,36 @@ fn scheduled_run_stops_and_delivers_uart_at_emulator_thread_boundaries() {
 }
 
 #[test]
+fn execution_deadline_fires_once_and_rearms_on_reset() {
+    let mut machine = Machine::default();
+    let entry = MemRegion::Ram.base().get();
+    let instruction = [0xfe, 0xff, 0xff, 0xea]; // b .
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(entry), &instruction)
+        .unwrap();
+    let mut config = RuntimeConfig::new(machine, entry)
+        .with_initial_ram_write(PhysicalAddress::new(entry), instruction.to_vec());
+    config.execution_deadline = Some(5);
+    let runtime = RuntimeHandle::spawn(config).unwrap();
+    wait_for_paused_tick(&runtime, 5);
+
+    // Resuming after the deadline runs past it instead of re-pausing immediately.
+    runtime.resume_for(NonZeroU64::new(3).unwrap()).unwrap();
+    wait_for_paused_tick(&runtime, 8);
+
+    // Reset restarts virtual time at zero, so the deadline applies again.
+    runtime.reset().unwrap();
+    runtime.resume().unwrap();
+    let status = wait_for_paused_tick(&runtime, 5);
+    assert_eq!(
+        status.last_stop.as_deref(),
+        Some("execution deadline reached")
+    );
+    runtime.shutdown().unwrap();
+}
+
+#[test]
 fn scheduled_boundaries_split_multi_tick_exception_entry() {
     let mut machine = Machine::default();
     let entry = MemRegion::Ram.base().get();

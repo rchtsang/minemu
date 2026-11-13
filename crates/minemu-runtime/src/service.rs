@@ -420,6 +420,9 @@ struct Service {
     last_publish: Instant,
     remaining_instructions: Option<u64>,
     pending_breakpoint: Option<u32>,
+    /// The configured deadline, re-armed on every reset.
+    configured_deadline: Option<u64>,
+    /// The armed deadline; cleared once reached so later resumes can run past it.
     execution_deadline: Option<u64>,
     scheduled_uart: VecDeque<ScheduledUartInput>,
 }
@@ -457,6 +460,7 @@ impl Service {
             last_publish: Instant::now(),
             remaining_instructions: None,
             pending_breakpoint: None,
+            configured_deadline: config.execution_deadline,
             execution_deadline: config.execution_deadline,
             scheduled_uart: config.scheduled_uart.into(),
         };
@@ -493,6 +497,7 @@ impl Service {
             .execution_deadline
             .is_some_and(|deadline| current_tick >= deadline)
         {
+            self.execution_deadline = None;
             self.pause(Some("execution deadline reached".into()));
             return true;
         }
@@ -667,6 +672,7 @@ impl Service {
         match self.emulator.reset() {
             Ok(()) => {
                 self.pending_breakpoint = None;
+                self.execution_deadline = self.configured_deadline;
                 self.publish_clearing_stop();
             }
             Err(error) => {

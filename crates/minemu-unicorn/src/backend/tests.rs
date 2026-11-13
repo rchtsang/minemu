@@ -1067,6 +1067,67 @@ fn guest_cp15_mrc_reads_fault_registers_at_a_boundary() {
 }
 
 #[test]
+fn enabling_the_mmu_does_not_reuse_identity_translations() {
+    let ram = MemRegion::Ram.base().get();
+    let (table, code, identity, mapped) = (ram + 0x1000, ram + 0x2000, ram + 0x3000, ram + 0x4000);
+    let mut machine = Machine::default();
+    let pte = |va: u32| PhysicalAddress::new(table + ((va >> 12) & 0x3ff) * 4);
+    machine
+        .memory
+        .write_u32(
+            PhysicalAddress::new(ram + (ram >> 22) * 4),
+            table | PTE_VALID,
+        )
+        .unwrap();
+    machine
+        .memory
+        .write_u32(pte(code), code | PTE_VALID | PTE_READABLE | PTE_EXECUTABLE)
+        .unwrap();
+    // The data VA `identity` translates to a different physical page.
+    machine
+        .memory
+        .write_u32(pte(identity), mapped | PTE_VALID | PTE_READABLE)
+        .unwrap();
+    machine
+        .memory
+        .write_u32(PhysicalAddress::new(identity), 0x1111)
+        .unwrap();
+    machine
+        .memory
+        .write_u32(PhysicalAddress::new(mapped), 0x2222)
+        .unwrap();
+
+    // MINEMU-MMU1-CP15-004: write TTBR0, TLBIALL, then set SCTLR.M.
+    let mut program = load_immediate(2, ram);
+    program.extend(0xee02_2f10_u32.to_le_bytes()); // mcr TTBR0, r2
+    program.extend(0xee08_2f17_u32.to_le_bytes()); // mcr TLBIALL
+    program.extend(load_immediate(3, identity));
+    program.extend(0xe593_0000_u32.to_le_bytes()); // ldr r0, [r3] (MMU off)
+    program.extend(load_immediate(4, 1));
+    program.extend(0xee01_4f10_u32.to_le_bytes()); // mcr SCTLR, r4
+    program.extend(0xe593_1000_u32.to_le_bytes()); // ldr r1, [r3] (MMU on)
+    program.extend(0xe120_0070_u32.to_le_bytes()); // bkpt
+    machine
+        .memory
+        .write_range(PhysicalAddress::new(code), &program)
+        .unwrap();
+    let mut backend = UnicornBackend::new(machine).unwrap();
+
+    let mut pc = code;
+    loop {
+        match backend.run(pc, u32::MAX, 64) {
+            BackendStop::Breakpoint { .. } => break,
+            BackendStop::Cp15Boundary | BackendStop::InstructionBudget => {
+                pc = backend.program_counter().unwrap();
+            }
+            stop => panic!("unexpected stop {stop:?}"),
+        }
+    }
+    assert_eq!(backend.register(RegisterARM::R0).unwrap(), 0x1111);
+    assert_eq!(backend.register(RegisterARM::R1).unwrap(), 0x2222);
+}
+
+#[test]
 fn ttbr_switch_requires_and_honors_tlbiall() {
     let mut machine = Machine::default();
     let ram = MemRegion::Ram.base().get();

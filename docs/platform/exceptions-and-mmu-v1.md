@@ -69,9 +69,11 @@ exception.
 page MUST lie in RAM. VBAR MUST be 32-byte aligned. SCTLR bits other than bit 0
 are ignored and readback of SCTLR, TTBR0, and VBAR is not supported.
 
-**MINEMU-MMU1-CP15-003:** Changing TTBR0, changing SCTLR.M, or writing page-table
-memory MUST NOT be assumed to invalidate cached translations. Guest software
-MUST execute TLBIALL after any such change before relying on it.
+**MINEMU-MMU1-CP15-003:** Changing TTBR0 or writing page-table memory MUST NOT
+be assumed to invalidate cached translations. Guest software MUST execute
+TLBIALL after any such change before relying on it. Changing SCTLR.M discards
+all cached translations, so addresses used while translation was disabled are
+translated through the page tables once it is enabled.
 
 **MINEMU-MMU1-CP15-004:** The required initial enable sequence is: fully write
 the page directory and page tables, write TTBR0, execute TLBIALL, then set

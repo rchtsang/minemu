@@ -356,8 +356,15 @@ impl UnicornBackend {
     fn finish_cp15(&mut self, pending: PendingCp15, tick_deadline: Option<u64>) -> BackendStop {
         match pending {
             PendingCp15::Operation(operation) => {
+                // Translations cached under the other SCTLR.M setting were never
+                // architecturally valid in the new one, so they are dropped even
+                // though guests must still issue TLBIALL (MINEMU-MMU1-CP15-003).
+                let mmu_toggled = matches!(
+                    operation,
+                    Cp15Operation::SetMmuEnabled(enabled) if enabled != self.machine().mmu.enabled()
+                );
                 self.machine_mut().mmu.apply_cp15(operation);
-                if matches!(operation, Cp15Operation::InvalidateAll)
+                if (mmu_toggled || matches!(operation, Cp15Operation::InvalidateAll))
                     && self.engine.ctl_flush_tlb().is_err()
                 {
                     return BackendStop::Unicorn(uc_error::ARG);

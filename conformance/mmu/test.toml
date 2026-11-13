@@ -1,0 +1,9 @@
+image = "build/mmu.img"
+boot_rom = "../bootrom/bootloader.bin"
+max_ticks = 500000
+
+[assert]
+execution_lifecycle = "paused"
+shutdown_lifecycle = "stopped"
+mmu_enabled = true
+trace_values = [0x20060001]

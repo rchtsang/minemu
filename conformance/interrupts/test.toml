@@ -1,0 +1,39 @@
+image = "build/interrupts.img"
+boot_rom = "../bootrom/bootloader.bin"
+max_ticks = 900000
+
+[[inputs]]
+at_tick = 0
+uart = 0
+data = "A"
+
+[[inputs]]
+at_tick = 0
+uart = 1
+data = "B"
+
+[[inputs]]
+at_tick = 300000
+uart = 0
+data = "C"
+
+[[inputs]]
+at_tick = 300000
+uart = 1
+data = "D"
+
+[[inputs]]
+at_tick = 500000
+uart = 0
+data = "E"
+
+[[inputs]]
+at_tick = 500000
+uart = 1
+data = "F"
+
+[assert]
+execution_lifecycle = "paused"
+shutdown_lifecycle = "stopped"
+mmu_enabled = true
+trace_values = [0x20050001]

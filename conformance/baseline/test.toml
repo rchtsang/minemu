@@ -1,0 +1,15 @@
+image = "build/baseline.img"
+boot_rom = "../bootrom/bootloader.bin"
+max_ticks = 500000
+
+[[ram_prefill]]
+address = 0x40030000
+length = 131072
+value = 165
+
+[assert]
+ticks_at_least = 500000
+execution_lifecycle = "paused"
+shutdown_lifecycle = "stopped"
+mmu_enabled = true
+trace_values = [0x20000001]

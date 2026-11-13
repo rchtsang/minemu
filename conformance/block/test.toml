@@ -1,0 +1,21 @@
+image = "build/block.img"
+boot_rom = "../bootrom/bootloader.bin"
+block0_media = "build/filesystem.img"
+block1_media = "build/swap.img"
+max_ticks = 500000
+
+[assert]
+execution_lifecycle = "paused"
+shutdown_lifecycle = "stopped"
+mmu_enabled = true
+trace_values = [0x20030001]
+
+[[assert.block_media]]
+unit = 0
+offset = 512
+bytes = [165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165, 165]
+
+[[assert.block_media]]
+unit = 1
+offset = 512
+bytes = [90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90]

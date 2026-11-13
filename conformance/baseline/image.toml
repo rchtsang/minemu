@@ -1,0 +1,5 @@
+kernel = "build/baseline.elf"
+
+[[modules]]
+name = "minimum-user"
+elf = "build/user/minimum-user.elf"

@@ -1,0 +1,21 @@
+image = "build/uart.img"
+boot_rom = "../bootrom/bootloader.bin"
+max_ticks = 500000
+
+[[inputs]]
+at_tick = 0
+uart = 0
+data = "A"
+
+[[inputs]]
+at_tick = 0
+uart = 1
+data = "B"
+
+[assert]
+uart0_contains = "A"
+uart1_contains = "B"
+execution_lifecycle = "paused"
+shutdown_lifecycle = "stopped"
+mmu_enabled = true
+trace_values = [0x20010001]

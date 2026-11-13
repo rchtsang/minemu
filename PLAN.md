@@ -59,7 +59,7 @@ operations. Keep timer scheduling and page-replacement policy student-owned.
 ## Release Engineering
 
 - Publish native `linux/amd64` and `linux/arm64` images containing `minemu`
-  0.2.3 and Platform ABI v2.
+  0.2.4 and Platform ABI v2.
 - Assemble the multi-platform version tag and smoke-test its immutable digest.
 - Maintain a representative throughput floor of 100,000 strict instructions
   per second.

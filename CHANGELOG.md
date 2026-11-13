@@ -2,6 +2,35 @@
 
 All notable changes to `minemu` are documented in this file.
 
+## 0.2.4 - 2026-11-13
+
+### Fixed
+
+- Guest-visible timing no longer depends on `instruction_batch`. Device
+  deadlines are scheduled from the issuing instruction's tick, polled device
+  state advances between instructions, IRQs are taken at the first eligible
+  instruction boundary, and trace events carry their own retire tick.
+- A fetch fault after other instructions in the same batch no longer drops one
+  of their ticks.
+- Prefetch aborts report the faulting instruction address in DFAR rather than
+  its page base.
+- Invalid MMIO accesses through the MMU report the faulting virtual address in
+  DFAR rather than the physical one.
+- Trace writes from an instruction that faults are discarded.
+- Inspecting virtual memory no longer overwrites DFSR/DFAR, sets PTE Accessed
+  bits, or fills the guest TLB.
+- Code overwritten by a block read is retranslated instead of running stale.
+- Changing SCTLR.M discards cached translations, so the documented MMU enable
+  sequence translates every address through the page tables
+  (MINEMU-MMU1-CP15-003 clarified).
+- Backend failures report the underlying Unicorn error instead of `ARG`, and
+  runtime failures report their cause instead of `runtime setup failed`.
+- The execution deadline fires once and, with scheduled UART input, is re-armed
+  on reset. Resuming or resetting clears the previously published error.
+- TUI: console scrolling follows wrapped lines, `gg`/`G` and `w`/`e` scroll as
+  documented, large disassembly counts saturate, and the help table matches
+  the command parser.
+
 ## 0.2.3 - 2026-09-26
 
 ### Added

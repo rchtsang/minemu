@@ -40,6 +40,21 @@ impl VirtualAddress {
     pub const fn get(self) -> u32 {
         self.0
     }
+
+    /// Returns the page-directory index selected by bits 31:22.
+    pub const fn directory_index(self) -> u32 {
+        self.0 >> 22
+    }
+
+    /// Returns the page-table index selected by bits 21:12.
+    pub const fn table_index(self) -> u32 {
+        (self.0 >> 12) & 0x3ff
+    }
+
+    /// Returns the byte offset within the containing 4 KiB page.
+    pub const fn page_offset(self) -> u32 {
+        self.0 & 0xfff
+    }
 }
 
 /// A nonempty physical range with checked 32-bit bounds.

@@ -1,6 +1,6 @@
 use minemu_platform::{
-    Access, Cp15Operation, FaultCause, FaultStatus, MemRegion, MmuInspection, PTE_USER, PTE_VALID,
-    PageDirectoryEntry, PageTableEntry, PhysicalAddress, VirtualAddress,
+    Access, Cp15Operation, FaultCause, FaultStatus, MemRegion, MmuInspection, PageDirectoryEntry,
+    PageTableEntry, Permissions, PhysicalAddress, VirtualAddress,
 };
 
 use crate::PhysicalMemoryAccess;
@@ -121,39 +121,28 @@ impl Mmu {
             walker.last_fault = Some(fault);
             fault
         };
-        let directory_index = (address.get() >> 22) & 0x3ff;
-        let directory_address = PhysicalAddress::new(self.ttbr0.get() + directory_index * 4);
+        let directory_address =
+            PhysicalAddress::new(self.ttbr0.get() + address.directory_index() * 4);
         let directory = memory
             .read_u32(directory_address)
             .ok()
             .and_then(|raw| PageDirectoryEntry::new(raw).ok())
             .and_then(|entry| entry.table_address().ok().flatten())
             .ok_or_else(|| fault(self, FaultCause::Translation))?;
-        let table_index = (address.get() >> 12) & 0x3ff;
-        let entry_address = PhysicalAddress::new(directory.get() + table_index * 4);
+        let entry_address = PhysicalAddress::new(directory.get() + address.table_index() * 4);
         let entry = memory
             .read_u32(entry_address)
             .ok()
             .map(PageTableEntry::new)
             .ok_or_else(|| fault(self, FaultCause::Translation))?;
-        if entry.raw() & PTE_VALID == 0 {
-            return Err(fault(self, FaultCause::Translation));
-        }
+        // `authorize` also reports an invalid entry as a translation fault.
         if let Err(cause) = entry.authorize(access, user_mode) {
             return Err(fault(self, cause));
         }
-        let raw_target = PhysicalAddress::new(entry.raw() & !0x0fff);
-        if entry.raw() & PTE_USER != 0
-            && Option::<MemRegion>::from(raw_target).is_some_and(MemRegion::is_device)
+        if entry.permissions().contains(Permissions::USER)
+            && Option::<MemRegion>::from(entry.page_address()).is_some_and(MemRegion::is_device)
         {
-            return Err(fault(
-                self,
-                match access {
-                    Access::Fetch => FaultCause::ExecuteProtection,
-                    Access::Read => FaultCause::ReadProtection,
-                    Access::Write => FaultCause::WriteProtection,
-                },
-            ));
+            return Err(fault(self, FaultCause::protection(access)));
         }
         let target = entry
             .target_address()
@@ -172,9 +161,7 @@ impl Mmu {
         if updated.raw() != entry.raw() && memory.write_u32(entry_address, updated.raw()).is_err() {
             return Err(fault(self, FaultCause::Translation));
         }
-        Ok(PhysicalAddress::new(
-            target.get() | (address.get() & 0x0fff),
-        ))
+        Ok(PhysicalAddress::new(target.get() | address.page_offset()))
     }
 }
 

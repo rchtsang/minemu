@@ -1,14 +1,13 @@
 use minemu_platform::{
-    BOOT_STACK_BASE, BOOT_STACK_SIZE, BOOTSTRAP_ENTRY_PADDR, KernelSegment, ModuleSegment,
-    PhysicalAddress, PhysicalRange, VirtualAddress,
+    BOOT_STACK_BASE, BOOT_STACK_SIZE, BOOTSTRAP_ENTRY_PADDR, DIRECT_MAP_BASE, KernelSegment,
+    ModuleSegment, PhysicalAddress, PhysicalRange, RAM_SIZE, SEGMENT_EXECUTABLE, VirtualAddress,
 };
 
 use crate::{ImageError, Result};
 
-const EXECUTABLE: u32 = 1 << 2;
 const A32_INSTRUCTION_SIZE: u32 = 4;
-const KERNEL_DIRECT_MAP_START: u32 = 0xc000_0000;
-const KERNEL_DIRECT_MAP_END: u64 = 0xc400_0000;
+const KERNEL_DIRECT_MAP_START: u32 = DIRECT_MAP_BASE;
+const KERNEL_DIRECT_MAP_END: u64 = DIRECT_MAP_BASE as u64 + RAM_SIZE as u64;
 
 pub(crate) fn validate_kernel_segments(
     segments: &[(KernelSegment, Vec<u8>)],
@@ -151,19 +150,19 @@ fn validate_a32_entry(entry: VirtualAddress, detail: &'static str) -> Result<()>
 }
 
 fn initialized_executable_virtual_range(segment: KernelSegment) -> Option<AddressRange> {
-    (segment.flags & EXECUTABLE != 0)
+    (segment.flags & SEGMENT_EXECUTABLE != 0)
         .then(|| AddressRange::new(segment.virtual_address, segment.file_size).ok())
         .flatten()
 }
 
 fn initialized_executable_physical_range(segment: KernelSegment) -> Option<PhysicalRange> {
-    (segment.flags & EXECUTABLE != 0)
+    (segment.flags & SEGMENT_EXECUTABLE != 0)
         .then(|| PhysicalRange::new(segment.physical_address, segment.file_size).ok())
         .flatten()
 }
 
 fn initialized_executable_module_range(segment: ModuleSegment) -> Option<AddressRange> {
-    (segment.flags & EXECUTABLE != 0)
+    (segment.flags & SEGMENT_EXECUTABLE != 0)
         .then(|| AddressRange::new(segment.virtual_address, segment.file_size).ok())
         .flatten()
 }

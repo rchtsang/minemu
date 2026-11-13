@@ -1,5 +1,14 @@
 use crate::{Permissions, Result, peripherals::invalid_value};
 
+/// SysTick CONTROL bit that starts the timer.
+pub const CONTROL_ENABLE: u32 = 1 << 0;
+/// SysTick CONTROL bit that reloads the timer after each deadline.
+pub const CONTROL_PERIODIC: u32 = 1 << 1;
+/// SysTick CONTROL bit enabling the timer interrupt.
+pub const CONTROL_IRQ_ENABLE: u32 = 1 << 2;
+/// SysTick STATUS bit set when a deadline has expired.
+pub const STATUS_PENDING: u32 = 1 << 0;
+
 /// SysTick registers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Register {
@@ -31,7 +40,7 @@ impl Register {
     pub(crate) fn validate_write_value(self, value: u32) -> Result<()> {
         let valid = match self {
             Self::Period => value != 0,
-            Self::Control => value & !0x07 == 0,
+            Self::Control => value & !(CONTROL_ENABLE | CONTROL_PERIODIC | CONTROL_IRQ_ENABLE) == 0,
             Self::Ack => value == 1,
             _ => true,
         };

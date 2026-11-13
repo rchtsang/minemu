@@ -2,8 +2,8 @@
 
 use minemu_core::{ExceptionPlan, InstructionOutcome, Machine, MmuFault};
 use minemu_platform::{
-    Access, MemRegion, MmioTransaction, MmioWidth, PAGE_SIZE, PhysicalAddress, PhysicalRange,
-    VirtualAddress,
+    Access, CPSR_IRQ_DISABLE, CPSR_MODE_MASK, CPSR_THUMB, CpuMode, MMIO_BASE, MMIO_SIZE, MemRegion,
+    MmioTransaction, MmioWidth, PAGE_SIZE, PhysicalAddress, PhysicalRange, VirtualAddress,
 };
 use thiserror::Error;
 use tracing::{debug, debug_span, trace, warn};
@@ -590,7 +590,7 @@ impl UnicornBackend {
             } => {
                 let user_mode = self
                     .register(RegisterARM::CPSR)
-                    .is_ok_and(|cpsr| cpsr & 0x1f == 0x10);
+                    .is_ok_and(arm::is_user_mode);
                 let fault = self.machine_mut().mmu.record_invalid_mmio_fault(
                     VirtualAddress::new(address),
                     access,
@@ -673,7 +673,7 @@ impl UnicornBackend {
 
     fn deliver_irq(&mut self) -> Option<BackendStop> {
         let cpsr = self.engine.reg_read(RegisterARM::CPSR).ok()? as u32;
-        if cpsr & (1 << 7) != 0 {
+        if cpsr & CPSR_IRQ_DISABLE != 0 {
             return None;
         }
         let _source = self.machine_mut().bus.interrupts.claim()?;
@@ -696,18 +696,12 @@ impl UnicornBackend {
             .engine
             .reg_read(RegisterARM::CPSR)
             .map_err(BackendError::Unicorn)? as u32;
-        let mode = match plan.request.kind.destination_mode() {
-            minemu_platform::CpuMode::Supervisor => 0x13,
-            minemu_platform::CpuMode::Interrupt => 0x12,
-            minemu_platform::CpuMode::Abort => 0x17,
-            minemu_platform::CpuMode::Undefined => 0x1b,
-            minemu_platform::CpuMode::User => unreachable!("exceptions never enter USR mode"),
-        };
-        let link_offset = match plan.request.kind {
-            minemu_platform::ExceptionKind::DataAbort => 8,
-            _ => 4,
-        };
-        let destination_cpsr = (previous_cpsr & !0x3f) | mode | (1 << 7);
+        let kind = plan.request.kind;
+        let mode = kind.destination_mode();
+        debug_assert!(mode != CpuMode::User, "exceptions never enter USR mode");
+        // Exception entry selects the destination mode in A32 state with IRQs masked.
+        let destination_cpsr =
+            (previous_cpsr & !(CPSR_MODE_MASK | CPSR_THUMB)) | mode.bits() | CPSR_IRQ_DISABLE;
         self.engine
             .reg_write(RegisterARM::CPSR, u64::from(destination_cpsr))
             .map_err(BackendError::Unicorn)?;
@@ -717,10 +711,10 @@ impl UnicornBackend {
         self.engine
             .reg_write(
                 RegisterARM::LR,
-                u64::from(plan.request.pc.get() + link_offset),
+                u64::from(plan.request.pc.get() + kind.link_offset()),
             )
             .map_err(BackendError::Unicorn)?;
-        let vector = self.vector_base() + plan.request.kind.vector_offset();
+        let vector = self.vector_base() + kind.vector_offset();
         self.engine
             .reg_write(RegisterARM::PC, u64::from(vector))
             .map_err(BackendError::Unicorn)
@@ -756,12 +750,10 @@ impl UnicornBackend {
     }
 
     fn map_mmio_window(&mut self) -> Result<()> {
-        const MMIO_BASE: u64 = 0x1000_0000;
-        const MMIO_SIZE: u64 = 0x1_0000;
         self.engine
             .mmio_map(
-                MMIO_BASE,
-                MMIO_SIZE,
+                u64::from(MMIO_BASE),
+                u64::from(MMIO_SIZE),
                 Some(hooks::mmio_read_callback),
                 Some(hooks::mmio_write_callback),
             )
@@ -804,7 +796,7 @@ mod hooks {
         memory_type: unicorn_engine::unicorn_const::MemType,
     ) -> Option<TlbEntry> {
         let access = arm::mmu_access(memory_type)?;
-        let user_mode = engine.reg_read(RegisterARM::CPSR).ok()? as u32 & 0x1f == 0x10;
+        let user_mode = arm::is_user_mode(engine.reg_read(RegisterARM::CPSR).ok()? as u32);
         let data = engine.get_data_mut();
         let BackendData {
             machine,
@@ -918,8 +910,7 @@ mod hooks {
         offset: u64,
         size: usize,
     ) -> u64 {
-        const MMIO_BASE: u64 = 0x1000_0000;
-        let address = MMIO_BASE + offset;
+        let address = u64::from(MMIO_BASE) + offset;
         let Ok(width) = MmioWidth::try_from(size) else {
             record_mmio_fault(
                 engine,
@@ -947,8 +938,7 @@ mod hooks {
         size: usize,
         value: u64,
     ) {
-        const MMIO_BASE: u64 = 0x1000_0000;
-        let address = MMIO_BASE + offset;
+        let address = u64::from(MMIO_BASE) + offset;
         let Ok(width) = MmioWidth::try_from(size) else {
             record_mmio_fault(
                 engine,

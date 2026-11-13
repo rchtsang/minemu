@@ -229,7 +229,7 @@ fn run_image_with_prefill(options: RunOptions, ram_prefill: &[RamPrefill]) -> Re
                 peripherals.uart0.tx_history,
                 peripherals.uart1.tx_history,
                 Some(mmu),
-                Some(execution.cpsr & 0x1f),
+                Some(execution.cpsr & minemu_platform::CPSR_MODE_MASK),
                 events,
             )
         } else {

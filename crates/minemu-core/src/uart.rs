@@ -5,7 +5,10 @@ use std::{
 
 use minemu_platform::{
     Peripheral, UartInspection,
-    peripherals::{interrupt::Source, uart::Register},
+    peripherals::{
+        interrupt::Source,
+        uart::{CONTROL_RX_IRQ_ENABLE, Register, STATUS_RX_READY, STATUS_TX_READY},
+    },
 };
 
 use crate::{InterruptSignal, Result};
@@ -73,15 +76,24 @@ impl Uart {
     }
 
     pub fn status(&self) -> u32 {
-        (if self.rx.is_empty() { 0 } else { 1 }) | 2
+        let rx_ready = if self.rx.is_empty() {
+            0
+        } else {
+            STATUS_RX_READY
+        };
+        rx_ready | STATUS_TX_READY
     }
 
     pub const fn control(&self) -> u32 {
-        self.rx_irq_enabled as u32
+        if self.rx_irq_enabled {
+            CONTROL_RX_IRQ_ENABLE
+        } else {
+            0
+        }
     }
 
     fn set_control(&mut self, value: u32) {
-        self.rx_irq_enabled = value & 1 != 0;
+        self.rx_irq_enabled = value & CONTROL_RX_IRQ_ENABLE != 0;
         self.signal_interrupt();
     }
 

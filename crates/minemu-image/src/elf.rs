@@ -2,6 +2,8 @@ use object::{
     Architecture, BinaryFormat, Object, ObjectKind, ObjectSection, ObjectSegment, Permissions,
 };
 
+use minemu_platform::{SEGMENT_EXECUTABLE, SEGMENT_READABLE, SEGMENT_WRITABLE};
+
 use crate::{ImageError, Result};
 
 /// A loadable ELF segment normalized for image construction.
@@ -65,7 +67,8 @@ pub(crate) fn parse_elf(bytes: &[u8]) -> Result<(u32, Vec<ElfSegment>)> {
 }
 
 fn flags(permissions: Permissions) -> u32 {
-    u32::from(permissions.readable())
-        | (u32::from(permissions.writable()) << 1)
-        | (u32::from(permissions.executable()) << 2)
+    let flag = |set: bool, bit: u32| if set { bit } else { 0 };
+    flag(permissions.readable(), SEGMENT_READABLE)
+        | flag(permissions.writable(), SEGMENT_WRITABLE)
+        | flag(permissions.executable(), SEGMENT_EXECUTABLE)
 }

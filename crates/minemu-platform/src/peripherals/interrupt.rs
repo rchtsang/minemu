@@ -24,11 +24,19 @@ pub enum Source {
 }
 
 impl Source {
+    /// Every source, in source-ID order.
+    pub const ALL: [Self; 4] = [Self::SysTick, Self::Uart0, Self::Uart1, Self::Block];
+
     /// Bit corresponding to this source in PENDING and ENABLE registers.
     pub const fn bit(self) -> u32 {
         1 << self as u32
     }
 }
+
+/// Bits of ENABLE and PENDING that correspond to implemented sources.
+pub const ENABLE_MASK: u32 = 0x0f;
+/// CLAIM value returned when no enabled source is pending.
+pub const NO_CLAIM: u32 = u32::MAX;
 
 /// Reset priority for SysTick, the highest-priority asynchronous source.
 pub const DEFAULT_PRIORITY_SYSTICK: u8 = 0;
@@ -62,13 +70,21 @@ impl Register {
         }
     }
 
+    /// Returns the source whose priority this register holds, if any.
+    pub const fn priority_source(self) -> Option<Source> {
+        match self {
+            Self::PrioritySysTick => Some(Source::SysTick),
+            Self::PriorityUart0 => Some(Source::Uart0),
+            Self::PriorityUart1 => Some(Source::Uart1),
+            Self::PriorityBlock => Some(Source::Block),
+            _ => None,
+        }
+    }
+
     pub(crate) fn validate_write_value(self, value: u32) -> Result<()> {
         let valid = match self {
-            Self::Enable => value & !0x0f == 0,
-            Self::PrioritySysTick
-            | Self::PriorityUart0
-            | Self::PriorityUart1
-            | Self::PriorityBlock => value & !0xff == 0,
+            Self::Enable => value & !ENABLE_MASK == 0,
+            _ if self.priority_source().is_some() => value <= u32::from(u8::MAX),
             _ => true,
         };
         if valid {

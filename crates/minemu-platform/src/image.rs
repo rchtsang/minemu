@@ -1,6 +1,6 @@
 use crate::{
-    BOOT_INFO_PADDR, BOOTSTRAP_ENTRY_PADDR, MemRegion, PhysicalAddress, PhysicalRange,
-    PlatformError, Result, VirtualAddress, direct_map_physical,
+    BOOT_INFO_PADDR, BOOTSTRAP_ENTRY_PADDR, DIRECT_MAP_BASE, MemRegion, PhysicalAddress,
+    PhysicalRange, PlatformError, Result, VirtualAddress, direct_map_physical,
 };
 
 /// ABI version for system-ROM images and boot-info records.
@@ -20,7 +20,14 @@ pub const MODULE_SEGMENT_SIZE: usize = 32;
 /// Serialized boot-info size.
 pub const BOOT_INFO_SIZE: usize = 64;
 
-const SEGMENT_FLAGS_MASK: u32 = 0x7;
+/// Segment flag: readable.
+pub const SEGMENT_READABLE: u32 = 1 << 0;
+/// Segment flag: writable.
+pub const SEGMENT_WRITABLE: u32 = 1 << 1;
+/// Segment flag: executable.
+pub const SEGMENT_EXECUTABLE: u32 = 1 << 2;
+
+const SEGMENT_FLAGS_MASK: u32 = SEGMENT_READABLE | SEGMENT_WRITABLE | SEGMENT_EXECUTABLE;
 
 /// Fixed-width system-ROM image header.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -304,7 +311,7 @@ impl BootInfo {
             module_count: read_u32(bytes, 20)?,
         };
         if info.system_rom_base != MemRegion::SystemRom.base()
-            || read_u32(bytes, 24)? != 0xc000_0000
+            || read_u32(bytes, 24)? != DIRECT_MAP_BASE
             || read_u32(bytes, 28)? != MemRegion::Ram.base().get()
             || read_u32(bytes, 32)? != MemRegion::Ram.size()
         {
@@ -328,7 +335,7 @@ impl BootInfo {
         write_u32(&mut bytes, 12, self.image_size);
         write_u32(&mut bytes, 16, self.module_table_offset);
         write_u32(&mut bytes, 20, self.module_count);
-        write_u32(&mut bytes, 24, 0xc000_0000);
+        write_u32(&mut bytes, 24, DIRECT_MAP_BASE);
         write_u32(&mut bytes, 28, MemRegion::Ram.base().get());
         write_u32(&mut bytes, 32, MemRegion::Ram.size());
         Ok(bytes)

@@ -1,4 +1,6 @@
-use minemu_platform::{Access, Cp15Operation};
+use minemu_platform::{
+    Access, CPSR_CARRY, CPSR_NEGATIVE, CPSR_OVERFLOW, CPSR_ZERO, Cp15Operation, CpuMode,
+};
 use unicorn_engine::{RegisterARM, Unicorn, unicorn_const::MemType};
 
 use crate::backend::BackendData;
@@ -105,14 +107,19 @@ pub(crate) fn mmu_access(memory_type: MemType) -> Option<Access> {
 }
 
 pub(crate) fn cp15_is_privileged(cpsr: u32) -> bool {
-    matches!(cpsr & 0x1f, 0x13 | 0x12 | 0x17 | 0x1b)
+    CpuMode::from_cpsr(cpsr).is_some_and(CpuMode::is_privileged)
+}
+
+/// Returns whether a raw CPSR register value selects USR mode.
+pub(crate) fn is_user_mode(cpsr: u32) -> bool {
+    CpuMode::from_cpsr(cpsr) == Some(CpuMode::User)
 }
 
 pub(crate) fn condition_holds(condition: u32, cpsr: u32) -> bool {
-    let negative = cpsr & (1 << 31) != 0;
-    let zero = cpsr & (1 << 30) != 0;
-    let carry = cpsr & (1 << 29) != 0;
-    let overflow = cpsr & (1 << 28) != 0;
+    let negative = cpsr & CPSR_NEGATIVE != 0;
+    let zero = cpsr & CPSR_ZERO != 0;
+    let carry = cpsr & CPSR_CARRY != 0;
+    let overflow = cpsr & CPSR_OVERFLOW != 0;
     match condition {
         0 => zero,
         1 => !zero,

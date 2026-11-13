@@ -7,15 +7,17 @@ use std::{
 use minemu_platform::{
     BlockInspection, BlockUnitInspection, MemRegion, Peripheral, PhysicalAddress, PhysicalRange,
     peripherals::{
-        block::{Error, STATUS_BUSY, STATUS_COMPLETE, STATUS_ERROR, UNIT_COUNT},
+        block::{
+            COMMAND_READ, COMMAND_WRITE, COMPLETION_DELAY, CONTROL_IRQ_ENABLE, Error, STATUS_BUSY,
+            STATUS_COMPLETE, STATUS_ERROR, UNIT_COUNT,
+        },
         interrupt::Source,
     },
 };
 
 use crate::{CoreError, InterruptSignal, PhysicalMemoryAccess, Result};
 
-const SECTOR_SIZE: usize = 512;
-const COMPLETION_DELAY: u64 = 32;
+const SECTOR_SIZE: usize = minemu_platform::peripherals::block::SECTOR_SIZE as usize;
 
 /// One state-changing block-device input.
 pub enum BlockUpdate {
@@ -144,7 +146,11 @@ impl BlockDevice {
     }
 
     pub const fn control(&self) -> u32 {
-        self.completion_irq_enabled as u32
+        if self.completion_irq_enabled {
+            CONTROL_IRQ_ENABLE
+        } else {
+            0
+        }
     }
 
     fn set_lba(&mut self, lba: u32) {
@@ -164,7 +170,7 @@ impl BlockDevice {
     }
 
     fn set_control(&mut self, control: u32) {
-        self.completion_irq_enabled = control & 1 != 0;
+        self.completion_irq_enabled = control & CONTROL_IRQ_ENABLE != 0;
     }
 
     /// Starts an accepted command, including one that will later report a guest error.
@@ -271,7 +277,7 @@ impl BlockDevice {
             .ok()
             .filter(|index| *index < UNIT_COUNT)
             .ok_or(Error::InvalidUnit)?;
-        if !matches!(request.command, 1 | 2) {
+        if !matches!(request.command, COMMAND_READ | COMMAND_WRITE) {
             return Err(Error::InvalidCommand);
         }
         let byte_count = usize::try_from(request.sector_count)
@@ -295,10 +301,10 @@ impl BlockDevice {
         let end = start.checked_add(byte_count).ok_or(Error::InvalidLba)?;
         let sectors = media.get_mut(start..end).ok_or(Error::InvalidLba)?;
         match request.command {
-            1 => memory
+            COMMAND_READ => memory
                 .write_range(request.dma_address, sectors)
                 .map_err(|_| Error::InvalidDma)?,
-            2 => {
+            COMMAND_WRITE => {
                 memory
                     .read_range(dma_range, sectors)
                     .map_err(|_| Error::InvalidDma)?;

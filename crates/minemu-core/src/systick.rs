@@ -2,7 +2,10 @@ use std::sync::mpsc::{self, Sender};
 
 use minemu_platform::{
     Peripheral, SysTickInspection,
-    peripherals::{interrupt::Source, systick::Register},
+    peripherals::{
+        interrupt::Source,
+        systick::{CONTROL_ENABLE, CONTROL_IRQ_ENABLE, CONTROL_PERIODIC, Register, STATUS_PENDING},
+    },
 };
 
 use crate::{InterruptSignal, Result};
@@ -45,11 +48,13 @@ impl SysTick {
     }
 
     pub const fn control(&self) -> u32 {
-        (self.enabled as u32) | ((self.periodic as u32) << 1) | ((self.irq_enabled as u32) << 2)
+        bit(self.enabled, CONTROL_ENABLE)
+            | bit(self.periodic, CONTROL_PERIODIC)
+            | bit(self.irq_enabled, CONTROL_IRQ_ENABLE)
     }
 
     pub const fn status(&self) -> u32 {
-        self.pending as u32
+        bit(self.pending, STATUS_PENDING)
     }
 
     pub const fn irq_pending(&self) -> bool {
@@ -65,9 +70,9 @@ impl SysTick {
 
     fn set_control(&mut self, control: u32, now: u64) {
         let was_enabled = self.enabled;
-        self.enabled = control & 1 != 0;
-        self.periodic = control & 2 != 0;
-        self.irq_enabled = control & 4 != 0;
+        self.enabled = control & CONTROL_ENABLE != 0;
+        self.periodic = control & CONTROL_PERIODIC != 0;
+        self.irq_enabled = control & CONTROL_IRQ_ENABLE != 0;
         if self.enabled && (!was_enabled || self.next_deadline.is_none()) && self.period != 0 {
             self.next_deadline = Some(now + u64::from(self.period));
         }
@@ -115,6 +120,10 @@ impl SysTick {
             pending: self.irq_pending(),
         });
     }
+}
+
+const fn bit(set: bool, mask: u32) -> u32 {
+    if set { mask } else { 0 }
 }
 
 impl Default for SysTick {

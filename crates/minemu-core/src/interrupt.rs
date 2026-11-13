@@ -2,7 +2,7 @@ use std::sync::mpsc::Receiver;
 
 use minemu_platform::peripherals::interrupt::{
     DEFAULT_PRIORITY_BLOCK, DEFAULT_PRIORITY_SYSTICK, DEFAULT_PRIORITY_UART0,
-    DEFAULT_PRIORITY_UART1, Source,
+    DEFAULT_PRIORITY_UART1, ENABLE_MASK, NO_CLAIM, Source,
 };
 use minemu_platform::{InterruptInspection, Peripheral, peripherals::interrupt::Register};
 
@@ -66,7 +66,7 @@ impl InterruptController {
     }
 
     fn set_enabled(&mut self, enabled: u32) {
-        self.enabled = enabled & 0x0f;
+        self.enabled = enabled & ENABLE_MASK;
     }
 
     pub const fn priority(&self, source: Source) -> u8 {
@@ -81,7 +81,7 @@ impl InterruptController {
     pub fn claim(&mut self) -> Option<Source> {
         self.process_signals();
         if self.claim.is_none() {
-            self.claim = [Source::SysTick, Source::Uart0, Source::Uart1, Source::Block]
+            self.claim = Source::ALL
                 .into_iter()
                 .filter(|source| self.pending & self.enabled & source.bit() != 0)
                 .min_by_key(|source| (self.priority(*source), *source as u32));
@@ -98,7 +98,7 @@ impl InterruptController {
             .claim
             .map(|claim| claim as u32)
             .ok_or(CoreError::InvalidEoi {
-                expected: u32::MAX,
+                expected: NO_CLAIM,
                 actual: source,
             })?;
         if source != expected {
@@ -122,42 +122,24 @@ impl Peripheral for InterruptController {
         Ok(match register {
             Register::Pending => self.pending(),
             Register::Enable => self.enabled(),
-            Register::Claim => self.claim().map(|source| source as u32).unwrap_or(u32::MAX),
-            Register::PrioritySysTick => self.priority(Source::SysTick) as u32,
-            Register::PriorityUart0 => self.priority(Source::Uart0) as u32,
-            Register::PriorityUart1 => self.priority(Source::Uart1) as u32,
-            Register::PriorityBlock => self.priority(Source::Block) as u32,
+            Register::Claim => self.claim().map_or(NO_CLAIM, |source| source as u32),
             Register::Eoi => 0,
+            priority => priority
+                .priority_source()
+                .map_or(0, |source| u32::from(self.priority(source))),
         })
     }
 
     fn update(&mut self, update: Self::Update) -> Result<()> {
-        match update {
-            InterruptUpdate::Write {
-                register: Register::Enable,
-                value,
-            } => self.set_enabled(value),
-            InterruptUpdate::Write {
-                register: Register::Eoi,
-                value,
-            } => self.eoi(value)?,
-            InterruptUpdate::Write {
-                register: Register::PrioritySysTick,
-                value,
-            } => self.set_priority(Source::SysTick, value as u8),
-            InterruptUpdate::Write {
-                register: Register::PriorityUart0,
-                value,
-            } => self.set_priority(Source::Uart0, value as u8),
-            InterruptUpdate::Write {
-                register: Register::PriorityUart1,
-                value,
-            } => self.set_priority(Source::Uart1, value as u8),
-            InterruptUpdate::Write {
-                register: Register::PriorityBlock,
-                value,
-            } => self.set_priority(Source::Block, value as u8),
-            InterruptUpdate::Write { .. } => {}
+        let InterruptUpdate::Write { register, value } = update;
+        match register {
+            Register::Enable => self.set_enabled(value),
+            Register::Eoi => self.eoi(value)?,
+            _ => {
+                if let Some(source) = register.priority_source() {
+                    self.set_priority(source, value as u8);
+                }
+            }
         }
         Ok(())
     }

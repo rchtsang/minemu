@@ -20,22 +20,26 @@ pub mod peripherals;
 pub use access::{Access, Permissions};
 pub use address::{PhysicalAddress, PhysicalRange, VirtualAddress};
 pub use error::{PlatformError, Result};
-pub use exception::{CpuMode, ExceptionKind, ExceptionRequest};
+pub use exception::{
+    CPSR_CARRY, CPSR_FIQ_DISABLE, CPSR_IRQ_DISABLE, CPSR_MODE_MASK, CPSR_NEGATIVE, CPSR_OVERFLOW,
+    CPSR_THUMB, CPSR_ZERO, CpuMode, ExceptionKind, ExceptionRequest,
+};
 pub use image::{
     ABI_VERSION, BOOT_INFO_MAGIC, BOOT_INFO_SIZE, BootInfo, IMAGE_HEADER_SIZE, IMAGE_MAGIC,
     ImageHeader, KERNEL_SEGMENT_SIZE, KernelSegment, MODULE_RECORD_SIZE, MODULE_SEGMENT_SIZE,
-    ModuleRecord, ModuleSegment,
+    ModuleRecord, ModuleSegment, SEGMENT_EXECUTABLE, SEGMENT_READABLE, SEGMENT_WRITABLE,
 };
 pub use mmap::{
     BOOT_INFO_PADDR, BOOT_INFO_VADDR, BOOT_ROM_BASE, BOOT_ROM_SIZE, BOOT_STACK_BASE,
-    BOOT_STACK_SIZE, BOOTSTRAP_ENTRY_PADDR, MemRegion, PAGE_SIZE, RAM_BASE, RAM_SIZE,
-    SYSTEM_ROM_BASE, SYSTEM_ROM_SIZE, direct_map_physical, direct_map_virtual,
+    BOOT_STACK_SIZE, BOOTSTRAP_ENTRY_PADDR, DIRECT_MAP_BASE, DIRECT_MAP_OFFSET, MMIO_BASE,
+    MMIO_SIZE, MemRegion, PAGE_SIZE, RAM_BASE, RAM_SIZE, SYSTEM_ROM_BASE, SYSTEM_ROM_SIZE,
+    direct_map_physical, direct_map_virtual,
 };
 pub use mmio::{MmioRegister, MmioTransaction, MmioWidth, decode_mmio};
 pub use mmu::{
-    Cp15Operation, FaultCause, FaultStatus, PTE_ACCESSED, PTE_DIRTY, PTE_EXECUTABLE, PTE_READABLE,
-    PTE_SOFTWARE_MASK, PTE_USER, PTE_VALID, PTE_WRITABLE, PageDirectoryEntry, PageTableEntry,
-    is_mmu_target_page, validate_page_table_page,
+    Cp15Operation, FaultCause, FaultStatus, PTE_ACCESSED, PTE_DIRTY, PTE_EXECUTABLE, PTE_PAGE_MASK,
+    PTE_PERMISSION_MASK, PTE_READABLE, PTE_SOFTWARE_MASK, PTE_USER, PTE_VALID, PTE_WRITABLE,
+    PageDirectoryEntry, PageTableEntry, is_mmu_target_page, validate_page_table_page,
 };
 pub use observability::{
     BlockInspection, BlockUnitInspection, InspectionRequest, InspectionResponse,

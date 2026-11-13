@@ -186,7 +186,7 @@ impl TuiWidget for ConsoleWidget {
         let output = self.stream().output();
         let lines = output.lines().count();
         let viewport = usize::from(area.height.saturating_sub(2));
-        let offset = scroll_offset(lines, area.height, self.from_bottom);
+        let offset = scroll_offset(lines, area.height, &mut self.from_bottom);
         frame.render_widget(
             Paragraph::new(output)
                 .wrap(Wrap { trim: false })

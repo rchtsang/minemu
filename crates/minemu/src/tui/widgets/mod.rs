@@ -46,12 +46,14 @@ pub fn pane_block(title: impl Into<String>, focused: bool, width: u16) -> Block<
         .border_style(style)
 }
 
-pub fn scroll_offset(total_lines: usize, height: u16, from_bottom: usize) -> u16 {
+/// Returns the first visible line of a bottom-anchored pane with `height` rows
+/// including borders. `from_bottom` is clamped to the scrollable range so that
+/// motions after `gg` or past either end take effect immediately.
+pub fn scroll_offset(total_lines: usize, height: u16, from_bottom: &mut usize) -> u16 {
     let visible = usize::from(height.saturating_sub(2));
-    total_lines
-        .saturating_sub(visible)
-        .saturating_sub(from_bottom)
-        .min(usize::from(u16::MAX)) as u16
+    let maximum = total_lines.saturating_sub(visible);
+    *from_bottom = (*from_bottom).min(maximum);
+    (maximum - *from_bottom).min(usize::from(u16::MAX)) as u16
 }
 
 pub fn nav_scroll(from_bottom: &mut usize, motion: crate::tui::input::Motion) {
@@ -89,4 +91,29 @@ pub fn render_scrollbar(
         vertical: 1,
     });
     frame.render_stateful_widget(scrollbar, track_area, &mut state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{nav_scroll, scroll_offset};
+    use crate::tui::input::Motion;
+
+    #[test]
+    fn scrolling_down_after_top_moves_immediately() {
+        // 20 lines in a pane showing 8 (10 rows minus borders).
+        let mut from_bottom = 0;
+        nav_scroll(&mut from_bottom, Motion::Top);
+        assert_eq!(scroll_offset(20, 10, &mut from_bottom), 0);
+        nav_scroll(&mut from_bottom, Motion::Down(1));
+        assert_eq!(scroll_offset(20, 10, &mut from_bottom), 1);
+    }
+
+    #[test]
+    fn scrolling_up_past_the_top_does_not_accumulate() {
+        let mut from_bottom = 0;
+        nav_scroll(&mut from_bottom, Motion::Up(100));
+        assert_eq!(scroll_offset(20, 10, &mut from_bottom), 0);
+        nav_scroll(&mut from_bottom, Motion::Down(2));
+        assert_eq!(scroll_offset(20, 10, &mut from_bottom), 2);
+    }
 }

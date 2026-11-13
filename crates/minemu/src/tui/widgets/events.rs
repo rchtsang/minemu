@@ -34,7 +34,7 @@ impl TuiWidget for EventsWidget {
             .map(|event| format!("{event:?}"))
             .collect::<Vec<_>>();
         let viewport = usize::from(area.height.saturating_sub(2));
-        let offset = scroll_offset(lines.len(), area.height, self.from_bottom);
+        let offset = scroll_offset(lines.len(), area.height, &mut self.from_bottom);
         frame.render_widget(
             Paragraph::new(lines.join("\n"))
                 .scroll((offset, 0))

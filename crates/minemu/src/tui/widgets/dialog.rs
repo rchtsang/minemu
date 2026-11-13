@@ -77,7 +77,7 @@ impl TuiWidget for DialogWidget {
         let lines = self.lines(inner_width);
         let wrapped_lines = lines.len();
         let viewport = usize::from(area.height.saturating_sub(2));
-        let offset = scroll_offset(wrapped_lines, area.height, self.from_bottom);
+        let offset = scroll_offset(wrapped_lines, area.height, &mut self.from_bottom);
         frame.render_widget(
             Paragraph::new(Text::from(lines))
                 .scroll((offset, 0))
